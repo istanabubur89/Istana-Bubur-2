@@ -43,5 +43,12 @@ service cloud.firestore {
     match /settings/{settingId} {
       allow read, write: if true;
     }
+
+    // -------------------------------------------------------------
+    // KOLEKSI: REFERRAL_CODES (OTP Referral Verifikasi Email)
+    // -------------------------------------------------------------
+    match /referralCodes/{email} {
+      allow read, write: if true;
+    }
   }
 }

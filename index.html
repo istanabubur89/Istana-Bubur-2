@@ -144,7 +144,6 @@
                         <div class="border-t border-gray-100 my-1"></div>
                         <button onclick="switchTab('histori-trx'); toggleMenu();" id="tab-histori-trx" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center gap-3 border-l-4 border-transparent transition"><i class="fas fa-receipt w-5 text-center"></i> Riwayat Transaksi</button>
                         <button onclick="switchTab('histori-gaji'); toggleMenu();" id="tab-histori-gaji" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center gap-3 border-l-4 border-transparent transition admin-only"><i class="fas fa-envelope-open-text w-5 text-center"></i> Riwayat Gaji</button>
-                        <button onclick="openExportModal('semua'); toggleMenu();" id="tab-export-menu" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-emerald-50 flex items-center gap-3 border-l-4 border-transparent transition admin-only text-emerald-800"><i class="fas fa-file-excel w-5 text-center text-emerald-600"></i> Ekspor Rekap (Excel/Sheets)</button>
                         <div class="border-t border-gray-100 my-1"></div>
                         <button onclick="switchTab('chat'); toggleMenu();" id="tab-chat" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center justify-between border-l-4 border-transparent transition">
                             <span class="flex items-center gap-3"><i class="fas fa-headset w-5 text-center text-blue-600"></i> Chat Bantuan</span>
@@ -310,19 +309,6 @@
                                     </div>
                                 </div>
                                 <button onclick="resetDateFilter()" class="mt-3.5 bg-red-100 text-red-600 hover:bg-red-200 px-2.5 py-1.5 rounded-lg text-[10px] transition" title="Reset Filter Tanggal"><i class="fas fa-sync-alt"></i></button>
-                            </div>
-                            <!-- Tombol Ekspor Rekap Penjualan Dashboard -->
-                            <div class="flex items-center justify-between bg-emerald-50/80 border border-emerald-200 rounded-xl px-3 py-2">
-                                <div class="flex items-center gap-2">
-                                    <div class="w-6 h-6 rounded-lg bg-emerald-600 text-white flex items-center justify-center text-xs">
-                                        <i class="fas fa-file-excel"></i>
-                                    </div>
-                                    <span class="text-[11px] font-bold text-emerald-950">Ekspor Rekap Laporan Penjualan</span>
-                                </div>
-                                <button onclick="openExportModal('transaksi')" class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-3 py-1 rounded-lg text-[11px] font-bold shadow-xs transition flex items-center gap-1.5">
-                                    <i class="fas fa-download text-[10px]"></i>
-                                    <span>Excel / Sheets</span>
-                                </button>
                             </div>
                         </div>
                         
@@ -631,54 +617,142 @@
 
             <!-- PRINTER VIEW -->
             <div id="view-printer" class="view-content hidden-view">
-                <div class="flex justify-between items-center mb-5 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                <div class="flex justify-between items-center mb-5 bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
                     <div>
                         <h2 class="text-lg font-extrabold text-gray-800">Pengaturan Printer</h2>
-                        <p class="text-xs text-gray-500 mt-1">Bluetooth Thermal Printer (Kasir)</p>
+                        <p class="text-xs text-gray-500 mt-0.5">Bluetooth Thermal Printer (Kasir & Android APK)</p>
                     </div>
+                    <button onclick="diagnoseAndroidBluetooth()" class="bg-blue-50 text-blue-700 border border-blue-200 px-3 py-1.5 rounded-xl text-xs font-bold hover:bg-blue-100 transition flex items-center gap-1.5" title="Diagnosa Dukungan Bluetooth di HP/APK">
+                        <i class="fas fa-stethoscope text-blue-600"></i>
+                        <span>Diagnosa APK</span>
+                    </button>
                 </div>
                 
-                <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 mb-4 space-y-4">
-                    <div>
-                        <label class="block text-xs font-semibold mb-2 text-gray-700">Ukuran Kertas</label>
-                        <select id="printer-paper-size" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none" onchange="savePrinterSettings()">
-                            <option value="58">58mm (Lebar 32 Karakter)</option>
-                            <option value="80">80mm (Lebar 48 Karakter)</option>
-                        </select>
+                <!-- STATUS KONEKSI CARD -->
+                <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 mb-4">
+                    <div class="flex items-center justify-between pb-3 border-b border-gray-100 mb-3">
+                        <div class="flex items-center gap-2.5">
+                            <div id="printer-status-icon" class="w-9 h-9 rounded-xl bg-gray-100 text-gray-500 flex items-center justify-center text-sm">
+                                <i class="fab fa-bluetooth-b"></i>
+                            </div>
+                            <div>
+                                <p class="text-xs text-gray-500 font-medium">Status Printer Kasir</p>
+                                <p id="printer-device-name" class="text-sm font-extrabold text-gray-800">Belum Terhubung</p>
+                            </div>
+                        </div>
+                        <span id="printer-status-badge" class="bg-gray-100 text-gray-600 text-[10px] font-bold px-2.5 py-1 rounded-full border border-gray-200">Tidak Terhubung</span>
                     </div>
-                    <div>
-                        <label class="block text-xs font-semibold mb-2 text-gray-700">Jumlah Salinan (Copy)</label>
-                        <select id="printer-copies" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none" onchange="savePrinterSettings()">
-                            <option value="1">1x Cetak (Standar)</option>
-                            <option value="2">2x Cetak (Dapur & Pelanggan)</option>
-                            <option value="3">3x Cetak</option>
-                        </select>
+
+                    <div class="grid grid-cols-2 gap-2 text-[11px] text-gray-600 bg-gray-50 p-2.5 rounded-xl">
+                        <div>
+                            <span class="text-gray-400 block text-[10px]">Tersimpan / Terakhir:</span>
+                            <span id="printer-saved-info" class="font-semibold text-gray-700">-</span>
+                        </div>
+                        <div>
+                            <span class="text-gray-400 block text-[10px]">Metode Aktif:</span>
+                            <span id="printer-active-mode-label" class="font-semibold text-blue-700">Web Bluetooth BLE</span>
+                        </div>
                     </div>
                 </div>
 
-                <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-4">
-                    <div class="flex justify-between items-center mb-2">
-                        <h3 class="font-bold text-gray-800 text-sm">Koneksi Bluetooth</h3>
-                        <span id="printer-status-badge" class="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-1 rounded">Tidak Terhubung</span>
+                <!-- PENGATURAN KERTAS & MODE -->
+                <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 mb-4 space-y-4">
+                    <h3 class="font-bold text-gray-800 text-sm flex items-center gap-2">
+                        <i class="fas fa-sliders-h text-red-600"></i> Format & Metode Cetak
+                    </h3>
+                    
+                    <div>
+                        <label class="block text-xs font-semibold mb-1 text-gray-700">Metode Cetak (Kasir / APK Android)</label>
+                        <select id="printer-method" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none" onchange="savePrinterSettings()">
+                            <option value="auto">Otomatis (Web Bluetooth BLE / Bridge Android)</option>
+                            <option value="rawbt">Driver Android / RawBT (Rekomendasi Utama APK Android)</option>
+                            <option value="webble">Web Bluetooth Standar (Chrome / TWA)</option>
+                            <option value="system">Dialog Cetak Sistem (Print HP)</option>
+                        </select>
+                        <p class="text-[10px] text-gray-400 mt-1">Pilih "Driver Android / RawBT" jika printer Anda bertipe Classic Bluetooth yang sudah di-pair di menu Pengaturan HP Android.</p>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold mb-1 text-gray-700">Ukuran Kertas Thermal</label>
+                            <select id="printer-paper-size" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none" onchange="savePrinterSettings()">
+                                <option value="58">58mm (Standar POS Kasir - 32 Karakter)</option>
+                                <option value="80">80mm (Lebar - 48 Karakter)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold mb-1 text-gray-700">Jumlah Salinan (Copy)</label>
+                            <select id="printer-copies" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none" onchange="savePrinterSettings()">
+                                <option value="1">1x Cetak (Standar)</option>
+                                <option value="2">2x Cetak (Dapur & Pelanggan)</option>
+                                <option value="3">3x Cetak</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- KONEKSI & PENCARIAN PERANGKAT -->
+                <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-4 mb-4">
+                    <div class="flex justify-between items-center mb-1">
+                        <h3 class="font-bold text-gray-800 text-sm flex items-center gap-2">
+                            <i class="fab fa-bluetooth text-blue-600"></i> Hubungkan Printer
+                        </h3>
                     </div>
                     
-                    <button id="btn-scan-printer" onclick="scanPrinters()" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md hover:bg-blue-700 transition flex items-center justify-center gap-2 text-sm">
-                        <i class="fab fa-bluetooth-b"></i> Cari / Hubungkan Printer
-                    </button>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button id="btn-scan-printer" onclick="scanPrinters()" class="w-full bg-blue-600 text-white py-3 px-3 rounded-xl font-bold shadow-md hover:bg-blue-700 active:scale-98 transition flex items-center justify-center gap-2 text-xs sm:text-sm">
+                            <i class="fab fa-bluetooth-b"></i> Pindai / Hubungkan Printer
+                        </button>
+                        <button onclick="scanPairedAndroidPrinters()" class="w-full bg-indigo-50 border border-indigo-200 text-indigo-700 py-3 px-3 rounded-xl font-bold hover:bg-indigo-100 active:scale-98 transition flex items-center justify-center gap-2 text-xs sm:text-sm">
+                            <i class="fas fa-list-check"></i> Daftar Perangkat HP (Paired)
+                        </button>
+                    </div>
+
+                    <!-- Input Cepat Alamat MAC / Nama Printer -->
+                    <div class="bg-gray-50 p-3 rounded-xl border border-gray-200">
+                        <label class="block text-[11px] font-bold text-gray-700 mb-1">Sambung Cepat via MAC / Nama Printer Android</label>
+                        <div class="flex gap-2">
+                            <input type="text" id="printer-manual-mac" placeholder="Contoh: 66:22:33:44:55:66 atau POS-58" class="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                            <button onclick="connectManualPrinter()" class="bg-gray-800 hover:bg-gray-900 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition shrink-0">
+                                Sambungkan
+                            </button>
+                        </div>
+                        <p class="text-[10px] text-gray-500 mt-1">Gunakan jika printer sudah ter-pairing di Bluetooth HP Anda.</p>
+                    </div>
                     
-                    <div id="printer-list-container" class="hidden-view mt-4">
-                        <p class="text-xs font-bold text-gray-600 mb-2">Pilih Perangkat untuk Disambungkan:</p>
+                    <div id="printer-list-container" class="hidden-view mt-3 bg-gray-50 p-3 rounded-xl border border-gray-200">
+                        <div class="flex items-center justify-between mb-2">
+                            <p class="text-xs font-bold text-gray-700">Pilih Perangkat untuk Disambungkan:</p>
+                            <button onclick="closePrinterList()" class="text-gray-400 hover:text-gray-600 text-xs"><i class="fas fa-times"></i></button>
+                        </div>
                         <div id="printer-list" class="space-y-2 max-h-48 overflow-y-auto"></div>
                     </div>
                     
-                    <div class="flex gap-2 mt-4 pt-4 border-t border-gray-100">
-                        <button onclick="disconnectPrinter()" class="flex-1 bg-gray-100 text-gray-700 py-2.5 rounded-xl font-bold shadow-sm hover:bg-gray-200 transition text-xs">
-                            Putuskan
+                    <div class="grid grid-cols-3 gap-2 pt-2 border-t border-gray-100">
+                        <button onclick="disconnectPrinter()" class="bg-gray-100 text-gray-700 py-2.5 rounded-xl font-bold shadow-xs hover:bg-gray-200 active:scale-98 transition text-xs flex items-center justify-center gap-1">
+                            <i class="fas fa-power-off text-[10px]"></i> Putuskan
                         </button>
-                        <button onclick="testPrint()" class="flex-1 bg-green-600 text-white py-2.5 rounded-xl font-bold shadow-md hover:bg-green-700 transition text-xs">
-                            Tes Cetak
+                        <button onclick="testPrint()" class="bg-green-600 text-white py-2.5 rounded-xl font-bold shadow-md hover:bg-green-700 active:scale-98 transition text-xs flex items-center justify-center gap-1">
+                            <i class="fas fa-print text-[10px]"></i> Tes Cetak
+                        </button>
+                        <button onclick="testPrintRawBT()" class="bg-emerald-600 text-white py-2.5 rounded-xl font-bold shadow-md hover:bg-emerald-700 active:scale-98 transition text-xs flex items-center justify-center gap-1" title="Tes Cetak melalui Driver RawBT Android">
+                            <i class="fab fa-android text-[10px]"></i> Tes RawBT
                         </button>
                     </div>
+                </div>
+
+                <!-- PANDUAN KHUSUS PENGGUNAAN DI APK ANDROID -->
+                <div class="bg-gradient-to-br from-blue-50 to-indigo-50/60 p-4 sm:p-5 rounded-2xl border border-blue-100 text-xs text-blue-950 space-y-2.5">
+                    <div class="flex items-center gap-2 font-bold text-sm text-blue-900">
+                        <i class="fab fa-android text-base text-blue-600"></i>
+                        <span>Panduan Printer Bluetooth di APK Android:</span>
+                    </div>
+                    <ol class="list-decimal list-inside space-y-1.5 text-[11px] text-blue-900/90 leading-relaxed">
+                        <li><b>Nyalakan Bluetooth HP & Printer Thermal:</b> Pastikan printer dalam posisi menyala dan memiliki kertas.</li>
+                        <li><b>Sandingkan (Pairing) di Pengaturan HP:</b> Buka <i>Pengaturan HP &gt; Bluetooth</i>, cari nama printer (contoh: <i>POS-58, RPP02N, PT-210, MPT-II, Bluetooth Printer</i>) lalu masukkan PIN jika diminta (biasanya <b>0000</b> atau <b>1234</b>).</li>
+                        <li><b>Berikan Izin Bluetooth & Lokasi:</b> Buka <i>Pengaturan HP &gt; Aplikasi &gt; Istana Bubur &gt; Izin Aplikasi</i>, lalu aktifkan izin <b>Perangkat di Sekitar (Nearby Devices)</b> dan <b>Lokasi</b>.</li>
+                        <li><b>Cetak via Driver Android / RawBT:</b> Jika APK menggunakan WebView di mana Web Bluetooth tidak aktif, pasang aplikasi gratis <b>RawBT Print Service</b> dari Google Play Store. Istana Bubur akan otomatis mengirimkan data struk langsung ke printer Anda.</li>
+                    </ol>
                 </div>
             </div>
 
@@ -733,11 +807,6 @@
                         <h2 class="text-lg font-extrabold text-gray-800">Riwayat Transaksi</h2>
                         <p class="text-xs text-gray-500 mt-1" id="histori-trx-subtitle">Daftar penjualan kasir terbaru</p>
                     </div>
-                    <button onclick="openExportModal('transaksi')" class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-3 sm:px-3.5 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 shrink-0" title="Ekspor Rekap ke Excel atau Google Sheets">
-                        <i class="fas fa-file-excel text-sm text-emerald-200"></i>
-                        <span class="hidden sm:inline">Ekspor Excel / Sheets</span>
-                        <span class="sm:hidden">Ekspor</span>
-                    </button>
                 </div>
                 <div class="flex gap-2 mb-4">
                     <select id="filter-cabang-trx" class="text-sm border border-gray-200 rounded-xl px-2 py-2 bg-white shadow-sm focus:outline-none admin-only" onchange="renderHistoriTransaksi()">
@@ -761,11 +830,6 @@
                         <h2 class="text-lg font-extrabold text-gray-800">Riwayat Gaji</h2>
                         <p class="text-xs text-gray-500 mt-1">Daftar cetak slip gaji terbaru</p>
                     </div>
-                    <button onclick="openExportModal('gaji')" class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-3 sm:px-3.5 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 shrink-0" title="Ekspor Rekap Gaji ke Excel atau Google Sheets">
-                        <i class="fas fa-file-excel text-sm text-emerald-200"></i>
-                        <span class="hidden sm:inline">Ekspor Rekap Gaji</span>
-                        <span class="sm:hidden">Ekspor</span>
-                    </button>
                 </div>
                 <div class="flex gap-2 mb-4">
                     <div class="relative flex-1">
@@ -1037,8 +1101,12 @@
                 <div id="checkout-result" class="hidden-view mt-4 p-4 bg-green-50 border border-green-200 rounded-xl text-center">
                     <p class="text-sm font-bold text-green-800 mb-3"><i class="fas fa-check-circle"></i> Transaksi Berhasil!</p>
                     
-                    <button onclick="cetakStrukThermal()" class="w-full mb-3 bg-gray-900 text-white py-3 rounded-lg font-bold shadow-md hover:bg-gray-800 transition flex items-center justify-center gap-2">
+                    <button onclick="cetakStrukThermal()" class="w-full mb-2 bg-gray-900 text-white py-3 rounded-xl font-bold shadow-md hover:bg-gray-800 transition flex items-center justify-center gap-2">
                         <i class="fas fa-print"></i> Cetak Struk Thermal (Bluetooth)
+                    </button>
+
+                    <button onclick="cetakViaDriverAndroid()" class="w-full mb-3 bg-blue-600 text-white py-2.5 rounded-xl font-bold shadow-sm hover:bg-blue-700 transition flex items-center justify-center gap-2 text-xs">
+                        <i class="fab fa-android"></i> Cetak via Driver Android / RawBT
                     </button>
 
                     <!-- Tombol PDF dan WhatsApp yang sudah diperbaiki -->
@@ -1473,224 +1541,6 @@
                 </button>
             </div>
         </form>
-    </div>
-</div>
-
-<!-- MODAL EKSPOR REKAP LAPORAN (EXCEL & GOOGLE SHEETS) -->
-<div id="modal-export" class="modal fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs hidden-view">
-    <div class="bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-gray-100 overflow-hidden">
-        <!-- Header Modal -->
-        <div class="p-4 sm:p-5 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white shrink-0">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-xs text-white flex items-center justify-center shadow-md text-lg shrink-0">
-                    <i class="fas fa-file-excel"></i>
-                </div>
-                <div>
-                    <h3 class="font-extrabold text-sm sm:text-base leading-tight">Ekspor Rekap Laporan & Spreadsheet</h3>
-                    <p class="text-[11px] text-emerald-100 font-medium">Download Excel (.xlsx), CSV, atau sinkronkan ke Google Sheets</p>
-                </div>
-            </div>
-            <button type="button" onclick="closeModal('modal-export')" class="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition" title="Tutup">
-                <i class="fas fa-times text-sm"></i>
-            </button>
-        </div>
-
-        <!-- Tab Switcher Modal -->
-        <div class="flex items-center gap-1.5 p-2.5 sm:px-4 bg-gray-50 border-b border-gray-200 overflow-x-auto shrink-0 hide-scrollbar">
-            <button id="btn-export-tab-download" onclick="switchExportTab('download')" class="export-tab-btn px-3.5 py-2 rounded-xl font-bold text-xs flex items-center gap-2 bg-emerald-600 text-white shadow-sm transition whitespace-nowrap">
-                <i class="fas fa-file-export"></i> 1. Unduh Excel & CSV
-            </button>
-            <button id="btn-export-tab-sheets" onclick="switchExportTab('sheets')" class="export-tab-btn px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center gap-2 bg-gray-100 text-gray-600 hover:bg-gray-200 transition whitespace-nowrap">
-                <i class="fab fa-google-drive text-emerald-600"></i> 2. Buka di Google Sheets
-            </button>
-            <button id="btn-export-tab-sync" onclick="switchExportTab('sync')" class="export-tab-btn px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center gap-2 bg-gray-100 text-gray-600 hover:bg-gray-200 transition whitespace-nowrap">
-                <i class="fas fa-bolt text-amber-500"></i> 3. Sinkron Otomatis (Apps Script)
-            </button>
-        </div>
-
-        <!-- Scrollable Body Content -->
-        <div class="p-4 sm:p-5 overflow-y-auto space-y-4 text-gray-700 flex-1 hide-scrollbar">
-            <!-- PANEL 1: UNDUH FILE EXCEL / CSV -->
-            <div id="export-pane-download" class="space-y-4">
-                <!-- Konfigurasi Jenis Rekap -->
-                <div>
-                    <label class="block text-xs font-bold text-gray-700 mb-1.5">Pilih Data yang Ingin Diekspor</label>
-                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        <button type="button" onclick="setExportType('transaksi')" id="btn-extype-transaksi" class="export-type-btn p-2.5 rounded-xl border-2 border-emerald-600 bg-emerald-50/70 text-emerald-900 font-bold text-xs flex flex-col items-center justify-center gap-1 transition">
-                            <i class="fas fa-receipt text-emerald-600 text-base"></i>
-                            <span>Penjualan POS</span>
-                        </button>
-                        <button type="button" onclick="setExportType('gaji')" id="btn-extype-gaji" class="export-type-btn p-2.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 font-semibold text-xs flex flex-col items-center justify-center gap-1 transition">
-                            <i class="fas fa-envelope-open-text text-teal-600 text-base"></i>
-                            <span>Rekap Gaji</span>
-                        </button>
-                        <button type="button" onclick="setExportType('produk')" id="btn-extype-produk" class="export-type-btn p-2.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 font-semibold text-xs flex flex-col items-center justify-center gap-1 transition">
-                            <i class="fas fa-box-open text-blue-600 text-base"></i>
-                            <span>Master Menu</span>
-                        </button>
-                        <button type="button" onclick="setExportType('semua')" id="btn-extype-semua" class="export-type-btn p-2.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 font-semibold text-xs flex flex-col items-center justify-center gap-1 transition">
-                            <i class="fas fa-layer-group text-purple-600 text-base"></i>
-                            <span>Semua Data</span>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Filter Cabang & Periode -->
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-gray-50 p-3.5 rounded-2xl border border-gray-200">
-                    <div>
-                        <label class="block text-[11px] font-bold text-gray-600 mb-1">Filter Cabang</label>
-                        <select id="export-filter-cabang" onchange="updateExportPreview()" class="w-full text-xs border border-gray-200 rounded-xl px-3 py-2 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-medium">
-                            <option value="Semua">Semua Cabang (Pusat & Cabang)</option>
-                            <option value="Pusat">Pusat</option>
-                            <option value="Cabang A">Cabang A</option>
-                            <option value="Cabang B">Cabang B</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-[11px] font-bold text-gray-600 mb-1">Pilihan Cepat Periode</label>
-                        <div class="grid grid-cols-4 gap-1">
-                            <button type="button" onclick="setExportQuickPeriod('hari-ini')" id="btn-period-hari-ini" class="period-btn px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-[10px] font-semibold hover:bg-gray-100 text-gray-700 transition text-center">Hari Ini</button>
-                            <button type="button" onclick="setExportQuickPeriod('bulan-ini')" id="btn-period-bulan-ini" class="period-btn px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-[10px] font-semibold hover:bg-gray-100 text-gray-700 transition text-center">Bulan Ini</button>
-                            <button type="button" onclick="setExportQuickPeriod('tahun-ini')" id="btn-period-tahun-ini" class="period-btn px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-[10px] font-semibold hover:bg-gray-100 text-gray-700 transition text-center">Tahun Ini</button>
-                            <button type="button" onclick="setExportQuickPeriod('semua')" id="btn-period-semua" class="period-btn px-2 py-1.5 rounded-lg border border-emerald-500 bg-emerald-50 text-[10px] font-bold text-emerald-800 transition text-center">Semua</button>
-                        </div>
-                    </div>
-                    <div class="sm:col-span-2 grid grid-cols-2 gap-2 pt-1 border-t border-gray-200">
-                        <div>
-                            <span class="block text-[10px] font-bold text-gray-500 uppercase mb-0.5">Dari Tanggal</span>
-                            <input type="date" id="export-start-date" onchange="updateExportPreview()" class="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500">
-                        </div>
-                        <div>
-                            <span class="block text-[10px] font-bold text-gray-500 uppercase mb-0.5">Sampai Tanggal</span>
-                            <input type="date" id="export-end-date" onchange="updateExportPreview()" class="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500">
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Live Summary Preview Box -->
-                <div id="export-preview-box" class="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 flex items-center justify-between">
-                    <div class="flex items-center gap-3">
-                        <div class="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
-                            <i class="fas fa-check text-sm"></i>
-                        </div>
-                        <div>
-                            <p class="text-xs font-bold text-emerald-950" id="export-preview-title">Memuat data...</p>
-                            <p class="text-[11px] text-emerald-700" id="export-preview-subtitle">Siap diekspor ke format Excel atau CSV</p>
-                        </div>
-                    </div>
-                    <span id="export-preview-badge" class="bg-emerald-600 text-white font-extrabold text-xs px-2.5 py-1 rounded-xl shadow-xs">0 Baris</span>
-                </div>
-
-                <!-- Tombol Download File -->
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                    <button type="button" onclick="executeExportExcel()" class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-95 text-white py-3 px-4 rounded-xl font-bold text-xs sm:text-sm shadow-md transition flex items-center justify-center gap-2">
-                        <i class="fas fa-file-excel text-lg text-emerald-200"></i>
-                        <span>Unduh File Excel (.xlsx)</span>
-                    </button>
-                    <button type="button" onclick="executeExportCSV()" class="bg-white border-2 border-emerald-600 text-emerald-800 hover:bg-emerald-50 active:scale-95 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2 shadow-xs">
-                        <i class="fas fa-file-csv text-lg text-emerald-600"></i>
-                        <span>Unduh File CSV (.csv)</span>
-                    </button>
-                </div>
-            </div>
-
-            <!-- PANEL 2: BUKA LANGSUNG DI GOOGLE SHEETS -->
-            <div id="export-pane-sheets" class="space-y-4 hidden-view">
-                <div class="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex items-start gap-3">
-                    <div class="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 mt-0.5">
-                        <i class="fab fa-google-drive text-lg"></i>
-                    </div>
-                    <div class="text-xs text-blue-950 space-y-1">
-                        <p class="font-bold text-sm">Cara Cepat Buka di Google Sheets (Hanya 2 Langkah):</p>
-                        <p class="leading-relaxed">1. Klik tombol hijau <b>"Salin Tabel Data"</b> di bawah.</p>
-                        <p class="leading-relaxed">2. Klik tombol <b>"Buka Google Sheets Baru"</b>, lalu tekan <kbd class="px-1.5 py-0.5 bg-white border border-blue-300 rounded font-mono font-bold text-blue-700">Ctrl + V</kbd> (atau klik kanan <i>Tempel / Paste</i>). Semua tabel dan angka langsung rapi tertata!</p>
-                    </div>
-                </div>
-
-                <!-- Tombol Aksi Google Sheets -->
-                <div class="space-y-2.5">
-                    <button type="button" onclick="executeCopyForGoogleSheets()" id="btn-copy-sheets" class="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white py-3 px-4 rounded-xl font-bold text-xs sm:text-sm shadow-md transition flex items-center justify-center gap-2">
-                        <i class="fas fa-copy text-emerald-200"></i>
-                        <span id="label-copy-sheets">Langkah 1: Salin Tabel Data ke Clipboard</span>
-                    </button>
-
-                    <button type="button" onclick="openGoogleSheetsNew()" class="w-full bg-white border border-gray-300 hover:bg-gray-50 active:scale-95 text-gray-800 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm shadow-sm transition flex items-center justify-center gap-2">
-                        <img src="https://www.gstatic.com/images/branding/product/2x/sheets_2020q4_48dp.png" class="w-5 h-5 object-contain" alt="Google Sheets">
-                        <span>Langkah 2: Buka Spreadsheet Baru (sheets.new)</span>
-                        <i class="fas fa-external-link-alt text-xs text-gray-400 ml-1"></i>
-                    </button>
-                </div>
-
-                <!-- Notifikasi status salin -->
-                <div id="copy-status-message" class="hidden-view bg-emerald-50 text-emerald-800 text-xs font-bold p-3 rounded-xl border border-emerald-200 text-center flex items-center justify-center gap-2">
-                    <i class="fas fa-check-circle text-emerald-600 text-base"></i>
-                    <span>Data berhasil disalin! Buka Google Sheets sekarang dan tekan Ctrl + V.</span>
-                </div>
-
-                <div class="border-t border-gray-200 pt-3">
-                    <p class="text-[11px] font-bold text-gray-600 mb-1">Alternatif Melalui Google Drive:</p>
-                    <p class="text-[11px] text-gray-500 leading-relaxed">Anda juga bisa mengunduh file <b>.xlsx</b> pada Tab 1, lalu seret (*drag and drop*) file tersebut ke Google Drive Anda untuk langsung dibuka sebagai Google Sheets.</p>
-                </div>
-            </div>
-
-            <!-- PANEL 3: SINKRONISASI OTOMATIS APPS SCRIPT -->
-            <div id="export-pane-sync" class="space-y-3.5 hidden-view">
-                <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
-                    <div class="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5">
-                        <i class="fas fa-bolt text-lg"></i>
-                    </div>
-                    <div class="text-xs text-amber-950 space-y-1">
-                        <p class="font-bold text-sm">Otomatisasi Firebase &rarr; Google Spreadsheet</p>
-                        <p class="leading-relaxed">Ingin Google Spreadsheet Anda memperbarui data transaksi setiap malam atau secara otomatis tanpa perlu ekspor manual? Gunakan skrip <b>Google Apps Script</b> berikut.</p>
-                    </div>
-                </div>
-
-                <div class="bg-gray-900 rounded-2xl p-4 text-white space-y-2">
-                    <div class="flex items-center justify-between border-b border-gray-800 pb-2">
-                        <span class="text-[11px] font-mono text-emerald-400 font-bold">Kode Google Apps Script (Code.gs)</span>
-                        <button type="button" onclick="copyAppsScriptCode()" class="text-xs bg-gray-800 hover:bg-gray-700 text-emerald-300 font-bold px-3 py-1 rounded-lg transition flex items-center gap-1.5">
-                            <i class="fas fa-copy"></i>
-                            <span id="label-copy-script">Salin Kode</span>
-                        </button>
-                    </div>
-                    <pre id="code-apps-script" class="text-[10px] sm:text-[11px] font-mono text-gray-300 overflow-x-auto max-h-48 p-2 hide-scrollbar leading-relaxed">
-// Skrip Penarik Transaksi Istana Bubur ke Google Sheets
-function sinkronkanTransaksiIstanaBubur() {
-  const projectId = "gen-lang-client-0004446574";
-  const databaseId = "ai-studio-istanabubur-4840979b-eb04-419d-b020-ec08e9c46b4c";
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  
-  if (sheet.getLastRow() === 0) {
-    sheet.appendRow(["ID Transaksi", "Tanggal & Waktu", "Cabang", "Kasir", "Pelanggan", "Metode", "Total Belanja (Rp)"]);
-  }
-  
-  Logger.log("Koneksi ke Firebase siap. Data tersinkron.");
-}
-                    </pre>
-                </div>
-
-                <div class="bg-gray-50 border border-gray-200 rounded-xl p-3 text-xs text-gray-600 space-y-1">
-                    <p class="font-bold text-gray-800">Cara Pasang di Google Spreadsheet:</p>
-                    <ol class="list-decimal list-inside space-y-0.5 text-[11px]">
-                        <li>Buka Google Spreadsheet baru di browser Anda.</li>
-                        <li>Klik menu <b>Ekstensi (Extensions)</b> &rarr; <b>Apps Script</b>.</li>
-                        <li>Tempelkan kode di atas lalu klik tombol <b>Simpan</b>.</li>
-                        <li>Atur Pemicu (Triggers) agar skrip berjalan otomatis setiap hari.</li>
-                    </ol>
-                </div>
-            </div>
-        </div>
-
-        <!-- Footer Modal -->
-        <div class="p-3.5 sm:p-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between shrink-0">
-            <div class="flex items-center gap-2 text-[11px] text-gray-500">
-                <i class="fas fa-shield-alt text-emerald-600"></i>
-                <span>Tersinkron dengan Database Firebase Firestore</span>
-            </div>
-            <button type="button" onclick="closeModal('modal-export')" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold px-4 py-2 rounded-xl text-xs transition">
-                Tutup
-            </button>
-        </div>
     </div>
 </div>
 

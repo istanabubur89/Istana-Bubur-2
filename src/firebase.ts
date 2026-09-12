@@ -54,7 +54,8 @@ export const COLLECTIONS = {
   PRODUCTS: 'products',
   TRANSACTIONS: 'transactions',
   EMPLOYEES: 'employees',
-  PAYROLL: 'payroll'
+  PAYROLL: 'payroll',
+  REFERRAL_CODES: 'referralCodes'
 };
 
 // Helper: Seed Default Data if collections are empty

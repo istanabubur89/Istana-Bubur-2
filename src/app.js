@@ -2,8 +2,6 @@
 // ISTANA BUBUR - SYSTEM MANAGEMENT & KASIR
 // ==========================================
 
-import * as XLSX from 'xlsx';
-
 import {
     db,
     seedInitialFirestoreData,
@@ -1158,7 +1156,7 @@ function updateRegisterStepIndicator(step) {
     }
 }
 
-function submitRegisterStep1() {
+async function submitRegisterStep1() {
     const nama = (document.getElementById('reg-nama').value || '').trim();
     const user = (document.getElementById('reg-user').value || '').trim();
     const email = (document.getElementById('reg-email').value || '').trim();
@@ -1173,8 +1171,9 @@ function submitRegisterStep1() {
         return;
     }
 
-    if (!email.includes('@') || !email.includes('.')) {
-        showToast('Format email tidak valid!', 'error');
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        showToast('Format email tidak valid! Harap gunakan format seperti user@gmail.com', 'error');
         return;
     }
 
@@ -1195,57 +1194,72 @@ function submitRegisterStep1() {
         return;
     }
 
-    tempRegistration = {
-        fullName: nama,
-        username: user,
-        email: email,
-        phone: wa,
-        role: role,
-        cabang: cabang,
-        password: pass,
-        isActive: false
-    };
+    const btn = document.querySelector('#register-step-1 button[type="submit"]') || document.querySelector('#register-step-1 button');
+    const originalBtnText = btn ? btn.innerHTML : 'Lanjut & Kirim Kode Referral ke Email';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Mengirim Kode Referral ke Email...';
+    }
 
-    // Buat kode referral 6 digit acak
-    activeReferralCode = String(Math.floor(100000 + Math.random() * 900000));
-    referralExpiryTime = Date.now() + 10 * 60 * 1000; // 10 menit
+    showToast(`Memvalidasi & mengirim kode referral ke ${email}...`, 'info');
 
-    // Perbarui UI Step 2
-    const emailDisplay = document.getElementById('reg-display-email');
-    if (emailDisplay) emailDisplay.innerText = email;
-    const inputRef = document.getElementById('reg-input-referral');
-    if (inputRef) inputRef.value = '';
+    try {
+        const resp = await fetch('/api/auth/send-referral-code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: email,
+                username: user
+            })
+        });
 
-    // Beralih ke Step 2
-    document.getElementById('register-step-1').classList.add('hidden-view');
-    document.getElementById('register-step-2').classList.remove('hidden-view');
-    document.getElementById('register-step-3').classList.add('hidden-view');
-    updateRegisterStepIndicator(2);
+        const res = await resp.json();
 
-    startReferralTimer();
+        if (res && res.success) {
+            tempRegistration = {
+                fullName: nama,
+                username: user,
+                email: email,
+                phone: wa,
+                role: role,
+                cabang: cabang,
+                password: pass,
+                isActive: false
+            };
 
-    // PENGIRIMAN EMAIL NYATA KE ALAMAT EMAIL PENDAFTAR
-    showToast(`Mengirim kode referral ke email ${email}...`, 'info');
-    fetch('/api/auth/send-referral-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            email: email,
-            username: user,
-            code: activeReferralCode,
-            type: 'referral'
-        })
-    })
-    .then(r => r.json())
-    .then(res => {
-        if (res && res.message) {
-            showToast(res.message, res.delivered ? 'success' : 'info');
+            referralExpiryTime = res.expiresAt || (Date.now() + 10 * 60 * 1000);
+            if (res.codeForTesting) {
+                activeReferralCode = res.codeForTesting;
+            }
+
+            // Perbarui UI Step 2
+            const emailDisplay = document.getElementById('reg-display-email');
+            if (emailDisplay) emailDisplay.innerText = email;
+            const inputRef = document.getElementById('reg-input-referral');
+            if (inputRef) inputRef.value = '';
+
+            // HANYA BERPINDAH KE STEP 2 JIKA PENGIRIMAN EMAIL/OTP BERHASIL
+            document.getElementById('register-step-1').classList.add('hidden-view');
+            document.getElementById('register-step-2').classList.remove('hidden-view');
+            document.getElementById('register-step-3').classList.add('hidden-view');
+            updateRegisterStepIndicator(2);
+
+            startReferralTimer();
+            showToast(res.message || `Kode referral 6-digit berhasil dikirimkan ke email ${email}`, 'success');
+        } else {
+            // GAGAL PENGIRIMAN: TETAP BERADA DI STEP 1
+            const errMsg = (res && res.message) ? res.message : 'Gagal mengirim email kode referral. Periksa kembali alamat email Anda.';
+            showToast(errMsg, 'error');
         }
-    })
-    .catch(err => {
-        console.warn('Gagal memanggil API kirim email:', err);
-        showToast(`Kode referral dikirimkan ke email ${email}. Silakan cek kotak masuk/spam.`, 'info');
-    });
+    } catch (err) {
+        console.error('[Kirim Kode Referral Error]:', err);
+        showToast('Gagal menghubungi server email. Pastikan koneksi internet aktif.', 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalBtnText;
+        }
+    }
 }
 
 function startReferralTimer() {
@@ -1266,7 +1280,7 @@ function startReferralTimer() {
     referralTimerInterval = setInterval(update, 1000);
 }
 
-function resendReferralCode() {
+async function resendReferralCode() {
     if (!tempRegistration || !tempRegistration.email) {
         showToast('Data pendaftar tidak ditemukan!', 'error');
         return;
@@ -1278,28 +1292,32 @@ function resendReferralCode() {
         setTimeout(() => { if (btn) btn.disabled = false; }, 5000);
     }
 
-    activeReferralCode = String(Math.floor(100000 + Math.random() * 900000));
-    referralExpiryTime = Date.now() + 10 * 60 * 1000;
-    startReferralTimer();
+    showToast(`Mengirim ulang kode referral ke ${tempRegistration.email}...`, 'info');
 
-    showToast(`Mengirim ulang kode ke ${tempRegistration.email}...`, 'info');
-    fetch('/api/auth/send-referral-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            email: tempRegistration.email,
-            username: tempRegistration.username,
-            code: activeReferralCode,
-            type: 'referral'
-        })
-    })
-    .then(r => r.json())
-    .then(res => {
-        showToast(`Kode referral baru telah dikirim ke ${tempRegistration.email}`, 'success');
-    })
-    .catch(err => {
-        showToast(`Kode referral baru dikirim ke ${tempRegistration.email}`, 'info');
-    });
+    try {
+        const resp = await fetch('/api/auth/send-referral-code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: tempRegistration.email,
+                username: tempRegistration.username
+            })
+        });
+
+        const res = await resp.json();
+        if (res && res.success) {
+            referralExpiryTime = res.expiresAt || (Date.now() + 10 * 60 * 1000);
+            if (res.codeForTesting) {
+                activeReferralCode = res.codeForTesting;
+            }
+            startReferralTimer();
+            showToast(res.message || `Kode referral baru telah dikirim ke ${tempRegistration.email}`, 'success');
+        } else {
+            showToast(res ? res.message : 'Gagal mengirim ulang kode referral.', 'error');
+        }
+    } catch (e) {
+        showToast('Gagal menghubungi server untuk kirim ulang kode.', 'error');
+    }
 }
 
 function backToRegisterStep1() {
@@ -1310,10 +1328,10 @@ function backToRegisterStep1() {
     updateRegisterStepIndicator(1);
 }
 
-function verifyReferralStep2() {
+async function verifyReferralStep2() {
     const inputCode = (document.getElementById('reg-input-referral').value || '').trim();
-    if (!inputCode) {
-        showToast('Masukkan 6 digit kode referral dari email!', 'warning');
+    if (!inputCode || inputCode.length !== 6) {
+        showToast('Masukkan 6-digit kode referral dari email!', 'warning');
         return;
     }
 
@@ -1322,20 +1340,73 @@ function verifyReferralStep2() {
         return;
     }
 
-    if (inputCode !== activeReferralCode) {
-        showToast('Kode referral tidak cocok! Silakan periksa kembali email Anda.', 'error');
+    if (!tempRegistration || !tempRegistration.email) {
+        showToast('Data pendaftaran tidak valid. Silakan ulangi langkah pertama.', 'error');
+        backToRegisterStep1();
         return;
     }
 
-    if (referralTimerInterval) clearInterval(referralTimerInterval);
+    const verifyBtn = document.querySelector('#register-step-2 button.bg-red-600') || document.querySelector('#register-step-2 button');
+    const originalText = verifyBtn ? verifyBtn.innerHTML : 'Verifikasi Kode & Lanjut';
+    if (verifyBtn) {
+        verifyBtn.disabled = true;
+        verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Memverifikasi Kode...';
+    }
 
-    // Beralih ke Step 3: Masukkan Kode Autentikasi Admin
-    document.getElementById('register-step-1').classList.add('hidden-view');
-    document.getElementById('register-step-2').classList.add('hidden-view');
-    document.getElementById('register-step-3').classList.remove('hidden-view');
-    updateRegisterStepIndicator(3);
+    try {
+        const resp = await fetch('/api/auth/verify-referral-code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: tempRegistration.email,
+                code: inputCode
+            })
+        });
 
-    showToast('Kode referral email terverifikasi! Masukkan Kode Autentikasi Admin.', 'success');
+        const res = await resp.json();
+
+        if (res && res.success) {
+            if (referralTimerInterval) clearInterval(referralTimerInterval);
+
+            // Beralih ke Step 3: Masukkan Kode Autentikasi Admin
+            document.getElementById('register-step-1').classList.add('hidden-view');
+            document.getElementById('register-step-2').classList.add('hidden-view');
+            document.getElementById('register-step-3').classList.remove('hidden-view');
+            updateRegisterStepIndicator(3);
+
+            showToast('Kode referral email terverifikasi! Masukkan Kode Autentikasi Admin.', 'success');
+        } else {
+            // Fallback jika dev mode dengan local activeReferralCode
+            if (activeReferralCode && inputCode === activeReferralCode) {
+                if (referralTimerInterval) clearInterval(referralTimerInterval);
+                document.getElementById('register-step-1').classList.add('hidden-view');
+                document.getElementById('register-step-2').classList.add('hidden-view');
+                document.getElementById('register-step-3').classList.remove('hidden-view');
+                updateRegisterStepIndicator(3);
+                showToast('Kode referral email terverifikasi! Masukkan Kode Autentikasi Admin.', 'success');
+                return;
+            }
+
+            showToast((res && res.message) ? res.message : 'Kode referral salah! Periksa kembali kotak masuk email Anda.', 'error');
+        }
+    } catch (err) {
+        console.error('[Verify Referral Error]:', err);
+        if (activeReferralCode && inputCode === activeReferralCode) {
+            if (referralTimerInterval) clearInterval(referralTimerInterval);
+            document.getElementById('register-step-1').classList.add('hidden-view');
+            document.getElementById('register-step-2').classList.add('hidden-view');
+            document.getElementById('register-step-3').classList.remove('hidden-view');
+            updateRegisterStepIndicator(3);
+            showToast('Kode referral email terverifikasi! Masukkan Kode Autentikasi Admin.', 'success');
+        } else {
+            showToast('Gagal memverifikasi kode dengan server. Cek koneksi Anda.', 'error');
+        }
+    } finally {
+        if (verifyBtn) {
+            verifyBtn.disabled = false;
+            verifyBtn.innerHTML = originalText;
+        }
+    }
 }
 
 function backToRegisterStep2() {
@@ -3627,6 +3698,10 @@ function updatePrinterStatus(text, state='disconnected') {
     else badge.className += 'bg-gray-100 text-gray-600'; 
 }
 
+function getNativeAndroidPrinter() {
+    return window.AndroidPrinter || window.BluetoothBridge || window.Android || window.BTPrinter || null;
+}
+
 window.onAndroidPrinterConnected = function(mac, name) { 
     isNativeBluetooth = true; 
     connectedPrinterMac = mac; 
@@ -3634,7 +3709,7 @@ window.onAndroidPrinterConnected = function(mac, name) {
     printerSettings.savedName = name; 
     savePrinterSettings(); 
     updatePrinterStatus('Terhubung: ' + name, 'connected'); 
-    showToast('Printer Terhubung', 'success'); 
+    showToast('Printer Terhubung (' + name + ')', 'success'); 
 };
 
 window.onAndroidPrinterDisconnected = function() { 
@@ -3644,50 +3719,134 @@ window.onAndroidPrinterDisconnected = function() {
 };
 
 async function scanPrinters() {
-    if (window.AndroidPrinter) {
+    const native = getNativeAndroidPrinter();
+    if (native) {
         try { 
-            window.AndroidPrinter.scanAndConnect(); 
-            if (typeof window.AndroidPrinter.getPairedDevices === 'function') { 
-                const devicesStr = window.AndroidPrinter.getPairedDevices(); 
-                if (devicesStr) renderPrinterListNative(JSON.parse(devicesStr)); 
+            if (typeof native.scanAndConnect === 'function') {
+                native.scanAndConnect(); 
+            } else if (typeof native.scanPrinters === 'function') {
+                native.scanPrinters();
+            } else if (typeof native.openBluetoothSettings === 'function') {
+                native.openBluetoothSettings();
+            }
+            if (typeof native.getPairedDevices === 'function') { 
+                const devicesStr = native.getPairedDevices(); 
+                if (devicesStr) {
+                    const devices = typeof devicesStr === 'string' ? JSON.parse(devicesStr) : devicesStr;
+                    renderPrinterListNative(devices); 
+                }
             } 
+            showToast('Membuka pemindai Bluetooth perangkat Android...', 'info');
         } catch(e) { 
-            showToast('Gagal memanggil fungsi Bluetooth Native Android', 'error'); 
+            console.error('Android native printer error:', e);
+            showToast('Gagal memanggil fungsi Bluetooth Native Android: ' + e.message, 'error'); 
         } 
         return;
     }
+
     if (!navigator.bluetooth) { 
-        showToast('Browser tidak mendukung Web Bluetooth.', 'error'); 
+        if (/Android/i.test(navigator.userAgent)) {
+            showToast('WebView APK Android: Gunakan opsi Driver RawBT atau pasangkan di Pengaturan Bluetooth HP.', 'info');
+        } else {
+            showToast('Browser ini tidak mendukung Web Bluetooth. Gunakan Google Chrome atau Android WebView.', 'error'); 
+        }
         return; 
     }
+
     try {
         updatePrinterStatus('Mencari...', 'warning');
+        const optionalServices = [
+            '000018f0-0000-1000-8000-00805f9b34fb',
+            '0000ffe0-0000-1000-8000-00805f9b34fb',
+            '0000ff00-0000-1000-8000-00805f9b34fb',
+            '0000fee7-0000-1000-8000-00805f9b34fb',
+            '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+            'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+            '000018f1-0000-1000-8000-00805f9b34fb',
+            '0000af30-0000-1000-8000-00805f9b34fb'
+        ];
+
+        // Gunakan acceptAllDevices agar semua printer Bluetooth thermal dapat terbaca
         printerDevice = await navigator.bluetooth.requestDevice({ 
-            filters: [{ services: ['000018f0-0000-1000-8000-00805f9b34fb'] }], 
-            optionalServices: ['e7810a71-73ae-499d-8c15-faa9aef0c3f2'] 
+            acceptAllDevices: true,
+            optionalServices: optionalServices 
         });
+
         printerDevice.addEventListener('gattserverdisconnected', () => { 
             updatePrinterStatus('Tidak Terhubung', 'disconnected'); 
             printerCharacteristic = null; 
+            showToast('Koneksi printer terputus', 'warning');
         });
+
         updatePrinterStatus('Menghubungkan...', 'warning'); 
         printerServer = await printerDevice.gatt.connect();
         const services = await printerServer.getPrimaryServices();
-        if (services.length > 0) {
-            const characteristics = await services[0].getCharacteristics();
-            if (characteristics.length > 0) {
-                printerCharacteristic = characteristics.find(c => c.properties.write || c.properties.writeWithoutResponse) || characteristics[0];
-                updatePrinterStatus('Terhubung: ' + printerDevice.name, 'connected'); 
-                printerSettings.savedName = printerDevice.name; 
-                savePrinterSettings(); 
-                showToast('Printer WebBLE Terhubung', 'success'); 
+
+        for (const s of services) {
+            try {
+                const chars = await s.getCharacteristics();
+                const writeChar = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+                if (writeChar) {
+                    printerCharacteristic = writeChar;
+                    break;
+                }
+            } catch(e) {}
+        }
+
+        if (printerCharacteristic) {
+            updatePrinterStatus('Terhubung: ' + printerDevice.name, 'connected'); 
+            printerSettings.savedName = printerDevice.name; 
+            savePrinterSettings(); 
+            showToast('Printer Bluetooth Terhubung: ' + printerDevice.name, 'success'); 
+            return;
+        }
+
+        throw new Error('Karakteristik Tulis ESC/POS tidak ditemukan.');
+    } catch(err) { 
+        console.warn('[Bluetooth Scanner]:', err);
+        updatePrinterStatus('Tidak Terhubung', 'disconnected'); 
+        if (err.name !== 'NotFoundError') {
+            showToast('Gagal menghubungkan printer: ' + err.message, 'error');
+        }
+    }
+}
+
+function scanPairedAndroidPrinters() {
+    const native = getNativeAndroidPrinter();
+    if (native && typeof native.getPairedDevices === 'function') {
+        try {
+            const devicesStr = native.getPairedDevices();
+            if (devicesStr) {
+                const devices = typeof devicesStr === 'string' ? JSON.parse(devicesStr) : devicesStr;
+                renderPrinterListNative(devices);
+                showToast(`Ditemukan ${devices.length} perangkat Bluetooth tersanding`, 'info');
                 return;
             }
-        } 
-        throw new Error('Characteristic Write tidak ditemukan');
-    } catch(err) { 
-        updatePrinterStatus('Tidak Terhubung', 'disconnected'); 
+        } catch(e) {
+            console.error('Error getting paired devices:', e);
+        }
     }
+
+    // Panduan jika di browser atau bridge belum terpasang
+    const container = document.getElementById('printer-list-container');
+    const list = document.getElementById('printer-list');
+    if (container && list) {
+        container.classList.remove('hidden-view');
+        list.innerHTML = `
+            <div class="p-3 bg-white rounded-xl border border-blue-100 text-left space-y-2">
+                <p class="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                    <i class="fab fa-android text-emerald-600"></i> Cara Hubungkan Printer Thermal Android:
+                </p>
+                <ol class="text-[11px] text-gray-600 list-decimal list-inside space-y-1">
+                    <li>Buka <b>Pengaturan HP &gt; Bluetooth</b>.</li>
+                    <li>Nyalakan Bluetooth dan lakukan <b>Sandingkan Perangkat Baru</b> dengan printer thermal Anda (PIN: 0000 atau 1234).</li>
+                    <li>Kembali ke aplikasi ini, klik <b>Pindai / Hubungkan Printer</b> atau masukkan nama printer pada kolom sambung manual di bawah.</li>
+                    <li>Atau gunakan tombol <b>Tes RawBT</b> untuk cetak langsung via driver printer Android.</li>
+                </ol>
+            </div>
+        `;
+    }
+    showToast('Buka Pengaturan Bluetooth HP untuk menyandingkan printer', 'info');
 }
 
 function renderPrinterListNative(devices) {
@@ -3695,39 +3854,127 @@ function renderPrinterListNative(devices) {
     const list = document.getElementById('printer-list'); 
     if (!container || !list) return;
     container.classList.remove('hidden-view');
-    if (devices.length === 0) { 
+    if (!devices || devices.length === 0) { 
         list.innerHTML = `<p class="text-xs text-center text-gray-400 py-4">Tidak ada perangkat tersimpan di Android</p>`; 
         return; 
     }
     list.innerHTML = devices.map(d => `
         <button onclick="connectNativePrinter('${d.address}', '${d.name}')" class="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl text-left hover:bg-blue-50 transition flex justify-between items-center">
             <div>
-                <p class="text-sm font-bold text-gray-800">${d.name}</p>
+                <p class="text-sm font-bold text-gray-800">${d.name || 'Printer Bluetooth'}</p>
                 <p class="text-[10px] text-gray-500">${d.address}</p>
             </div>
             <i class="fas fa-link text-blue-500"></i>
         </button>`).join('');
 }
 
+function connectManualPrinter() {
+    const input = document.getElementById('printer-manual-mac');
+    const val = input ? input.value.trim() : '';
+    if (!val) {
+        showToast('Masukkan Alamat MAC atau Nama Printer Bluetooth!', 'warning');
+        return;
+    }
+
+    printerSettings.savedMac = val;
+    printerSettings.savedName = val;
+    savePrinterSettings();
+
+    const native = getNativeAndroidPrinter();
+    if (native && typeof native.connect === 'function') {
+        updatePrinterStatus('Menghubungkan ke ' + val + '...', 'warning');
+        try {
+            native.connect(val, val);
+            showToast('Menghubungkan ke printer ' + val, 'info');
+        } catch(e) {
+            showToast('Gagal menghubungkan: ' + e.message, 'error');
+        }
+    } else {
+        updatePrinterStatus('Tersimpan: ' + val, 'connected');
+        showToast('Pengaturan printer ' + val + ' disimpan untuk pencetakan Android', 'success');
+    }
+}
+
+function closePrinterList() {
+    const container = document.getElementById('printer-list-container');
+    if (container) container.classList.add('hidden-view');
+}
+
 function connectNativePrinter(mac, name) { 
-    if (window.AndroidPrinter) { 
+    const native = getNativeAndroidPrinter();
+    if (native && typeof native.connect === 'function') { 
         updatePrinterStatus('Menghubungkan...', 'warning'); 
         try { 
-            window.AndroidPrinter.connect(mac, name); 
+            native.connect(mac, name); 
+            printerSettings.savedMac = mac;
+            printerSettings.savedName = name;
+            savePrinterSettings();
         } catch(e) { 
-            showToast('Koneksi Gagal', 'error'); 
+            showToast('Koneksi Gagal: ' + e.message, 'error'); 
             updatePrinterStatus('Tidak Terhubung', 'disconnected'); 
         } 
-    } 
+    } else {
+        printerSettings.savedMac = mac;
+        printerSettings.savedName = name;
+        savePrinterSettings();
+        updatePrinterStatus('Terhubung: ' + name, 'connected');
+        showToast('Printer ' + name + ' dipilih', 'success');
+    }
 }
 
 function disconnectPrinter() { 
-    if (window.AndroidPrinter) { 
-        try { window.AndroidPrinter.disconnect(); } catch(e){} 
+    const native = getNativeAndroidPrinter();
+    if (native && typeof native.disconnect === 'function') { 
+        try { native.disconnect(); } catch(e){} 
         onAndroidPrinterDisconnected(); 
-    } else if (printerDevice && printerDevice.gatt.connected) { 
+    } else if (printerDevice && printerDevice.gatt && printerDevice.gatt.connected) { 
         printerDevice.gatt.disconnect(); 
-    } 
+        updatePrinterStatus('Tidak Terhubung', 'disconnected');
+    } else {
+        printerCharacteristic = null;
+        updatePrinterStatus('Tidak Terhubung', 'disconnected');
+        showToast('Printer dinonaktifkan', 'info');
+    }
+}
+
+function printViaRawBT(escPosData) {
+    const b64 = escPosData.getBase64();
+    const rawbtUri = 'rawbt:data:application/octet-stream;base64,' + b64;
+    const intentUri = 'intent:base64,' + b64 + '#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;';
+
+    // Buat link tersembunyi untuk memicu Driver RawBT Android
+    try {
+        const link = document.createElement('a');
+        link.href = rawbtUri;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => link.remove(), 1500);
+
+        showToast('Meneruskan data struk ke Driver Thermal Android (RawBT)...', 'success');
+        return true;
+    } catch(e) {
+        console.warn('Gagal memicu RawBT URI, mencoba intent:', e);
+        try {
+            window.location.href = intentUri;
+            return true;
+        } catch(err) {
+            showToast('Gagal membuka Driver Android: ' + err.message, 'error');
+            return false;
+        }
+    }
+}
+
+async function testPrintRawBT() {
+    const p = new EscPos(); 
+    p.init().alignCenter().bold(true).size(2,2).textLine("TEST PRINT RAWBT").size(1,1).bold(false).feed(1)
+     .textLine("Istana Bubur - Android Thermal")
+     .textLine("Driver: RawBT / Android Service").feed(1)
+     .textLine("Kertas: " + printerSettings.paperSize + "mm")
+     .textLine("Waktu: " + new Date().toLocaleTimeString('id-ID'))
+     .feed(3).cut();
+    
+    printViaRawBT(p);
 }
 
 class EscPos {
@@ -3763,17 +4010,31 @@ function printSeparator(maxLen, char='-') { return char.repeat(maxLen); }
 
 async function sendDataToPrinter(escPosData) {
     const base64Data = escPosData.getBase64();
+    const native = getNativeAndroidPrinter();
+
     for (let i=0; i<printerSettings.copies; i++) {
-        if (window.AndroidPrinter) { 
-            try { window.AndroidPrinter.printBase64(base64Data); } catch (e) { throw new Error('Native print error'); } 
+        if (native && typeof native.printBase64 === 'function') { 
+            try { 
+                native.printBase64(base64Data); 
+            } catch (e) { 
+                console.error('Native print error:', e);
+                throw new Error('Native print error: ' + e.message); 
+            } 
         } else if (printerCharacteristic) { 
             const buffer = escPosData.getBuffer(); 
             const CHUNK_SIZE = 512; 
             for (let j = 0; j < buffer.length; j += CHUNK_SIZE) { 
                 await printerCharacteristic.writeValue(buffer.slice(j, j + CHUNK_SIZE)); 
             } 
+        } else if (/Android/i.test(navigator.userAgent) || printerSettings.savedMac) {
+            // Jika berjalan di Android APK/browser tanpa native bridge, kirim ke driver RawBT
+            const success = printViaRawBT(escPosData);
+            if (!success) {
+                showToast('Printer belum terhubung! Menggunakan preview struk...', 'info');
+                return false;
+            }
         } else { 
-            showToast('Printer belum terhubung! Menggunakan preview struk...', 'info'); 
+            showToast('Printer belum terhubung! Silakan hubungkan di menu Pengaturan Printer.', 'info'); 
             return false; 
         }
         if (i < printerSettings.copies - 1) await new Promise(r => setTimeout(r, 1000));
@@ -5208,4 +5469,19 @@ window.executeExportCSV = executeExportCSV;
 window.executeCopyForGoogleSheets = executeCopyForGoogleSheets;
 window.openGoogleSheetsNew = openGoogleSheetsNew;
 window.copyAppsScriptCode = copyAppsScriptCode;
+
+// Printer Bluetooth & Android APK bindings
+window.initPrinterSettings = initPrinterSettings;
+window.savePrinterSettings = savePrinterSettings;
+window.scanPrinters = scanPrinters;
+window.scanPairedAndroidPrinters = scanPairedAndroidPrinters;
+window.renderPrinterListNative = renderPrinterListNative;
+window.connectManualPrinter = connectManualPrinter;
+window.closePrinterList = closePrinterList;
+window.connectNativePrinter = connectNativePrinter;
+window.disconnectPrinter = disconnectPrinter;
+window.printViaRawBT = printViaRawBT;
+window.testPrint = testPrint;
+window.testPrintRawBT = testPrintRawBT;
+window.cetakStrukThermal = cetakStrukThermal;
 

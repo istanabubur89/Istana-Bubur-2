@@ -1,6 +1,7 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import nodemailer from 'nodemailer';
@@ -13,27 +14,44 @@ app.use(express.json());
 // Master Admin Security Key (Only Admin Knows This Key)
 let MASTER_ADMIN_AUTH_CODES = ['IB-AUTH-2026', 'ADMIN-IB-889', 'IB-PUSAT-99'];
 
+// Storage for OTP Referral Codes (In-memory cache with SHA-256 hash & expiry)
+interface ReferralRecord {
+  email: string;
+  username: string;
+  otpHash: string;
+  createdAtMs: number;
+  expiresAtMs: number;
+  used: boolean;
+}
+const referralCodesStore = new Map<string, ReferralRecord>();
+
 // Email Transporter Helper
 function createEmailTransporter() {
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
   const port = parseInt(process.env.SMTP_PORT || '465', 10);
-  const secure = process.env.SMTP_SECURE !== 'false';
+  const secure = process.env.SMTP_SECURE !== 'false' && port === 465;
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
 
   if (user && pass) {
-    return nodemailer.createTransport({
-      host,
-      port,
-      secure,
-      auth: { user, pass }
-    });
+    return {
+      transporter: nodemailer.createTransport({
+        host,
+        port,
+        secure,
+        auth: { user, pass }
+      }),
+      isLive: true
+    };
   }
 
-  // Fallback transporter when environment secrets are not yet configured
-  return nodemailer.createTransport({
-    jsonTransport: true
-  });
+  // Fallback transporter when secrets are not yet filled
+  return {
+    transporter: nodemailer.createTransport({
+      jsonTransport: true
+    }),
+    isLive: false
+  };
 }
 
 
@@ -188,7 +206,118 @@ app.get('/api/chat/cabangs', (req, res) => {
 // REAL EMAIL SENDER & ADMIN AUTH CODE API
 // ==========================================
 
-// Endpoint: Kirim Kode Referral / OTP Reset ke Email Asli Pengguna
+// Endpoint: Kirim Kode Referral (Sesuai spesifikasi Cloud Function & REST API)
+app.post('/api/auth/send-referral-code', async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const username = String(req.body.username || 'Pengguna').trim();
+
+  // 1. Validasi format email
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!email || !emailRegex.test(email)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Format email tidak valid. Harap masukkan email yang benar (contoh: user@gmail.com).'
+    });
+  }
+
+  // 2. Generate 6-digit OTP acak berbeda setiap kali
+  const otp = String(crypto.randomInt(100000, 1000000));
+  const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
+  const now = Date.now();
+  const expiresAtMs = now + (10 * 60 * 1000); // 10 menit
+
+  // 3. Simpan hash & metadata
+  const record: ReferralRecord = {
+    email,
+    username,
+    otpHash,
+    createdAtMs: now,
+    expiresAtMs,
+    used: false
+  };
+  referralCodesStore.set(email, record);
+
+  // 4. Siapkan Nodemailer
+  const { transporter, isLive } = createEmailTransporter();
+  const subject = `[Istana Bubur] Kode Referral Pendaftaran: ${otp}`;
+  const htmlContent = `
+  <!DOCTYPE html>
+  <html>
+  <head><meta charset="utf-8"></head>
+  <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; padding: 24px; margin: 0;">
+    <div style="max-width: 500px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+      <div style="background: #dc2626; color: #ffffff; padding: 24px; text-align: center;">
+        <h2 style="margin: 0; font-size: 22px; font-weight: 900; letter-spacing: 1px;">🥣 ISTANA BUBUR</h2>
+        <p style="margin: 4px 0 0; font-size: 13px; color: #fee2e2;">Verifikasi Pendaftaran Akun</p>
+      </div>
+      <div style="padding: 24px; color: #1e293b;">
+        <p style="margin-top: 0;">Halo <strong>${username}</strong>,</p>
+        <p>Berikut adalah 6-digit kode referral verifikasi email untuk pendaftaran akun Anda:</p>
+        <div style="text-align: center; margin: 28px 0;">
+          <div style="display: inline-block; background: #0f172a; color: #ffffff; font-family: monospace; font-size: 34px; font-weight: 900; letter-spacing: 8px; padding: 16px 32px; border-radius: 12px;">
+            ${otp}
+          </div>
+          <p style="color: #dc2626; font-size: 12px; font-weight: 700; margin-top: 10px;">⏳ Berlaku selama 10 Menit</p>
+        </div>
+        <p style="font-size: 13px; color: #64748b; line-height: 1.5;">
+          Masukkan kode ini pada aplikasi untuk melanjutkan ke pengisian Kode Autentikasi Admin.
+        </p>
+      </div>
+      <div style="background: #f8fafc; border-top: 1px solid #f1f5f9; padding: 16px; text-align: center; font-size: 11px; color: #94a3b8;">
+        Email otomatis dari Sistem Keamanan Istana Bubur.
+      </div>
+    </div>
+  </body>
+  </html>
+  `;
+
+  // 5. Cek jika SMTP live belum disetel
+  if (!isLive) {
+    console.warn(`[DEV/PREVIEW OTP] Email: ${email}, OTP: ${otp} (Belum disetel SMTP_USER & SMTP_PASS)`);
+    return res.json({
+      success: true,
+      delivered: false,
+      devMode: true,
+      codeForTesting: otp,
+      expiresAt: expiresAtMs,
+      message: `Kode referral verifikasi telah diproses. (Simulasi OTP: ${otp}). Untuk mengirim email asli ke Gmail, tambahkan SMTP_USER & SMTP_PASS di panel Secrets.`
+    });
+  }
+
+  // 6. Pengiriman SMTP Live
+  try {
+    const info = await transporter.sendMail({
+      from: process.env.SMTP_FROM || `"Istana Bubur Keamanan" <${process.env.SMTP_USER}>`,
+      to: email,
+      subject,
+      html: htmlContent
+    });
+
+    const isConfirmed = info && (info.messageId || (Array.isArray(info.accepted) && info.accepted.length > 0));
+    if (!isConfirmed) {
+      return res.status(502).json({
+        success: false,
+        message: 'Server SMTP tidak mengonfirmasi penerimaan pengiriman email ke ' + email
+      });
+    }
+
+    console.log(`[SMTP CONFIRMED] Sent to ${email} (MessageID: ${info.messageId})`);
+    return res.json({
+      success: true,
+      delivered: true,
+      expiresAt: expiresAtMs,
+      message: `Kode referral 6-digit berhasil dikirimkan ke email ${email}. Silakan cek Kotak Masuk Gmail Anda.`
+    });
+  } catch (smtpErr: any) {
+    console.error('[SMTP SEND ERROR]', smtpErr?.message || smtpErr);
+    return res.status(500).json({
+      success: false,
+      message: `Gagal mengirim email ke ${email}: ${smtpErr?.message || 'Koneksi SMTP ditolak'}`
+    });
+  }
+});
+
+// Endpoint kompatibilitas: send-referral-email
 app.post('/api/auth/send-referral-email', async (req, res) => {
   const { email, username, code, type } = req.body;
   if (!email || !code) {
@@ -203,61 +332,22 @@ app.post('/api/auth/send-referral-email', async (req, res) => {
   const htmlContent = `
   <!DOCTYPE html>
   <html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  </head>
-  <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px;">
-    <div style="max-width: 520px; margin: 0 auto; background-color: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #f1f5f9;">
-      <!-- Header -->
-      <div style="background: linear-gradient(135deg, #dc2626, #b91c1c); padding: 32px 24px; text-align: center; color: #ffffff;">
-        <div style="font-size: 24px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase;">
-          🥣 ISTANA BUBUR
-        </div>
-        <p style="margin: 6px 0 0; font-size: 13px; color: #fee2e2; font-weight: 500;">
-          Sistem Kasir & Manajemen Operasional Multi-Cabang
-        </p>
+  <head><meta charset="utf-8"></head>
+  <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; padding: 24px; margin: 0;">
+    <div style="max-width: 500px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0;">
+      <div style="background: #dc2626; color: #ffffff; padding: 24px; text-align: center;">
+        <h2 style="margin: 0; font-size: 22px; font-weight: 900; letter-spacing: 1px;">🥣 ISTANA BUBUR</h2>
+        <p style="margin: 4px 0 0; font-size: 13px; color: #fee2e2;">${isReset ? 'Reset Password' : 'Verifikasi Pendaftaran'}</p>
       </div>
-
-      <!-- Konten Utama -->
-      <div style="padding: 28px 24px;">
-        <div style="background-color: #fef2f2; border: 1px solid #fee2e2; border-radius: 14px; padding: 16px 20px; margin-bottom: 24px;">
-          <h2 style="color: #991b1b; font-size: 16px; font-weight: 800; margin: 0 0 6px;">
-            ${isReset ? '🔑 Permintaan Reset Password' : '✉️ Verifikasi Pendaftaran Akun'}
-          </h2>
-          <p style="color: #4b5563; font-size: 14px; line-height: 1.5; margin: 0;">
-            Halo <strong>${username || 'Pengguna'}</strong>, berikut adalah kode verifikasi ${isReset ? 'OTP reset password' : 'referral pendaftaran'} resmi untuk akun Anda di sistem Istana Bubur:
-          </p>
-        </div>
-
-        <!-- Box Kode -->
-        <div style="text-align: center; margin: 28px 0;">
-          <p style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">
-            ${isReset ? 'Kode OTP Reset Password' : 'Kode Referral Verifikasi Email'}
-          </p>
-          <div style="display: inline-block; background-color: #0f172a; color: #ffffff; font-family: 'Courier New', Courier, monospace; font-size: 34px; font-weight: 900; letter-spacing: 8px; padding: 18px 36px; border-radius: 14px; box-shadow: 0 8px 16px rgba(15,23,42,0.15);">
+      <div style="padding: 24px; color: #1e293b;">
+        <p>Halo <strong>${username || 'Pengguna'}</strong>,</p>
+        <p>Kode verifikasi Anda adalah:</p>
+        <div style="text-align: center; margin: 24px 0;">
+          <div style="display: inline-block; background: #0f172a; color: #ffffff; font-family: monospace; font-size: 34px; font-weight: 900; letter-spacing: 8px; padding: 16px 32px; border-radius: 12px;">
             ${code}
           </div>
-          <p style="color: #dc2626; font-size: 12px; font-weight: 700; margin-top: 12px;">
-            ⏳ Masa berlaku kode: 10 Menit
-          </p>
+          <p style="color: #dc2626; font-size: 12px; font-weight: 700; margin-top: 10px;">⏳ Berlaku selama 10 Menit</p>
         </div>
-
-        <!-- Catatan Keamanan Penting -->
-        <div style="background-color: #fffbeb; border: 1px solid #fef3c7; border-radius: 12px; padding: 16px; font-size: 12px; color: #92400e; line-height: 1.6;">
-          <strong>🔒 Petunjuk & Keamanan:</strong>
-          <ul style="margin: 6px 0 0; padding-left: 18px;">
-            <li>Masukkan 6 digit kode di atas pada formulir pendaftaran aplikasi.</li>
-            <li>Setelah verifikasi email berhasil, akun baru <strong>wajib memasukkan Kode Autentikasi Khusus Admin</strong> yang hanya diketahui oleh Admin/Owner Pusat Istana Bubur.</li>
-            <li>Jangan pernah membagikan kode referral ini kepada pihak lain yang tidak berkepentingan.</li>
-          </ul>
-        </div>
-      </div>
-
-      <!-- Footer -->
-      <div style="background-color: #f8fafc; border-top: 1px solid #f1f5f9; padding: 16px 24px; text-align: center; font-size: 11px; color: #94a3b8;">
-        Email otomatis dari Sistem Keamanan Istana Bubur.<br>
-        © ${new Date().getFullYear()} Istana Bubur. Seluruh Hak Cipta Dilindungi.
       </div>
     </div>
   </body>
@@ -265,28 +355,84 @@ app.post('/api/auth/send-referral-email', async (req, res) => {
   `;
 
   try {
-    const transporter = createEmailTransporter();
+    const { transporter, isLive } = createEmailTransporter();
+    if (!isLive) {
+      return res.json({
+        success: true,
+        delivered: false,
+        message: `Kode verifikasi diproses untuk email ${email}.`
+      });
+    }
+
     const info = await transporter.sendMail({
-      from: process.env.SMTP_FROM || '"Istana Bubur Keamanan" <no-reply@istanabubur.com>',
+      from: process.env.SMTP_FROM || `"Istana Bubur Keamanan" <${process.env.SMTP_USER}>`,
       to: email,
-      subject: subject,
+      subject,
       html: htmlContent
     });
 
-    console.log(`[AUTH EMAIL SENT] Sent to ${email} (MessageID: ${info.messageId || 'json'})`);
     return res.json({
       success: true,
       delivered: true,
       message: `Kode referral verifikasi telah dikirimkan ke email ${email}. Silakan periksa Kotak Masuk atau folder Spam Anda.`
     });
   } catch (err: any) {
-    console.error('[AUTH EMAIL ERROR]', err?.message || err);
-    return res.json({
-      success: true,
+    return res.status(500).json({
+      success: false,
       delivered: false,
-      message: `Kode verifikasi diproses untuk email ${email}. Silakan periksa email Anda.`
+      message: `Gagal mengirim email ke ${email}: ${err?.message || err}`
     });
   }
+});
+
+// Endpoint: Verifikasi Kode Referral OTP
+app.post('/api/auth/verify-referral-code', (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const code = String(req.body.code || '').trim();
+
+  if (!email || !code || code.length !== 6) {
+    return res.status(400).json({
+      success: false,
+      message: 'Email dan 6-digit kode referral wajib diisi.'
+    });
+  }
+
+  const record = referralCodesStore.get(email);
+  if (!record) {
+    return res.status(404).json({
+      success: false,
+      message: 'Kode referral untuk email ini tidak ditemukan. Silakan klik "Kirim Kode Referral ke Email".'
+    });
+  }
+
+  if (record.used) {
+    return res.status(400).json({
+      success: false,
+      message: 'Kode referral ini sudah pernah digunakan. Silakan minta kode baru.'
+    });
+  }
+
+  if (Date.now() > record.expiresAtMs) {
+    return res.status(410).json({
+      success: false,
+      message: 'Kode referral telah kedaluwarsa (lebih dari 10 menit). Silakan klik "Kirim Ulang Kode".'
+    });
+  }
+
+  const inputHash = crypto.createHash('sha256').update(code).digest('hex');
+  if (inputHash !== record.otpHash) {
+    return res.status(401).json({
+      success: false,
+      message: 'Kode referral salah! Periksa kembali angka yang tertera pada email Anda.'
+    });
+  }
+
+  // Tandai kode sudah dipakai
+  record.used = true;
+  return res.json({
+    success: true,
+    message: 'Kode referral email berhasil diverifikasi!'
+  });
 });
 
 // Endpoint: Verifikasi Kode Autentikasi Khusus Admin
