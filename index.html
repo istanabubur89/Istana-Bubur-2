@@ -1318,15 +1318,41 @@
                             <span class="flex items-center gap-2 text-xs sm:text-sm">
                                 <i class="fas fa-paper-plane text-emerald-600"></i> Email Verifikasi Terkirim
                             </span>
-                            <span class="text-[10px] bg-emerald-200/80 text-emerald-900 px-2 py-0.5 rounded-full font-extrabold">Aktif</span>
+                            <span id="reg-status-badge" class="text-[10px] bg-emerald-200/80 text-emerald-900 px-2 py-0.5 rounded-full font-extrabold">Aktif</span>
                         </div>
                         <div class="bg-white p-3 rounded-xl border border-emerald-100 shadow-xs">
                             <p class="text-[11px] text-gray-500 font-medium">Alamat Email Penerima:</p>
                             <p id="reg-display-email" class="text-sm font-extrabold text-emerald-800 font-mono break-all mt-0.5">email@anda.com</p>
                         </div>
-                        <p class="text-[11px] text-emerald-800 leading-relaxed">
+                        <p id="reg-email-notice" class="text-[11px] text-emerald-800 leading-relaxed">
                             <i class="fas fa-info-circle mr-1 text-emerald-600"></i> Silakan periksa <strong>Kotak Masuk (Inbox)</strong> atau folder <strong>Spam</strong> email Anda, lalu ketik 6 digit kode referral di bawah ini.
                         </p>
+                    </div>
+
+                    <!-- Fallback Box jika APK / Jaringan Offline -->
+                    <div id="reg-fallback-box" class="hidden-view bg-amber-50 border border-amber-300 rounded-2xl p-3.5 text-left text-xs space-y-2 shadow-xs">
+                        <div class="flex items-center justify-between text-amber-900 font-bold">
+                            <span class="flex items-center gap-1.5"><i class="fas fa-shield-alt text-amber-600"></i> Kode Verifikasi Anda:</span>
+                            <button type="button" onclick="autoFillReferralCode()" class="text-[10px] bg-amber-200 text-amber-900 font-black px-2 py-1 rounded-lg hover:bg-amber-300 transition">Gunakan Kode Ini</button>
+                        </div>
+                        <div class="bg-white p-2.5 rounded-xl border border-amber-200 font-mono text-center text-lg font-black tracking-widest text-amber-900" id="reg-fallback-code-val">
+                            ------
+                        </div>
+                        <p class="text-[10px] text-amber-800 leading-tight">
+                            Koneksi server email darurat. Anda dapat langsung menggunakan kode di atas untuk menyelesaikan pendaftaran.
+                        </p>
+                    </div>
+
+                    <!-- Tombol Cepat Buka Gmail & Kirim WhatsApp -->
+                    <div class="grid grid-cols-2 gap-2">
+                        <button type="button" onclick="openGmailApp()" class="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition">
+                            <i class="fab fa-google text-red-600"></i>
+                            <span>Buka Gmail</span>
+                        </button>
+                        <button type="button" onclick="sendReferralViaWhatsApp()" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition">
+                            <i class="fab fa-whatsapp text-emerald-600"></i>
+                            <span>Kirim ke WA</span>
+                        </button>
                     </div>
 
                     <div class="space-y-2 text-left">

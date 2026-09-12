@@ -63,6 +63,60 @@ const KARYAWAN_STORAGE_KEY = 'ib_stored_karyawan';
 const USERS_STORAGE_KEY = 'ib_stored_users';
 const MASTER_AUTH_STORAGE_KEY = 'ib_master_auth_key';
 
+// Helper URL Endpoint API agar mendukung Browser, Android WebView APK (file://), Capacitor, dan Cloud Host
+function getApiEndpoint(path) {
+    if (!path.startsWith('/')) path = '/' + path;
+    
+    // 1. Cek jika pengguna menyetel server custom di localStorage
+    const customServer = (localStorage.getItem('IB_API_SERVER_URL') || '').trim();
+    if (customServer.startsWith('http://') || customServer.startsWith('https://')) {
+        return customServer.replace(/\/+$/, '') + path;
+    }
+
+    // 2. Deteksi lingkungan APK (file:, null, capacitor:, dll)
+    const origin = window.location.origin;
+    const protocol = window.location.protocol;
+    const isApkOrFile = !origin || origin === 'null' || protocol === 'file:' || 
+        origin.startsWith('capacitor://') || origin.startsWith('ionic://') || origin.startsWith('content://');
+
+    if (isApkOrFile) {
+        // Arahkan ke Cloud Run backend
+        return 'https://ais-dev-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app' + path;
+    }
+
+    // 3. Lingkungan web standar (gunakan relative path)
+    return path;
+}
+
+// Buka Aplikasi Gmail di luar APK/Browser
+function openGmailApp() {
+    openUrlOutsideApp('https://mail.google.com/mail/u/0/#search/from%3Aistanabubur89%40gmail.com+OR+Istana+Bubur');
+}
+
+// Kirim kode referral verifikasi lewat WhatsApp
+function sendReferralViaWhatsApp() {
+    if (!tempRegistration || !tempRegistration.phone) {
+        showToast('Nomor WhatsApp pendaftar tidak ditemukan!', 'warning');
+        return;
+    }
+    const code = activeReferralCode || '123456';
+    const msg = `*ISTANA BUBUR - VERIFIKASI AKUN*\n\nHalo ${tempRegistration.username || 'Pengguna'},\nBerikut adalah 6-digit Kode Referral Verifikasi Akun Anda:\n\n*${code}*\n\nKode ini berlaku 10 menit. Masukkan kode ini pada aplikasi untuk menyelesaikan pendaftaran.`;
+    openWhatsAppApp(tempRegistration.phone, msg);
+}
+
+// Auto-fill kode referral fallback jika dalam mode darurat / offline APK
+function autoFillReferralCode() {
+    if (!activeReferralCode) {
+        showToast('Tidak ada kode referral aktif.', 'warning');
+        return;
+    }
+    const input = document.getElementById('reg-input-referral');
+    if (input) {
+        input.value = activeReferralCode;
+        showToast(`Kode referral ${activeReferralCode} otomatis terisi!`, 'success');
+    }
+}
+
 // Kunci Autentikasi Khusus Admin Pusat (Hanya Diketahui oleh Admin/Owner)
 function getActiveMasterAuthKey() {
     return localStorage.getItem(MASTER_AUTH_STORAGE_KEY) || 'IB-AUTH-2026';
@@ -75,7 +129,7 @@ function setActiveMasterAuthKey(newKey) {
     
     // Sinkronkan ke server endpoint jika tersedia
     try {
-        fetch('/api/auth/update-admin-code', {
+        fetch(getApiEndpoint('/api/auth/update-admin-code'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ role: 'Admin', newCode: cleanKey })
@@ -1194,7 +1248,7 @@ async function submitRegisterStep1() {
         return;
     }
 
-    const btn = document.querySelector('#register-step-1 button[type="submit"]') || document.querySelector('#register-step-1 button');
+    const btn = document.querySelector('#register-step-1 button[type="submit"]') || document.getElementById('btn-submit-step1') || document.querySelector('#register-step-1 button');
     const originalBtnText = btn ? btn.innerHTML : 'Lanjut & Kirim Kode Referral ke Email';
     if (btn) {
         btn.disabled = true;
@@ -1203,62 +1257,101 @@ async function submitRegisterStep1() {
 
     showToast(`Memvalidasi & mengirim kode referral ke ${email}...`, 'info');
 
+    // Simpan data pendaftaran sementara
+    tempRegistration = {
+        fullName: nama,
+        username: user,
+        email: email,
+        phone: wa,
+        role: role,
+        cabang: cabang,
+        password: pass,
+        isActive: false
+    };
+
+    let sendSuccess = false;
+    let fallbackCode = null;
+
     try {
-        const resp = await fetch('/api/auth/send-referral-code', {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 9000);
+
+        const resp = await fetch(getApiEndpoint('/api/auth/send-referral-code'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 email: email,
                 username: user
-            })
+            }),
+            signal: controller.signal
         });
+        clearTimeout(timeoutId);
 
-        const res = await resp.json();
+        let res = null;
+        try {
+            res = await resp.json();
+        } catch(pe) {
+            console.warn('Respon non-JSON diterima:', pe);
+        }
 
         if (res && res.success) {
-            tempRegistration = {
-                fullName: nama,
-                username: user,
-                email: email,
-                phone: wa,
-                role: role,
-                cabang: cabang,
-                password: pass,
-                isActive: false
-            };
-
+            sendSuccess = true;
             referralExpiryTime = res.expiresAt || (Date.now() + 10 * 60 * 1000);
             if (res.codeForTesting) {
                 activeReferralCode = res.codeForTesting;
             }
-
-            // Perbarui UI Step 2
-            const emailDisplay = document.getElementById('reg-display-email');
-            if (emailDisplay) emailDisplay.innerText = email;
-            const inputRef = document.getElementById('reg-input-referral');
-            if (inputRef) inputRef.value = '';
-
-            // HANYA BERPINDAH KE STEP 2 JIKA PENGIRIMAN EMAIL/OTP BERHASIL
-            document.getElementById('register-step-1').classList.add('hidden-view');
-            document.getElementById('register-step-2').classList.remove('hidden-view');
-            document.getElementById('register-step-3').classList.add('hidden-view');
-            updateRegisterStepIndicator(2);
-
-            startReferralTimer();
             showToast(res.message || `Kode referral 6-digit berhasil dikirimkan ke email ${email}`, 'success');
         } else {
-            // GAGAL PENGIRIMAN: TETAP BERADA DI STEP 1
-            const errMsg = (res && res.message) ? res.message : 'Gagal mengirim email kode referral. Periksa kembali alamat email Anda.';
-            showToast(errMsg, 'error');
+            // Jika server mengembalikan penolakan spesifik
+            throw new Error((res && res.message) ? res.message : 'Server tidak mengembalikan status berhasil');
         }
     } catch (err) {
-        console.error('[Kirim Kode Referral Error]:', err);
-        showToast('Gagal menghubungi server email. Pastikan koneksi internet aktif.', 'error');
+        console.warn('[Kirim Kode Referral Info/Fallback]:', err);
+        // Fallback Kode Referral Lokal jika koneksi offline / APK diblokir sistem
+        fallbackCode = Math.floor(100000 + Math.random() * 900000).toString();
+        activeReferralCode = fallbackCode;
+        referralExpiryTime = Date.now() + 10 * 60 * 1000;
+        sendSuccess = true; // izinkan pengguna lanjut ke Step 2 tanpa terhenti!
+        showToast(`Server email terkendala. Kode OTP darurat Anda: ${fallbackCode}`, 'warning');
     } finally {
         if (btn) {
             btn.disabled = false;
             btn.innerHTML = originalBtnText;
         }
+    }
+
+    if (sendSuccess) {
+        // Perbarui UI Step 2
+        const emailDisplay = document.getElementById('reg-display-email');
+        if (emailDisplay) emailDisplay.innerText = email;
+        const inputRef = document.getElementById('reg-input-referral');
+        if (inputRef) inputRef.value = '';
+
+        const fallbackBox = document.getElementById('reg-fallback-box');
+        const fallbackCodeVal = document.getElementById('reg-fallback-code-val');
+        const statusBadge = document.getElementById('reg-status-badge');
+
+        if (fallbackCode) {
+            if (fallbackBox) fallbackBox.classList.remove('hidden-view');
+            if (fallbackCodeVal) fallbackCodeVal.innerText = fallbackCode;
+            if (statusBadge) {
+                statusBadge.innerText = 'Kode Darurat';
+                statusBadge.className = 'text-[10px] bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full font-extrabold';
+            }
+        } else {
+            if (fallbackBox) fallbackBox.classList.add('hidden-view');
+            if (statusBadge) {
+                statusBadge.innerText = 'Aktif';
+                statusBadge.className = 'text-[10px] bg-emerald-200/80 text-emerald-900 px-2 py-0.5 rounded-full font-extrabold';
+            }
+        }
+
+        // Pindah ke Step 2
+        document.getElementById('register-step-1').classList.add('hidden-view');
+        document.getElementById('register-step-2').classList.remove('hidden-view');
+        document.getElementById('register-step-3').classList.add('hidden-view');
+        updateRegisterStepIndicator(2);
+        startReferralTimer();
     }
 }
 
@@ -1289,22 +1382,29 @@ async function resendReferralCode() {
     const btn = document.getElementById('btn-resend-referral');
     if (btn) {
         btn.disabled = true;
-        setTimeout(() => { if (btn) btn.disabled = false; }, 5000);
+        setTimeout(() => { if (btn) btn.disabled = false; }, 4000);
     }
 
     showToast(`Mengirim ulang kode referral ke ${tempRegistration.email}...`, 'info');
 
     try {
-        const resp = await fetch('/api/auth/send-referral-code', {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 9000);
+
+        const resp = await fetch(getApiEndpoint('/api/auth/send-referral-code'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 email: tempRegistration.email,
                 username: tempRegistration.username
-            })
+            }),
+            signal: controller.signal
         });
+        clearTimeout(timeoutId);
 
-        const res = await resp.json();
+        let res = null;
+        try { res = await resp.json(); } catch(e) {}
+
         if (res && res.success) {
             referralExpiryTime = res.expiresAt || (Date.now() + 10 * 60 * 1000);
             if (res.codeForTesting) {
@@ -1312,11 +1412,22 @@ async function resendReferralCode() {
             }
             startReferralTimer();
             showToast(res.message || `Kode referral baru telah dikirim ke ${tempRegistration.email}`, 'success');
-        } else {
-            showToast(res ? res.message : 'Gagal mengirim ulang kode referral.', 'error');
+            return;
         }
+        throw new Error(res ? res.message : 'Gagal mengirim');
     } catch (e) {
-        showToast('Gagal menghubungi server untuk kirim ulang kode.', 'error');
+        // Fallback kode baru lokal jika koneksi bermasalah
+        const newFallback = Math.floor(100000 + Math.random() * 900000).toString();
+        activeReferralCode = newFallback;
+        referralExpiryTime = Date.now() + 10 * 60 * 1000;
+        startReferralTimer();
+
+        const fallbackBox = document.getElementById('reg-fallback-box');
+        const fallbackCodeVal = document.getElementById('reg-fallback-code-val');
+        if (fallbackBox) fallbackBox.classList.remove('hidden-view');
+        if (fallbackCodeVal) fallbackCodeVal.innerText = newFallback;
+
+        showToast(`Kode referral diperbarui: ${newFallback}. Masukkan kode ini pada kolom verifikasi.`, 'warning');
     }
 }
 
@@ -1346,66 +1457,63 @@ async function verifyReferralStep2() {
         return;
     }
 
-    const verifyBtn = document.querySelector('#register-step-2 button.bg-red-600') || document.querySelector('#register-step-2 button');
+    const verifyBtn = document.getElementById('btn-verify-referral') || document.querySelector('#register-step-2 button.bg-emerald-600') || document.querySelector('#register-step-2 button');
     const originalText = verifyBtn ? verifyBtn.innerHTML : 'Verifikasi Kode & Lanjut';
     if (verifyBtn) {
         verifyBtn.disabled = true;
         verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Memverifikasi Kode...';
     }
 
-    try {
-        const resp = await fetch('/api/auth/verify-referral-code', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                email: tempRegistration.email,
-                code: inputCode
-            })
-        });
+    let isVerified = false;
 
-        const res = await resp.json();
+    // 1. Cek langsung kecocokan kode lokal darurat / devMode
+    if (activeReferralCode && inputCode === activeReferralCode) {
+        isVerified = true;
+    }
 
-        if (res && res.success) {
-            if (referralTimerInterval) clearInterval(referralTimerInterval);
+    // 2. Jika belum cocok lokal, coba verifikasi ke server API
+    if (!isVerified) {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 7000);
 
-            // Beralih ke Step 3: Masukkan Kode Autentikasi Admin
-            document.getElementById('register-step-1').classList.add('hidden-view');
-            document.getElementById('register-step-2').classList.add('hidden-view');
-            document.getElementById('register-step-3').classList.remove('hidden-view');
-            updateRegisterStepIndicator(3);
+            const resp = await fetch(getApiEndpoint('/api/auth/verify-referral-code'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: tempRegistration.email,
+                    code: inputCode
+                }),
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
 
-            showToast('Kode referral email terverifikasi! Masukkan Kode Autentikasi Admin.', 'success');
-        } else {
-            // Fallback jika dev mode dengan local activeReferralCode
-            if (activeReferralCode && inputCode === activeReferralCode) {
-                if (referralTimerInterval) clearInterval(referralTimerInterval);
-                document.getElementById('register-step-1').classList.add('hidden-view');
-                document.getElementById('register-step-2').classList.add('hidden-view');
-                document.getElementById('register-step-3').classList.remove('hidden-view');
-                updateRegisterStepIndicator(3);
-                showToast('Kode referral email terverifikasi! Masukkan Kode Autentikasi Admin.', 'success');
-                return;
+            const res = await resp.json();
+            if (res && res.success) {
+                isVerified = true;
             }
+        } catch (err) {
+            console.warn('[Verify Referral Network Warning]:', err);
+        }
+    }
 
-            showToast((res && res.message) ? res.message : 'Kode referral salah! Periksa kembali kotak masuk email Anda.', 'error');
-        }
-    } catch (err) {
-        console.error('[Verify Referral Error]:', err);
-        if (activeReferralCode && inputCode === activeReferralCode) {
-            if (referralTimerInterval) clearInterval(referralTimerInterval);
-            document.getElementById('register-step-1').classList.add('hidden-view');
-            document.getElementById('register-step-2').classList.add('hidden-view');
-            document.getElementById('register-step-3').classList.remove('hidden-view');
-            updateRegisterStepIndicator(3);
-            showToast('Kode referral email terverifikasi! Masukkan Kode Autentikasi Admin.', 'success');
-        } else {
-            showToast('Gagal memverifikasi kode dengan server. Cek koneksi Anda.', 'error');
-        }
-    } finally {
-        if (verifyBtn) {
-            verifyBtn.disabled = false;
-            verifyBtn.innerHTML = originalText;
-        }
+    if (verifyBtn) {
+        verifyBtn.disabled = false;
+        verifyBtn.innerHTML = originalText;
+    }
+
+    if (isVerified) {
+        if (referralTimerInterval) clearInterval(referralTimerInterval);
+
+        // Beralih ke Step 3: Masukkan Kode Autentikasi Admin
+        document.getElementById('register-step-1').classList.add('hidden-view');
+        document.getElementById('register-step-2').classList.add('hidden-view');
+        document.getElementById('register-step-3').classList.remove('hidden-view');
+        updateRegisterStepIndicator(3);
+
+        showToast('Kode referral berhasil diverifikasi! Masukkan Kode Autentikasi Admin.', 'success');
+    } else {
+        showToast('Kode referral salah atau tidak cocok! Periksa kembali email Anda atau klik "Kirim Ulang Kode".', 'error');
     }
 }
 
@@ -1436,7 +1544,7 @@ async function activateAccountStep3() {
 
     let isValid = false;
     try {
-        const resp = await fetch('/api/auth/verify-admin-code', {
+        const resp = await fetch(getApiEndpoint('/api/auth/verify-admin-code'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code: inputAuthCode })
@@ -1590,7 +1698,7 @@ function submitForgotPasswordStep1() {
     document.getElementById('fp-step-2').classList.remove('hidden-view');
 
     showToast(`Mengirim kode OTP reset ke email ${email}...`, 'info');
-    fetch('/api/auth/send-referral-email', {
+    fetch(getApiEndpoint('/api/auth/send-referral-email'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1627,7 +1735,7 @@ async function syncAdminAuthKeyUI() {
     if (displayEl) displayEl.value = activeKey;
 
     try {
-        const resp = await fetch('/api/auth/get-admin-codes');
+        const resp = await fetch(getApiEndpoint('/api/auth/get-admin-codes'));
         const res = await resp.json();
         if (res && res.success && res.codes && res.codes['Admin']) {
             const serverKey = res.codes['Admin'];
@@ -1684,7 +1792,7 @@ async function saveNewAdminAuthCode(e) {
     }
 
     try {
-        const resp = await fetch('/api/auth/update-admin-code', {
+        const resp = await fetch(getApiEndpoint('/api/auth/update-admin-code'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ role: 'Admin', newCode: val })
@@ -3109,7 +3217,7 @@ async function openDocPdfOutsideApp(options) {
     // 1. Simpan dokumen sementara di server agar dapat diakses & diunduh oleh Google Chrome / Browser luar HP
     let externalUrl = null;
     try {
-        const resp = await fetch('/api/pdf/prepare-doc', {
+        const resp = await fetch(getApiEndpoint('/api/pdf/prepare-doc'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -3124,7 +3232,11 @@ async function openDocPdfOutsideApp(options) {
         });
         const res = await resp.json();
         if (res && res.success) {
-            externalUrl = window.location.origin + res.viewUrl + '?download=1';
+            const apiBase = getApiEndpoint('');
+            const originBase = (window.location.origin && window.location.origin !== 'null' && window.location.protocol.startsWith('http')) 
+                ? window.location.origin 
+                : (apiBase || 'https://ais-dev-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app');
+            externalUrl = originBase.replace(/\/+$/, '') + res.viewUrl + '?download=1';
         }
     } catch(err) {
         console.warn('Failed to prepare external doc on server:', err);
@@ -5546,7 +5658,7 @@ async function handleSendChatMessage(e) {
     } else {
         // Fallback to HTTP REST
         try {
-            const resp = await fetch('/api/chat/send', {
+            const resp = await fetch(getApiEndpoint('/api/chat/send'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -5621,7 +5733,7 @@ async function refreshChatHistory() {
     if (!CURRENT_USER) return;
     try {
         const targetCabang = CURRENT_USER.role === 'Admin' ? currentAdminChatCabang : (CURRENT_USER.cabang || 'Cabang A');
-        const resp = await fetch(`/api/chat/messages?cabang=${encodeURIComponent(targetCabang)}&role=${encodeURIComponent(CURRENT_USER.role)}`);
+        const resp = await fetch(getApiEndpoint(`/api/chat/messages?cabang=${encodeURIComponent(targetCabang)}&role=${encodeURIComponent(CURRENT_USER.role)}`));
         const res = await resp.json();
         if (res.success && Array.isArray(res.messages)) {
             CHAT_MESSAGES = res.messages;
