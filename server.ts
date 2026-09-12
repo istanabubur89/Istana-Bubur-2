@@ -55,8 +55,12 @@ function createEmailTransporter() {
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
   const port = parseInt(process.env.SMTP_PORT || '465', 10);
   const secure = process.env.SMTP_SECURE !== 'false' && port === 465;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+  // Support either SMTP_USER or fallback to istanabubur89@gmail.com
+  const user = (process.env.SMTP_USER || 'istanabubur89@gmail.com').trim();
+  // Support both SMTP_PASS or SMTP_PASSWORD, and remove spaces often present in Gmail App Passwords
+  const rawPass = process.env.SMTP_PASS || process.env.SMTP_PASSWORD || 'axqgkpswdfooekzu';
+  const pass = rawPass ? rawPass.replace(/\s+/g, '') : '';
+  const from = process.env.SMTP_FROM || `"Istana Bubur" <${user}>`;
 
   if (user && pass) {
     return {
@@ -66,15 +70,19 @@ function createEmailTransporter() {
         secure,
         auth: { user, pass }
       }),
+      from,
+      user,
       isLive: true
     };
   }
 
-  // Fallback transporter when secrets are not yet filled
+  // Fallback transporter when credentials are not filled
   return {
     transporter: nodemailer.createTransport({
       jsonTransport: true
     }),
+    from,
+    user,
     isLive: false
   };
 }
@@ -543,7 +551,8 @@ app.post('/api/auth/send-referral-code', async (req, res) => {
   referralCodesStore.set(email, record);
 
   // 4. Siapkan Nodemailer
-  const { transporter, isLive } = createEmailTransporter();
+  const emailTransporter = createEmailTransporter();
+  const { transporter, isLive, from } = emailTransporter;
   const subject = `[Istana Bubur] Kode Referral Pendaftaran: ${otp}`;
   const htmlContent = `
   <!DOCTYPE html>
@@ -592,7 +601,7 @@ app.post('/api/auth/send-referral-code', async (req, res) => {
   // 6. Pengiriman SMTP Live
   try {
     const info = await transporter.sendMail({
-      from: process.env.SMTP_FROM || `"Istana Bubur Keamanan" <${process.env.SMTP_USER}>`,
+      from,
       to: email,
       subject,
       html: htmlContent
@@ -660,7 +669,8 @@ app.post('/api/auth/send-referral-email', async (req, res) => {
   `;
 
   try {
-    const { transporter, isLive } = createEmailTransporter();
+    const emailTransporter = createEmailTransporter();
+    const { transporter, isLive, from } = emailTransporter;
     if (!isLive) {
       return res.json({
         success: true,
@@ -670,7 +680,7 @@ app.post('/api/auth/send-referral-email', async (req, res) => {
     }
 
     const info = await transporter.sendMail({
-      from: process.env.SMTP_FROM || `"Istana Bubur Keamanan" <${process.env.SMTP_USER}>`,
+      from,
       to: email,
       subject,
       html: htmlContent
