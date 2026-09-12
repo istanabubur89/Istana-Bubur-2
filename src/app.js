@@ -2215,6 +2215,10 @@ function updateDashboardCharts() {
     }
 }
 
+function renderDashboardSalesCharts() {
+    updateDashboardCharts();
+}
+
 // Karyawan & Slip Gaji Logic
 async function loadKaryawan() {
     const loading = document.getElementById('loading-karyawan');
@@ -2920,14 +2924,266 @@ function generateReceiptHTML(trx) {
     `;
 }
 
-function cetakNotaPDF(data = null) {
+// ==========================================
+// FEATURE: CETAK / LIHAT NOTA PDF & WHATSAPP (ANDROID APK & WEB READY)
+// ==========================================
+
+// Helper: Membuka URL di luar aplikasi APK Android (di Google Chrome / browser eksternal sistem)
+function openUrlOutsideApp(url) {
+    if (!url) return;
+
+    // 1. Cek Native Android Bridge jika APK menyediakan JavascriptInterface
+    const native = window.Android || window.AndroidApp || window.BluetoothBridge || window.AndroidPrinter;
+    if (native) {
+        if (typeof native.openInBrowser === 'function') {
+            try { native.openInBrowser(url); return; } catch(e){}
+        }
+        if (typeof native.openExternal === 'function') {
+            try { native.openExternal(url); return; } catch(e){}
+        }
+        if (typeof native.openBrowser === 'function') {
+            try { native.openBrowser(url); return; } catch(e){}
+        }
+        if (typeof native.openUrl === 'function') {
+            try { native.openUrl(url); return; } catch(e){}
+        }
+    }
+
+    // 2. Cek Cordova / Capacitor InAppBrowser
+    try {
+        if (window.cordova && window.cordova.InAppBrowser) {
+            window.cordova.InAppBrowser.open(url, '_system');
+            return;
+        }
+    } catch(e){}
+
+    const isAndroid = /Android/i.test(navigator.userAgent);
+
+    // 3. Pada Android APK WebView, gunakan Android intent scheme agar sistem melempar URL ke browser Chrome luar
+    if (isAndroid && url.startsWith('http')) {
+        try {
+            const cleanHttp = url.replace(/^https?:\/\//, '');
+            const scheme = url.startsWith('https://') ? 'https' : 'http';
+            const intentUrl = `intent://${cleanHttp}#Intent;scheme=${scheme};action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;end`;
+
+            const opened = window.open(url, '_system');
+            if (!opened || opened.closed) {
+                const a = document.createElement('a');
+                a.href = intentUrl;
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => a.remove(), 1000);
+            }
+            return;
+        } catch(e) {
+            console.warn('Android external intent error:', e);
+        }
+    }
+
+    // 4. Default web browser: buka tab baru
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 1000);
+}
+
+// Helper: Membuka aplikasi WhatsApp langsung (berpindah ke app WhatsApp di Android)
+function openWhatsAppApp(phone, message) {
+    let cleanWa = (phone || '').replace(/[^0-9]/g, '');
+    if (cleanWa.startsWith('0')) {
+        cleanWa = '62' + cleanWa.slice(1);
+    } else if (cleanWa.startsWith('8')) {
+        cleanWa = '62' + cleanWa;
+    }
+    const encodedMsg = encodeURIComponent(message || '');
+
+    // 1. Android Native Bridge jika APK memiliki interface native
+    const native = window.Android || window.AndroidApp || window.BluetoothBridge || window.AndroidPrinter;
+    if (native) {
+        if (typeof native.openWhatsApp === 'function') {
+            try {
+                native.openWhatsApp(cleanWa, message || '');
+                showToast('Membuka aplikasi WhatsApp...', 'success');
+                return;
+            } catch(e) { console.warn('Native openWhatsApp error:', e); }
+        }
+        if (typeof native.openExternal === 'function') {
+            try {
+                const targetUri = cleanWa 
+                    ? `whatsapp://send?phone=${cleanWa}&text=${encodedMsg}`
+                    : `whatsapp://send?text=${encodedMsg}`;
+                native.openExternal(targetUri);
+                showToast('Membuka aplikasi WhatsApp...', 'success');
+                return;
+            } catch(e) { console.warn('Native openExternal error:', e); }
+        }
+    }
+
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+    if (isAndroid) {
+        showToast('Berpindah ke aplikasi WhatsApp...', 'success');
+        
+        // Pada Android APK (WebView), URL dengan skema whatsapp:// langsung memicu OS Android
+        // untuk membuka aplikasi resmi WhatsApp
+        const waDirectUrl = cleanWa 
+            ? `whatsapp://send?phone=${cleanWa}&text=${encodedMsg}`
+            : `whatsapp://send?text=${encodedMsg}`;
+
+        // Intent Android package com.whatsapp untuk memastikan aplikasi WhatsApp langsung terbuka
+        const intentUrl = cleanWa
+            ? `intent://send?phone=${cleanWa}&text=${encodedMsg}#Intent;package=com.whatsapp;scheme=whatsapp;action=android.intent.action.VIEW;end`
+            : `intent://send?text=${encodedMsg}#Intent;package=com.whatsapp;scheme=whatsapp;action=android.intent.action.VIEW;end`;
+
+        try {
+            window.location.href = waDirectUrl;
+        } catch(e) {
+            try {
+                window.location.href = intentUrl;
+            } catch(err2) {
+                console.warn(err2);
+            }
+        }
+
+        // Fallback jika WhatsApp tidak terpasang di HP pengguna
+        setTimeout(() => {
+            if (!document.hidden) {
+                const fallbackUrl = cleanWa 
+                    ? `https://api.whatsapp.com/send?phone=${cleanWa}&text=${encodedMsg}`
+                    : `https://api.whatsapp.com/send?text=${encodedMsg}`;
+                openUrlOutsideApp(fallbackUrl);
+            }
+        }, 1500);
+    } else if (isMobile) {
+        const waDirectUrl = cleanWa 
+            ? `whatsapp://send?phone=${cleanWa}&text=${encodedMsg}`
+            : `whatsapp://send?text=${encodedMsg}`;
+        showToast('Membuka aplikasi WhatsApp...', 'success');
+        window.location.href = waDirectUrl;
+        setTimeout(() => {
+            if (!document.hidden) {
+                const fallbackUrl = cleanWa 
+                    ? `https://api.whatsapp.com/send?phone=${cleanWa}&text=${encodedMsg}`
+                    : `https://api.whatsapp.com/send?text=${encodedMsg}`;
+                window.open(fallbackUrl, '_blank');
+            }
+        }, 1200);
+    } else {
+        // Desktop Browser
+        const waWebUrl = cleanWa 
+            ? `https://api.whatsapp.com/send?phone=${cleanWa}&text=${encodedMsg}`
+            : `https://api.whatsapp.com/send?text=${encodedMsg}`;
+        showToast('Membuka WhatsApp...', 'success');
+        window.open(waWebUrl, '_blank', 'noopener,noreferrer');
+    }
+}
+
+// Helper: Menyiapkan dokumen & membuka di luar aplikasi Android agar dapat diunduh ke memori HP
+async function openDocPdfOutsideApp(options) {
+    const { type, filename, title, htmlContent, element, jsPdfOpt, phone, waMessage } = options;
+    showToast('Menyiapkan file PDF untuk dibuka di luar aplikasi...', 'info');
+
+    let base64Pdf = null;
+    try {
+        if (typeof html2pdf !== 'undefined' && element) {
+            const opt = jsPdfOpt || {
+                margin: [4, 4, 4, 4],
+                filename: filename,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2, useCORS: true },
+                jsPDF: { unit: 'mm', format: type === 'nota' ? [80, 200] : 'a5', orientation: 'portrait' }
+            };
+            const dataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
+            if (dataUri && dataUri.includes('base64,')) {
+                base64Pdf = dataUri.split('base64,')[1];
+            }
+        }
+    } catch(e) {
+        console.warn('Client base64 PDF generation error:', e);
+    }
+
+    // 1. Simpan dokumen sementara di server agar dapat diakses & diunduh oleh Google Chrome / Browser luar HP
+    let externalUrl = null;
+    try {
+        const resp = await fetch('/api/pdf/prepare-doc', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type,
+                filename,
+                title,
+                htmlContent,
+                base64Pdf: base64Pdf || '',
+                phone: phone || '',
+                waMessage: waMessage || ''
+            })
+        });
+        const res = await resp.json();
+        if (res && res.success) {
+            externalUrl = window.location.origin + res.viewUrl + '?download=1';
+        }
+    } catch(err) {
+        console.warn('Failed to prepare external doc on server:', err);
+    }
+
+    // 2. Buka URL di luar aplikasi Android (browser default / Chrome / sistem unduhan)
+    if (externalUrl) {
+        openUrlOutsideApp(externalUrl);
+        showToast('Membuka & mengunduh PDF di luar aplikasi...', 'success');
+    } else {
+        showToast('Mengunduh PDF di perangkat...', 'info');
+    }
+
+    // 3. Cadangan unduh lokal di dalam web jika didukung
+    if (typeof html2pdf !== 'undefined' && element) {
+        try {
+            const opt = jsPdfOpt || {
+                margin: [4, 4, 4, 4],
+                filename: filename,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2, useCORS: true },
+                jsPDF: { unit: 'mm', format: type === 'nota' ? [80, 200] : 'a5', orientation: 'portrait' }
+            };
+            html2pdf().set(opt).from(element).save().then(() => {
+                showToast('Nota / Slip PDF siap diunduh!', 'success');
+            }).catch(() => {});
+        } catch(e){}
+    }
+}
+
+function generateReceiptWhatsAppMessage(trx) {
+    const itemsText = (trx.items || []).map(i => `• ${i.nama} (${i.qty}x @Rp ${formatRupiah(i.harga)}) = Rp ${formatRupiah(i.qty * i.harga)}`).join('\n');
+
+    return `*NOTA TRANSAKSI - ISTANA BUBUR*
+===============================
+*No. Trx:* #${trx.id}
+*Tanggal:* ${trx.tanggal || getTodayStringFormatted()}
+*Cabang:* ${trx.cabang || 'Pusat'}
+*Kasir:* ${trx.kasir || '-'}
+*Pelanggan:* ${trx.nama_pelanggan || 'Umum'}
+${trx.jenis_pesanan ? `*Tipe Pesanan:* ${trx.jenis_pesanan}\n` : ''}${trx.keterangan ? `*Catatan:* ${trx.keterangan}\n` : ''}===============================
+*Rincian Pesanan:*
+${itemsText}
+===============================
+*TOTAL BELANJA: Rp ${formatRupiah(trx.total)}*
+*Pembayaran:* ${trx.metode || 'Cash'}${trx.bayar ? `\n*Tunai:* Rp ${formatRupiah(trx.bayar)}\n*Kembalian:* Rp ${formatRupiah(trx.kembali)}` : ''}
+===============================
+_Terima kasih telah berbelanja di Istana Bubur!_
+_Selamat menikmati hidangan kami._`;
+}
+
+async function cetakNotaPDF(data = null) {
     const trx = data || LAST_TRX_DATA;
     if (!trx) {
         showToast('Tidak ada data transaksi untuk dibuat PDF', 'error');
         return;
     }
 
-    showToast('Membuat Nota PDF...', 'info');
+    showToast('Menyiapkan Nota PDF...', 'info');
 
     const tempContainer = document.createElement('div');
     tempContainer.style.position = 'fixed';
@@ -2937,29 +3193,31 @@ function cetakNotaPDF(data = null) {
     document.body.appendChild(tempContainer);
 
     const receiptElement = tempContainer.firstElementChild;
+    const filename = `Nota_${trx.id || 'Transaksi'}.pdf`;
+    const title = `Nota Transaksi #${trx.id || ''}`;
+    const htmlContent = generateReceiptHTML(trx);
+    const waMessage = generateReceiptWhatsAppMessage(trx);
 
-    if (typeof html2pdf !== 'undefined') {
-        const opt = {
-            margin: [4, 4, 4, 4],
-            filename: `Nota_${trx.id || 'Transaksi'}.pdf`,
-            image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true, letterRendering: true },
-            jsPDF: { unit: 'mm', format: [80, Math.max(160, 90 + ((trx.items?.length || 1) * 14))], orientation: 'portrait' }
-        };
+    const jsPdfOpt = {
+        margin: [4, 4, 4, 4],
+        filename: filename,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+        jsPDF: { unit: 'mm', format: [80, Math.max(160, 90 + ((trx.items?.length || 1) * 14))], orientation: 'portrait' }
+    };
 
-        html2pdf().set(opt).from(receiptElement).save().then(() => {
-            showToast('Nota PDF berhasil diunduh!', 'success');
-            tempContainer.remove();
-        }).catch(err => {
-            console.error('html2pdf error:', err);
-            // Fallback iframe print
-            printReceiptFallback(receiptElement.innerHTML);
-            tempContainer.remove();
-        });
-    } else {
-        printReceiptFallback(receiptElement.innerHTML);
-        tempContainer.remove();
-    }
+    await openDocPdfOutsideApp({
+        type: 'nota',
+        filename,
+        title,
+        htmlContent,
+        element: receiptElement,
+        jsPdfOpt,
+        phone: trx.no_wa || '',
+        waMessage
+    });
+
+    setTimeout(() => tempContainer.remove(), 2000);
 }
 
 function printReceiptFallback(htmlContent) {
@@ -3005,48 +3263,8 @@ function kirimWhatsApp(data = null) {
         noWa = noWa.trim();
     }
 
-    // Format nomor HP ke 62...
-    let cleanWa = noWa.replace(/[^0-9]/g, '');
-    if (cleanWa.startsWith('0')) {
-        cleanWa = '62' + cleanWa.slice(1);
-    } else if (cleanWa.startsWith('8')) {
-        cleanWa = '62' + cleanWa;
-    }
-
-    const itemsText = (trx.items || []).map(i => `• ${i.nama} (${i.qty}x @Rp ${formatRupiah(i.harga)}) = Rp ${formatRupiah(i.qty * i.harga)}`).join('\n');
-
-    const waMessage = 
-`*NOTA TRANSAKSI - ISTANA BUBUR*
-===============================
-*No. Trx:* #${trx.id}
-*Tanggal:* ${trx.tanggal || getTodayStringFormatted()}
-*Cabang:* ${trx.cabang || 'Pusat'}
-*Kasir:* ${trx.kasir || '-'}
-*Pelanggan:* ${trx.nama_pelanggan || 'Umum'}
-${trx.jenis_pesanan ? `*Tipe Pesanan:* ${trx.jenis_pesanan}\n` : ''}${trx.keterangan ? `*Catatan:* ${trx.keterangan}\n` : ''}===============================
-*Rincian Pesanan:*
-${itemsText}
-===============================
-*TOTAL BELANJA: Rp ${formatRupiah(trx.total)}*
-*Pembayaran:* ${trx.metode || 'Cash'}${trx.bayar ? `\n*Tunai:* Rp ${formatRupiah(trx.bayar)}\n*Kembalian:* Rp ${formatRupiah(trx.kembali)}` : ''}
-===============================
-_Terima kasih telah berbelanja di Istana Bubur!_
-_Selamat menikmati hidangan kami._`;
-
-    const encodedMsg = encodeURIComponent(waMessage);
-    const waUrl = cleanWa 
-        ? `https://api.whatsapp.com/send?phone=${cleanWa}&text=${encodedMsg}`
-        : `https://api.whatsapp.com/send?text=${encodedMsg}`;
-
-    const link = document.createElement('a');
-    link.href = waUrl;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-
-    showToast('Membuka WhatsApp...', 'success');
+    const waMessage = generateReceiptWhatsAppMessage(trx);
+    openWhatsAppApp(noWa, waMessage);
 }
 
 // ==========================================
@@ -3455,112 +3673,8 @@ function confirmHapusHistoriGaji(idx) {
     if (modalConfirm) modalConfirm.classList.remove('hidden-view');
 }
 
-// Function: Kirim WhatsApp Slip Gaji Karyawan from Riwayat Gaji
-function kirimWaSlipGaji(idx) {
-    const t = (HISTORI_GAJI_CACHE || [])[idx];
-    if (!t) {
-        showToast('Data slip gaji tidak ditemukan', 'error');
-        return;
-    }
-    kirimWaSlipGajiDirect(t);
-}
-
-function kirimWaSlipGajiDirect(t) {
-    // 1. Cari nomor WhatsApp karyawan
-    let noWa = (t['No WA'] || '').trim();
-    if (!noWa && Array.isArray(KARYAWAN_CACHE)) {
-        const k = KARYAWAN_CACHE.find(item => 
-            (t['ID Karyawan'] && String(item['ID Karyawan']) === String(t['ID Karyawan'])) ||
-            (item['Nama'] && item['Nama'].toLowerCase() === (t['Nama'] || '').toLowerCase())
-        );
-        if (k && k['No WA']) {
-            noWa = String(k['No WA']).trim();
-        }
-    }
-
-    if (!noWa) {
-        noWa = prompt(`Masukkan nomor WhatsApp untuk karyawan ${t['Nama']} (contoh: 08123456789):`, '');
-        if (noWa === null) return; // Dibatalkan pengguna
-        noWa = noWa.trim();
-    }
-
-    // 2. Normalisasi nomor WA ke format 628...
-    let cleanWa = noWa.replace(/[^0-9]/g, '');
-    if (cleanWa.startsWith('0')) {
-        cleanWa = '62' + cleanWa.slice(1);
-    } else if (cleanWa.startsWith('8')) {
-        cleanWa = '62' + cleanWa;
-    }
-
-    const bulanFormatted = formatBulanIndo(t['Bulan']);
-    const bonus = Number(t['Bonus']) || 0;
-    const potongan = Number(t['Potongan']) || 0;
-    const totalGaji = Number(t['Total Gaji']) || 0;
-    const harian = Number(t['Gaji Harian']) || 0;
-    const hari = Number(t['Hari Masuk']) || 0;
-    const pokok = (harian && hari) ? (harian * hari) : (totalGaji - bonus + potongan);
-
-    // Keterangan Link PDF jika tersedia
-    let linkPdfSection = '';
-    if (t['Link PDF'] && t['Link PDF'] !== '#' && t['Link PDF'].startsWith('http')) {
-        linkPdfSection = `*Link Unduh Slip Gaji PDF:*\n${t['Link PDF']}\n\n`;
-    } else {
-        linkPdfSection = `*Status Dokumen:*\nTelah diverifikasi & disahkan resmi oleh Manajemen Istana Bubur\n\n`;
-    }
-
-    // Format Pesan WhatsApp
-    const waMessage = 
-`*SLIP GAJI KARYAWAN - ISTANA BUBUR*
-================================
-Halo *${t['Nama']}*,
-Berikut adalah rincian slip gaji Anda:
-*Periode:* ${bulanFormatted}
-*Lokasi Cabang:* ${t['Cabang'] || 'Pusat'}
-*Jabatan:* ${t['Jabatan'] || '-'}
---------------------------------
-*Rincian Gaji:*
-${hari ? `• Hari Masuk : ${hari} hari (@Rp ${formatRupiah(harian)})\n` : ''}• Gaji Pokok : Rp ${formatRupiah(pokok)}
-• Bonus & Tunjangan : Rp ${formatRupiah(bonus)}
-• Potongan Gaji : Rp ${formatRupiah(potongan)}
-${t['Keterangan Libur'] ? `• Keterangan : ${t['Keterangan Libur']}\n` : ''}--------------------------------
-*TOTAL DITERIMA : Rp ${formatRupiah(totalGaji)}*
-================================
-${linkPdfSection}_Terima kasih atas kerja keras, loyalitas, dan dedikasi Anda di Istana Bubur._`;
-
-    const encodedMsg = encodeURIComponent(waMessage);
-    const waUrl = cleanWa 
-        ? `https://api.whatsapp.com/send?phone=${cleanWa}&text=${encodedMsg}`
-        : `https://api.whatsapp.com/send?text=${encodedMsg}`;
-
-    const linkEl = document.createElement('a');
-    linkEl.href = waUrl;
-    linkEl.target = '_blank';
-    linkEl.rel = 'noopener noreferrer';
-    document.body.appendChild(linkEl);
-    linkEl.click();
-    linkEl.remove();
-
-    showToast(`Membuka WhatsApp untuk ${t['Nama']}...`, 'success');
-}
-
-// Function: Lihat / Download Slip Gaji PDF from Riwayat Gaji
-function lihatPdfSlipGaji(idx) {
-    const t = (HISTORI_GAJI_CACHE || [])[idx];
-    if (!t) {
-        showToast('Data slip gaji tidak ditemukan', 'error');
-        return;
-    }
-    cetakSlipGajiPDF(t);
-}
-
-function cetakSlipGajiPDF(t) {
-    if (t['Link PDF'] && t['Link PDF'] !== '#' && t['Link PDF'].startsWith('http')) {
-        window.open(t['Link PDF'], '_blank');
-        return;
-    }
-
-    showToast('Membuat Slip Gaji PDF...', 'info');
-
+// Function: Format Slip Gaji HTML for display, print, and PDF
+function generateSlipGajiHTML(t) {
     const bonus = Number(t['Bonus']) || 0;
     const potongan = Number(t['Potongan']) || 0;
     const totalGaji = Number(t['Total Gaji']) || 0;
@@ -3569,11 +3683,7 @@ function cetakSlipGajiPDF(t) {
     const pokok = (harian && hari) ? (harian * hari) : (totalGaji - bonus + potongan);
     const bulanFormatted = formatBulanIndo(t['Bulan']);
 
-    const tempContainer = document.createElement('div');
-    tempContainer.style.position = 'fixed';
-    tempContainer.style.left = '-9999px';
-    tempContainer.style.top = '0';
-    tempContainer.innerHTML = `
+    return `
         <div style="width: 420px; font-family: 'Inter', -apple-system, sans-serif; background: #ffffff; padding: 24px; box-sizing: border-box; color: #1f2937; line-height: 1.5; border: 1px solid #e5e7eb;">
             <div style="text-align: center; border-bottom: 2px solid #dc2626; padding-bottom: 12px; margin-bottom: 16px;">
                 <h1 style="font-size: 20px; font-weight: 800; margin: 0; color: #dc2626; letter-spacing: 1px;">ISTANA BUBUR</h1>
@@ -3632,29 +3742,139 @@ function cetakSlipGajiPDF(t) {
             </div>
         </div>
     `;
+}
+
+function generateSlipGajiWhatsAppMessage(t) {
+    const bulanFormatted = formatBulanIndo(t['Bulan']);
+    const bonus = Number(t['Bonus']) || 0;
+    const potongan = Number(t['Potongan']) || 0;
+    const totalGaji = Number(t['Total Gaji']) || 0;
+    const harian = Number(t['Gaji Harian']) || 0;
+    const hari = Number(t['Hari Masuk']) || 0;
+    const pokok = (harian && hari) ? (harian * hari) : (totalGaji - bonus + potongan);
+
+    let linkPdfSection = '';
+    if (t['Link PDF'] && t['Link PDF'] !== '#' && t['Link PDF'].startsWith('http')) {
+        linkPdfSection = `*Link Unduh Slip Gaji PDF:*\n${t['Link PDF']}\n\n`;
+    } else {
+        linkPdfSection = `*Status Dokumen:*\nTelah diverifikasi & disahkan resmi oleh Manajemen Istana Bubur\n\n`;
+    }
+
+    return `*SLIP GAJI KARYAWAN - ISTANA BUBUR*
+================================
+Halo *${t['Nama']}*,
+Berikut adalah rincian slip gaji Anda:
+*Periode:* ${bulanFormatted}
+*Lokasi Cabang:* ${t['Cabang'] || 'Pusat'}
+*Jabatan:* ${t['Jabatan'] || '-'}
+--------------------------------
+*Rincian Gaji:*
+${hari ? `• Hari Masuk : ${hari} hari (@Rp ${formatRupiah(harian)})\n` : ''}• Gaji Pokok : Rp ${formatRupiah(pokok)}
+• Bonus & Tunjangan : Rp ${formatRupiah(bonus)}
+• Potongan Gaji : Rp ${formatRupiah(potongan)}
+${t['Keterangan Libur'] ? `• Keterangan : ${t['Keterangan Libur']}\n` : ''}--------------------------------
+*TOTAL DITERIMA : Rp ${formatRupiah(totalGaji)}*
+================================
+${linkPdfSection}_Terima kasih atas kerja keras, loyalitas, dan dedikasi Anda di Istana Bubur._`;
+}
+
+// Function: Kirim WhatsApp Slip Gaji Karyawan from Riwayat Gaji
+function kirimWaSlipGaji(idx) {
+    const t = (HISTORI_GAJI_CACHE || [])[idx];
+    if (!t) {
+        showToast('Data slip gaji tidak ditemukan', 'error');
+        return;
+    }
+    kirimWaSlipGajiDirect(t);
+}
+
+function kirimWaSlipGajiDirect(t) {
+    if (!t) {
+        showToast('Data slip gaji tidak ditemukan', 'error');
+        return;
+    }
+
+    // 1. Cari nomor WhatsApp karyawan
+    let noWa = (t['No WA'] || '').trim();
+    if (!noWa && Array.isArray(KARYAWAN_CACHE)) {
+        const k = KARYAWAN_CACHE.find(item => 
+            (t['ID Karyawan'] && String(item['ID Karyawan']) === String(t['ID Karyawan'])) ||
+            (item['Nama'] && item['Nama'].toLowerCase() === (t['Nama'] || '').toLowerCase())
+        );
+        if (k && k['No WA']) {
+            noWa = String(k['No WA']).trim();
+        }
+    }
+
+    if (!noWa) {
+        noWa = prompt(`Masukkan nomor WhatsApp untuk karyawan ${t['Nama']} (contoh: 08123456789):`, '');
+        if (noWa === null) return; // Dibatalkan pengguna
+        noWa = noWa.trim();
+    }
+
+    const waMessage = generateSlipGajiWhatsAppMessage(t);
+    openWhatsAppApp(noWa, waMessage);
+}
+
+// Function: Lihat / Download Slip Gaji PDF from Riwayat Gaji
+function lihatPdfSlipGaji(idx) {
+    const t = (HISTORI_GAJI_CACHE || [])[idx];
+    if (!t) {
+        showToast('Data slip gaji tidak ditemukan', 'error');
+        return;
+    }
+    cetakSlipGajiPDF(t);
+}
+
+async function cetakSlipGajiPDF(t) {
+    if (!t) {
+        showToast('Data slip gaji tidak ditemukan', 'error');
+        return;
+    }
+
+    if (t['Link PDF'] && t['Link PDF'] !== '#' && t['Link PDF'].startsWith('http')) {
+        openUrlOutsideApp(t['Link PDF']);
+        showToast('Membuka file PDF di luar aplikasi...', 'success');
+        return;
+    }
+
+    showToast('Menyiapkan Slip Gaji PDF...', 'info');
+
+    const cleanName = (t['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9]/g, '_');
+    const cleanBulan = (t['Bulan'] || '').replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `Slip_Gaji_${cleanName}_${cleanBulan}.pdf`;
+    const title = `Slip Gaji - ${t['Nama'] || 'Karyawan'}`;
+    const htmlContent = generateSlipGajiHTML(t);
+    const waMessage = generateSlipGajiWhatsAppMessage(t);
+
+    const tempContainer = document.createElement('div');
+    tempContainer.style.position = 'fixed';
+    tempContainer.style.left = '-9999px';
+    tempContainer.style.top = '0';
+    tempContainer.innerHTML = htmlContent;
     document.body.appendChild(tempContainer);
 
     const el = tempContainer.firstElementChild;
-    if (typeof html2pdf !== 'undefined') {
-        const cleanName = (t['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9]/g, '_');
-        const cleanBulan = (t['Bulan'] || '').replace(/[^a-zA-Z0-9]/g, '_');
-        const opt = {
-            margin: [4, 4, 4, 4],
-            filename: `Slip_Gaji_${cleanName}_${cleanBulan}.pdf`,
-            image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2 },
-            jsPDF: { unit: 'mm', format: 'a5', orientation: 'portrait' }
-        };
-        html2pdf().set(opt).from(el).save().then(() => {
-            showToast('Slip Gaji PDF berhasil diunduh!', 'success');
-            tempContainer.remove();
-        }).catch(() => {
-            tempContainer.remove();
-        });
-    } else {
-        window.print();
-        tempContainer.remove();
-    }
+    const jsPdfOpt = {
+        margin: [4, 4, 4, 4],
+        filename: filename,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a5', orientation: 'portrait' }
+    };
+
+    await openDocPdfOutsideApp({
+        type: 'slip',
+        filename,
+        title,
+        htmlContent,
+        element: el,
+        jsPdfOpt,
+        phone: t['No WA'] || '',
+        waMessage
+    });
+
+    setTimeout(() => tempContainer.remove(), 2000);
 }
 
 // ==========================================
@@ -4592,8 +4812,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Update views if visible
                 if (currentTab === 'histori-trx') {
                     renderRiwayatTransaksi();
-                } else if (currentTab === 'profil' && CURRENT_USER && CURRENT_USER.role === 'Admin') {
-                    renderDashboardSalesCharts();
+                } else if (currentTab === 'profil') {
+                    if (CURRENT_USER && CURRENT_USER.role === 'Admin') {
+                        renderDashboardSalesCharts();
+                    } else if (CURRENT_USER && CURRENT_USER.role !== 'Admin') {
+                        updateKasirDashboard();
+                    }
                 }
             }
         });
@@ -4657,9 +4881,17 @@ window.scanPrinters = scanPrinters;
 window.disconnectPrinter = disconnectPrinter;
 window.testPrint = testPrint;
 window.updateDashboardCharts = updateDashboardCharts;
+window.renderDashboardSalesCharts = renderDashboardSalesCharts;
 window.resetDateFilter = resetDateFilter;
 window.updateKasirDashboard = updateKasirDashboard;
 window.getHariTanggalIndo = getHariTanggalIndo;
+window.openUrlOutsideApp = openUrlOutsideApp;
+window.openWhatsAppApp = openWhatsAppApp;
+window.openDocPdfOutsideApp = openDocPdfOutsideApp;
+window.generateReceiptHTML = generateReceiptHTML;
+window.generateSlipGajiHTML = generateSlipGajiHTML;
+window.generateReceiptWhatsAppMessage = generateReceiptWhatsAppMessage;
+window.generateSlipGajiWhatsAppMessage = generateSlipGajiWhatsAppMessage;
 
 // ==========================================
 // REAL-TIME CHAT BANTUAN (ADMIN & SELURUH CABANG)

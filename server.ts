@@ -9,7 +9,8 @@ import nodemailer from 'nodemailer';
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
 // Master Admin Security Key (Only Admin Knows This Key)
 let MASTER_ADMIN_AUTH_CODES = ['IB-AUTH-2026', 'ADMIN-IB-889', 'IB-PUSAT-99'];
@@ -24,6 +25,30 @@ interface ReferralRecord {
   used: boolean;
 }
 const referralCodesStore = new Map<string, ReferralRecord>();
+
+// Storage for External PDF Downloads & Views (For APK & External Browser)
+interface StoredDocument {
+  id: string;
+  type: 'nota' | 'slip';
+  filename: string;
+  title: string;
+  htmlContent: string;
+  base64Pdf?: string;
+  phone?: string;
+  waMessage?: string;
+  createdAt: number;
+}
+const documentStore = new Map<string, StoredDocument>();
+
+// Periodic cleanup of documents older than 3 hours
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, doc] of documentStore.entries()) {
+    if (now - doc.createdAt > 3 * 3600 * 1000) {
+      documentStore.delete(id);
+    }
+  }
+}, 30 * 60 * 1000);
 
 // Email Transporter Helper
 function createEmailTransporter() {
@@ -133,6 +158,286 @@ function getOnlineSummary() {
 // REST API Endpoints
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// Prepare document for external view & download outside Android APK
+app.post('/api/pdf/prepare-doc', (req, res) => {
+  try {
+    const { type, filename, title, htmlContent, base64Pdf, phone, waMessage } = req.body;
+    if (!htmlContent) {
+      return res.status(400).json({ success: false, message: 'htmlContent wajib diisi' });
+    }
+
+    const docId = 'ib-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex');
+    const safeFilename = (filename || (type === 'slip' ? 'Slip_Gaji.pdf' : 'Nota_Transaksi.pdf')).replace(/[^a-zA-Z0-9._-]/g, '_');
+
+    documentStore.set(docId, {
+      id: docId,
+      type: type === 'slip' ? 'slip' : 'nota',
+      filename: safeFilename.endsWith('.pdf') ? safeFilename : safeFilename + '.pdf',
+      title: title || (type === 'slip' ? 'Slip Gaji Karyawan' : 'Nota Transaksi'),
+      htmlContent,
+      base64Pdf: base64Pdf || undefined,
+      phone: phone || '',
+      waMessage: waMessage || '',
+      createdAt: Date.now()
+    });
+
+    res.json({
+      success: true,
+      docId,
+      viewUrl: `/view-doc/${docId}`,
+      downloadUrl: `/api/pdf/download/${docId}`
+    });
+  } catch(err: any) {
+    console.error('Error prepare-doc:', err);
+    res.status(500).json({ success: false, message: 'Gagal menyiapkan dokumen: ' + err.message });
+  }
+});
+
+// Direct PDF File Download endpoint (forces attachment download in Android external browser)
+app.get('/api/pdf/download/:docId', (req, res) => {
+  const doc = documentStore.get(req.params.docId);
+  if (!doc) {
+    return res.status(404).send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Dokumen Tidak Ditemukan</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+        <body style="font-family:sans-serif; text-align:center; padding:40px 20px;">
+          <h2 style="color:#dc2626;">Dokumen Tidak Ditemukan</h2>
+          <p>Tautan ini mungkin sudah kedaluwarsa. Silakan cetak ulang dari aplikasi Istana Bubur.</p>
+        </body>
+      </html>
+    `);
+  }
+
+  if (doc.base64Pdf) {
+    const pdfBuffer = Buffer.from(doc.base64Pdf, 'base64');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${doc.filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    return res.send(pdfBuffer);
+  }
+
+  // If base64 isn't generated yet, redirect to external viewer with auto-download
+  return res.redirect(`/view-doc/${doc.id}?download=1`);
+});
+
+// External Document Viewer & Print/Download Page (Accessible outside APK in Google Chrome / Browser)
+app.get('/view-doc/:docId', (req, res) => {
+  const doc = documentStore.get(req.params.docId);
+  if (!doc) {
+    return res.status(404).send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Dokumen Tidak Ditemukan</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+        <body style="font-family:sans-serif; text-align:center; padding:40px 20px;">
+          <h2 style="color:#dc2626;">Dokumen Tidak Ditemukan</h2>
+          <p>Dokumen tidak tersedia atau sudah kedaluwarsa. Buka kembali aplikasi Istana Bubur untuk mencetak ulang.</p>
+        </body>
+      </html>
+    `);
+  }
+
+  const hasBase64 = !!doc.base64Pdf;
+  const isNota = doc.type === 'nota';
+  const cleanPhone = (doc.phone || '').replace(/[^0-9]/g, '');
+  const waTarget = cleanPhone.startsWith('0') ? '62' + cleanPhone.slice(1) : cleanPhone;
+  const waUrl = waTarget 
+    ? `whatsapp://send?phone=${waTarget}&text=${encodeURIComponent(doc.waMessage || '')}`
+    : `whatsapp://send?text=${encodeURIComponent(doc.waMessage || '')}`;
+
+  res.send(`
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>${doc.title} - Istana Bubur</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #1e293b;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .top-bar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: #ffffff;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 12px 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+    .top-bar-inner {
+      max-width: 720px;
+      margin: 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .brand-title {
+      font-weight: 800;
+      font-size: 15px;
+      color: #dc2626;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .action-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      border: none;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: #dc2626;
+      color: #ffffff;
+      box-shadow: 0 2px 4px rgba(220, 38, 38, 0.2);
+    }
+    .btn-primary:hover { background: #b91c1c; }
+    .btn-secondary {
+      background: #0f172a;
+      color: #ffffff;
+    }
+    .btn-secondary:hover { background: #1e293b; }
+    .btn-wa {
+      background: #16a34a;
+      color: #ffffff;
+    }
+    .btn-wa:hover { background: #15803d; }
+    .content-wrap {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 24px 12px 48px 12px;
+    }
+    .doc-card {
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      border: 1px solid #e2e8f0;
+      overflow: hidden;
+      max-width: 100%;
+    }
+    @media print {
+      body { background: #ffffff; }
+      .top-bar { display: none !important; }
+      .content-wrap { padding: 0 !important; }
+      .doc-card { box-shadow: none !important; border: none !important; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="top-bar">
+    <div class="top-bar-inner">
+      <div class="brand-title">
+        <i class="fas fa-file-invoice"></i>
+        <span>Istana Bubur PDF</span>
+      </div>
+      <div class="action-group">
+        <button id="btn-unduh" class="btn btn-primary" onclick="triggerDownload()">
+          <i class="fas fa-download"></i> Unduh PDF
+        </button>
+        <button class="btn btn-secondary" onclick="window.print()">
+          <i class="fas fa-print"></i> Cetak / Simpan
+        </button>
+        ${doc.phone ? `
+        <a href="${waUrl}" class="btn btn-wa">
+          <i class="fab fa-whatsapp"></i> Kirim WA
+        </a>` : ''}
+      </div>
+    </div>
+  </header>
+
+  <main class="content-wrap">
+    <div id="doc-render-area" class="doc-card">
+      ${doc.htmlContent}
+    </div>
+  </main>
+
+  <script>
+    const hasBase64 = ${hasBase64};
+    const downloadEndpoint = '/api/pdf/download/${doc.id}';
+    const isNota = ${isNota};
+
+    function triggerDownload() {
+      const btn = document.getElementById('btn-unduh');
+      if (btn) btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Mengunduh...';
+
+      if (hasBase64) {
+        // Direct stream download through browser download manager
+        const a = document.createElement('a');
+        a.href = downloadEndpoint;
+        a.download = '${doc.filename}';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          a.remove();
+          if (btn) btn.innerHTML = '<i class="fas fa-check"></i> Selesai!';
+          setTimeout(() => {
+            if (btn) btn.innerHTML = '<i class="fas fa-download"></i> Unduh PDF';
+          }, 2000);
+        }, 1000);
+        return;
+      }
+
+      // Generate client side with html2pdf if base64 was not passed
+      const el = document.getElementById('doc-render-area');
+      const opt = {
+        margin: [4, 4, 4, 4],
+        filename: '${doc.filename}',
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: isNota ? [80, 220] : 'a5', orientation: 'portrait' }
+      };
+
+      html2pdf().set(opt).from(el).save().then(() => {
+        if (btn) btn.innerHTML = '<i class="fas fa-check"></i> Berhasil Diunduh!';
+        setTimeout(() => {
+          if (btn) btn.innerHTML = '<i class="fas fa-download"></i> Unduh PDF';
+        }, 2500);
+      }).catch(err => {
+        console.warn('html2pdf download error:', err);
+        window.print();
+      });
+    }
+
+    // Auto download when opened outside if query param ?download=1 is present
+    if (window.location.search.includes('download=1') || window.location.search.includes('auto=1')) {
+      window.addEventListener('DOMContentLoaded', () => {
+        setTimeout(triggerDownload, 500);
+      });
+    }
+  </script>
+</body>
+</html>
+  `);
 });
 
 app.get('/api/chat/messages', (req, res) => {
