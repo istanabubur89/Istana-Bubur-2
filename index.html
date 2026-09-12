@@ -1274,12 +1274,7 @@
                         </div>
                         <div class="space-y-1">
                             <label class="block text-xs font-bold text-gray-700">Penempatan Cabang <span class="text-red-500">*</span></label>
-                            <select id="reg-cabang" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
-                                <option value="Cabang A">Cabang A (Pusat Kota)</option>
-                                <option value="Cabang B">Cabang B (Pasar Baru)</option>
-                                <option value="Cabang C">Cabang C (Stasiun)</option>
-                                <option value="Pusat">Kantor Pusat</option>
-                            </select>
+                            <input type="text" id="reg-cabang" required placeholder="Ketik nama cabang..." class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
                         </div>
                     </div>
 
@@ -1326,20 +1321,6 @@
                         </div>
                         <p id="reg-email-notice" class="text-[11px] text-emerald-800 leading-relaxed">
                             <i class="fas fa-info-circle mr-1 text-emerald-600"></i> Silakan periksa <strong>Kotak Masuk (Inbox)</strong> atau folder <strong>Spam</strong> email Anda, lalu ketik 6 digit kode referral di bawah ini.
-                        </p>
-                    </div>
-
-                    <!-- Fallback Box jika APK / Jaringan Offline -->
-                    <div id="reg-fallback-box" class="hidden-view bg-amber-50 border border-amber-300 rounded-2xl p-3.5 text-left text-xs space-y-2 shadow-xs">
-                        <div class="flex items-center justify-between text-amber-900 font-bold">
-                            <span class="flex items-center gap-1.5"><i class="fas fa-shield-alt text-amber-600"></i> Kode Verifikasi Anda:</span>
-                            <button type="button" onclick="autoFillReferralCode()" class="text-[10px] bg-amber-200 text-amber-900 font-black px-2 py-1 rounded-lg hover:bg-amber-300 transition">Gunakan Kode Ini</button>
-                        </div>
-                        <div class="bg-white p-2.5 rounded-xl border border-amber-200 font-mono text-center text-lg font-black tracking-widest text-amber-900" id="reg-fallback-code-val">
-                            ------
-                        </div>
-                        <p class="text-[10px] text-amber-800 leading-tight">
-                            Koneksi server email darurat. Anda dapat langsung menggunakan kode di atas untuk menyelesaikan pendaftaran.
                         </p>
                     </div>
 

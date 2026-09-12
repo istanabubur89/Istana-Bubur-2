@@ -890,6 +890,50 @@ app.post('/api/auth/update-admin-code', (req, res) => {
   });
 });
 
+// Endpoint: Simpan / Daftarkan User Baru ke Cloud Database Firebase Firestore
+app.post('/api/auth/register-user', async (req, res) => {
+  try {
+    const userData = req.body;
+    if (!userData || !userData.username || !userData.password) {
+      return res.status(400).json({ success: false, message: 'Data pendaftaran tidak lengkap.' });
+    }
+    const uname = String(userData.username).trim().toLowerCase();
+    const newId = userData.id || ('USR-' + Math.floor(100 + Math.random() * 900));
+    const record = {
+      id: newId,
+      fullName: userData.fullName || userData.username,
+      username: userData.username,
+      password: userData.password,
+      email: userData.email || '',
+      phone: userData.phone || '',
+      role: userData.role || 'Kasir',
+      cabang: userData.cabang || 'Cabang Utama',
+      isActive: userData.isActive !== false,
+      authCode: userData.authCode || '',
+      createdAt: new Date().toISOString()
+    };
+
+    const { db, COLLECTIONS } = await import('./src/firebase.ts');
+    const { doc, setDoc, getDoc } = await import('firebase/firestore');
+
+    const existing = await getDoc(doc(db, COLLECTIONS.USERS, uname));
+    if (existing.exists()) {
+      return res.status(400).json({ success: false, message: 'Username sudah terdaftar di Firestore. Silakan gunakan username lain.' });
+    }
+
+    await setDoc(doc(db, COLLECTIONS.USERS, uname), record);
+    console.log(`[Firebase Firestore] User baru berhasil didaftarkan ke koleksi users: ${uname}`);
+    return res.json({
+      success: true,
+      message: 'Akun berhasil disimpan ke Cloud Firestore!',
+      user: record
+    });
+  } catch (err: any) {
+    console.error('Error in /api/auth/register-user:', err);
+    return res.status(500).json({ success: false, message: err?.message || 'Gagal menyimpan akun ke Cloud Firestore.' });
+  }
+});
+
 
 async function startServer() {
   const server = http.createServer(app);

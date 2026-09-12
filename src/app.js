@@ -7,6 +7,7 @@ import {
     seedInitialFirestoreData,
     firestoreLogin,
     firestoreRegister,
+    firestoreCheckUserExists,
     firestoreResetPassword,
     firestoreGetProduk,
     firestoreSaveProduk,
@@ -104,19 +105,6 @@ function sendReferralViaWhatsApp() {
     openWhatsAppApp(tempRegistration.phone, msg);
 }
 
-// Auto-fill kode referral fallback jika dalam mode darurat / offline APK
-function autoFillReferralCode() {
-    if (!activeReferralCode) {
-        showToast('Tidak ada kode referral aktif.', 'warning');
-        return;
-    }
-    const input = document.getElementById('reg-input-referral');
-    if (input) {
-        input.value = activeReferralCode;
-        showToast(`Kode referral ${activeReferralCode} otomatis terisi!`, 'success');
-    }
-}
-
 // Kunci Autentikasi Khusus Admin Pusat (Hanya Diketahui oleh Admin/Owner)
 function getActiveMasterAuthKey() {
     return localStorage.getItem(MASTER_AUTH_STORAGE_KEY) || 'IB-AUTH-2026';
@@ -147,22 +135,11 @@ function setActiveMasterAuthKey(newKey) {
 const VALID_AUTH_CODES = ['IB-AUTH-2026', 'ADMIN-IB-889', 'IB-PUSAT-99'];
 
 
-// Akun Master & Demo Bawaan
+// Akun Bawaan (Admin bawaan telah dihapus sesuai permintaan)
 const DEFAULT_USERS = [
     {
-        username: 'admin',
-        password: '123456',
-        fullName: 'Bapak Hendra (Owner)',
-        email: 'admin@istanabubur.com',
-        phone: '081234567890',
-        role: 'Admin',
-        cabang: 'Pusat',
-        isActive: true,
-        authCode: 'IB-AUTH-2026'
-    },
-    {
         username: 'kasir1',
-        password: '123456',
+        password: '123',
         fullName: 'Siti Rahmawati',
         email: 'kasir1@istanabubur.com',
         phone: '082198765432',
@@ -173,7 +150,7 @@ const DEFAULT_USERS = [
     },
     {
         username: 'kasir2',
-        password: '123456',
+        password: '123',
         fullName: 'Ahmad Fauzi',
         email: 'kasir2@istanabubur.com',
         phone: '085211223344',
@@ -188,8 +165,11 @@ function getAllUsers() {
     try {
         const saved = localStorage.getItem(USERS_STORAGE_KEY);
         if (saved) {
-            const parsed = JSON.parse(saved);
+            let parsed = JSON.parse(saved);
             if (Array.isArray(parsed)) {
+                // Filter hapus akun bawaan admin/123456 jika masih tersimpan di storage lokal lama
+                parsed = parsed.filter(u => !(u.username && u.username.toLowerCase() === 'admin' && (u.password === '123456' || u.password === '123')));
+                localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(parsed));
                 const combined = [...DEFAULT_USERS];
                 parsed.forEach(p => {
                     const idx = combined.findIndex(u => u.username.toLowerCase() === p.username.toLowerCase());
@@ -199,7 +179,7 @@ function getAllUsers() {
                         combined.push(p);
                     }
                 });
-                return combined;
+                return combined.filter(u => !(u.username && u.username.toLowerCase() === 'admin' && (u.password === '123456' || u.password === '123')));
             }
         }
     } catch(e) {}
@@ -1129,11 +1109,11 @@ function checkAutoLogin() {
         }
     }
 
-    // Default pre-fill for ease of use in demo / first open
+    // Kosongkan form login awal agar pengguna memasukkan akunnya sendiri
     const uInput = document.getElementById('l-user');
     const pInput = document.getElementById('l-pass');
-    if (uInput && !uInput.value) uInput.value = 'admin';
-    if (pInput && !pInput.value) pInput.value = '123456';
+    if (uInput && (uInput.value === 'admin' || !uInput.value)) uInput.value = '';
+    if (pInput && (pInput.value === '123456' || !pInput.value)) pInput.value = '';
 }
 
 // ==========================================
@@ -1160,7 +1140,7 @@ function openRegisterModal() {
     document.getElementById('reg-email').value = '';
     document.getElementById('reg-wa').value = '';
     document.getElementById('reg-role').value = currentLoginRole || 'Kasir';
-    document.getElementById('reg-cabang').value = 'Cabang A';
+    document.getElementById('reg-cabang').value = '';
     document.getElementById('reg-pass').value = '';
     document.getElementById('reg-pass-conf').value = '';
     document.getElementById('reg-input-referral').value = '';

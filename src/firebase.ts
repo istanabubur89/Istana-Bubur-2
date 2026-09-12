@@ -66,19 +66,6 @@ export async function seedInitialFirestoreData() {
     if (usersSnap.empty) {
       const defaultUsers = [
         {
-          id: 'USR-001',
-          fullName: 'Bapak Hendra (Owner)',
-          username: 'admin',
-          password: '123',
-          email: 'admin@istanabubur.com',
-          phone: '081234567890',
-          role: 'Admin',
-          cabang: 'Pusat',
-          isActive: true,
-          authCode: 'IB-AUTH-2026',
-          createdAt: new Date().toISOString()
-        },
-        {
           id: 'USR-002',
           fullName: 'Siti Rahmawati',
           username: 'kasir1',
@@ -232,6 +219,28 @@ export async function firestoreLogin(identity: string, pass: string, requestedRo
     },
     roleNotice
   };
+}
+
+export async function firestoreCheckUserExists(username: string, email?: string) {
+  try {
+    const uname = String(username || '').trim().toLowerCase();
+    const existing = await getDoc(doc(db, COLLECTIONS.USERS, uname));
+    if (existing.exists()) {
+      return { exists: true, message: 'Username sudah terdaftar di Cloud Firestore. Silakan gunakan username lain.' };
+    }
+    if (email) {
+      const snap = await getDocs(collection(db, COLLECTIONS.USERS));
+      for (const d of snap.docs) {
+        const u = d.data();
+        if (u.email && u.email.toLowerCase() === email.trim().toLowerCase()) {
+          return { exists: true, message: 'Email sudah terdaftar di Cloud Firestore. Silakan gunakan menu Lupa Password atau login.' };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[Firestore Check User Warning]:', err);
+  }
+  return { exists: false };
 }
 
 export async function firestoreRegister(userData: any) {
