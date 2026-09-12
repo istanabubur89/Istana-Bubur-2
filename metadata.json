@@ -1,0 +1,6 @@
+{
+  "name": "Istana Bubur",
+  "description": "Sistem Manajemen Kasir, Transaksi, Penggajian, dan Chat Bantuan Real-Time Istana Bubur",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

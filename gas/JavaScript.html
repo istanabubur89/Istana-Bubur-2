@@ -1,0 +1,4411 @@
+<script>
+// ==========================================
+// ISTANA BUBUR - SYSTEM MANAGEMENT & KASIR
+// ==========================================
+
+// Global Cache & State
+let CURRENT_USER = null;
+let KARYAWAN_CACHE = [];
+let PRODUK_CACHE = [];
+let HISTORI_GAJI_CACHE = [];
+let HISTORI_TRX_CACHE = [];
+let CART = [];
+let LAST_TRX_DATA = null;
+
+let tabHistory = [];
+let currentTab = 'profil';
+
+let touchStartX = 0;
+let touchStartY = 0;
+let touchEndX = 0;
+let touchEndY = 0;
+
+let chartPenggajian = null;
+let chartKaryawan = null;
+let chartPenjualan = null;
+let chartKasirPenjualan = null;
+let wsChat = null;
+let CHAT_MESSAGES = [];
+let chatUnreadCount = 0;
+let currentAdminChatCabang = 'Semua';
+let typingTimeout = null;
+let isTypingSent = false;
+let cabangUnreadCounts = {};
+let isChatSoundEnabled = (localStorage.getItem('ib_chat_sound') !== 'off');
+let isUserScrolledUp = false;
+let audioCtx = null;
+
+const SESSION_KEY = 'ib_logged_in';
+const USER_DATA_KEY = 'ib_user_data';
+const TRX_STORAGE_KEY = 'ib_stored_transactions';
+const PRODUK_STORAGE_KEY = 'ib_stored_produk';
+const KARYAWAN_STORAGE_KEY = 'ib_stored_karyawan';
+const USERS_STORAGE_KEY = 'ib_stored_users';
+
+// Kode Autentikasi Resmi Admin Pusat Istana Bubur
+const VALID_AUTH_CODES = ['IB-AUTH-2026', 'ADMIN-IB-889', 'IB-PUSAT-99', 'ISTANA-BUBUR-AUTH'];
+
+// Akun Master & Demo Bawaan
+const DEFAULT_USERS = [
+    {
+        username: 'admin',
+        password: '123456',
+        fullName: 'Bapak Hendra (Owner)',
+        email: 'admin@istanabubur.com',
+        phone: '081234567890',
+        role: 'Admin',
+        cabang: 'Pusat',
+        isActive: true,
+        authCode: 'IB-AUTH-2026'
+    },
+    {
+        username: 'kasir1',
+        password: '123456',
+        fullName: 'Siti Rahmawati',
+        email: 'kasir1@istanabubur.com',
+        phone: '082198765432',
+        role: 'Kasir',
+        cabang: 'Cabang A',
+        isActive: true,
+        authCode: 'IB-AUTH-2026'
+    },
+    {
+        username: 'kasir2',
+        password: '123456',
+        fullName: 'Ahmad Fauzi',
+        email: 'kasir2@istanabubur.com',
+        phone: '085211223344',
+        role: 'Kasir',
+        cabang: 'Cabang B',
+        isActive: true,
+        authCode: 'IB-AUTH-2026'
+    }
+];
+
+function getAllUsers() {
+    try {
+        const saved = localStorage.getItem(USERS_STORAGE_KEY);
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed)) {
+                const combined = [...DEFAULT_USERS];
+                parsed.forEach(p => {
+                    const idx = combined.findIndex(u => u.username.toLowerCase() === p.username.toLowerCase());
+                    if (idx >= 0) {
+                        combined[idx] = { ...combined[idx], ...p };
+                    } else {
+                        combined.push(p);
+                    }
+                });
+                return combined;
+            }
+        }
+    } catch(e) {}
+    return [...DEFAULT_USERS];
+}
+
+function saveUserAccount(userObj) {
+    let saved = [];
+    try {
+        const raw = localStorage.getItem(USERS_STORAGE_KEY);
+        if (raw) saved = JSON.parse(raw);
+    } catch(e){}
+    if (!Array.isArray(saved)) saved = [];
+    
+    const idx = saved.findIndex(u => u.username.toLowerCase() === userObj.username.toLowerCase());
+    if (idx >= 0) {
+        saved[idx] = { ...saved[idx], ...userObj };
+    } else {
+        saved.push(userObj);
+    }
+    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(saved));
+    return true;
+}
+
+let currentLoginRole = 'Admin'; // 'Admin' or 'Kasir'
+
+// Demo initial seed data for simulator mode
+const DEFAULT_PRODUK = [
+    { rowIndex: 1, 'ID Produk': 'PRD-001', 'Nama Produk': 'Bubur Ayam Spesial', 'Harga': 15000, 'GambarBase64': '' },
+    { rowIndex: 2, 'ID Produk': 'PRD-002', 'Nama Produk': 'Bubur Ayam Komplit (Ati Ampela + Telur)', 'Harga': 20000, 'GambarBase64': '' },
+    { rowIndex: 3, 'ID Produk': 'PRD-003', 'Nama Produk': 'Sate Usus Gurih', 'Harga': 3000, 'GambarBase64': '' },
+    { rowIndex: 4, 'ID Produk': 'PRD-004', 'Nama Produk': 'Sate Telur Puyuh', 'Harga': 4000, 'GambarBase64': '' },
+    { rowIndex: 5, 'ID Produk': 'PRD-005', 'Nama Produk': 'Sate Ati Ampela', 'Harga': 4000, 'GambarBase64': '' },
+    { rowIndex: 6, 'ID Produk': 'PRD-006', 'Nama Produk': 'Teh Manis (Hangat / Dingin)', 'Harga': 5000, 'GambarBase64': '' },
+    { rowIndex: 7, 'ID Produk': 'PRD-007', 'Nama Produk': 'Jeruk Peras Segar', 'Harga': 7000, 'GambarBase64': '' }
+];
+
+const GAJI_STORAGE_KEY = 'ib_stored_histori_gaji';
+
+const DEFAULT_HISTORI_GAJI = [
+    { 
+        'ID Slip': 'SLIP-881001', 
+        'Nama': 'Budi Santoso', 
+        'ID Karyawan': 'KRY-001', 
+        'Bulan': '2026-09', 
+        'Hari Masuk': 26, 
+        'Gaji Harian': 90000, 
+        'Bonus': 150000, 
+        'Potongan': 0, 
+        'Total Gaji': 2490000, 
+        'Cabang': 'Cabang A', 
+        'Jabatan': 'Kasir', 
+        'No WA': '081234567890', 
+        'Keterangan Libur': '', 
+        'Link PDF': '#' 
+    },
+    { 
+        'ID Slip': 'SLIP-881002', 
+        'Nama': 'Siti Rahma', 
+        'ID Karyawan': 'KRY-002', 
+        'Bulan': '2026-09', 
+        'Hari Masuk': 25, 
+        'Gaji Harian': 100000, 
+        'Bonus': 100000, 
+        'Potongan': 50000, 
+        'Total Gaji': 2550000, 
+        'Cabang': 'Cabang A', 
+        'Jabatan': 'Dapur Bubur', 
+        'No WA': '081298765432', 
+        'Keterangan Libur': 'Izin 1 hari', 
+        'Link PDF': '#' 
+    },
+    { 
+        'ID Slip': 'SLIP-881003', 
+        'Nama': 'Agus Prayogo', 
+        'ID Karyawan': 'KRY-003', 
+        'Bulan': '2026-09', 
+        'Hari Masuk': 26, 
+        'Gaji Harian': 85000, 
+        'Bonus': 100000, 
+        'Potongan': 0, 
+        'Total Gaji': 2310000, 
+        'Cabang': 'Pusat', 
+        'Jabatan': 'Driver', 
+        'No WA': '081345678901', 
+        'Keterangan Libur': '', 
+        'Link PDF': '#' 
+    }
+];
+
+const DEFAULT_KARYAWAN = [
+    { rowIndex: 1, 'ID Karyawan': 'KRY-001', 'Nama': 'Budi Santoso', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Kasir', 'Lokasi Cabang': 'Cabang A', 'No WA': '081234567890', 'Gaji Harian': 90000, 'Email': 'budi@istanabubur.com' },
+    { rowIndex: 2, 'ID Karyawan': 'KRY-002', 'Nama': 'Siti Rahma', 'Jenis Kelamin': 'Perempuan', 'Jabatan': 'Dapur Bubur', 'Lokasi Cabang': 'Cabang A', 'No WA': '081298765432', 'Gaji Harian': 100000, 'Email': 'siti@istanabubur.com' },
+    { rowIndex: 3, 'ID Karyawan': 'KRY-003', 'Nama': 'Agus Prayogo', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Driver', 'Lokasi Cabang': 'Pusat', 'No WA': '081345678901', 'Gaji Harian': 85000, 'Email': 'agus@istanabubur.com' }
+];
+
+function getSampleTransactions() {
+    const today = getTodayStringFormatted();
+    return [
+        {
+            'ID Transaksi': 'TRX-882101',
+            'Tanggal': `${today} 08:30`,
+            'Cabang': 'Cabang A',
+            'Kasir': 'kasir1',
+            'Total Belanja': 45000,
+            'Nama Pelanggan': 'Pak Joko [Dine In - Sambal dipisah]',
+            'No WA': '081234567890',
+            'Bayar': 50000,
+            'Kembalian': 5000,
+            'Metode': 'Cash',
+            'Items JSON': JSON.stringify([
+                { id: 'PRD-001', nama: 'Bubur Ayam Spesial', harga: 15000, qty: 2 },
+                { id: 'PRD-004', nama: 'Sate Telur Puyuh', harga: 4000, qty: 2 },
+                { id: 'PRD-006', nama: 'Teh Manis (Hangat / Dingin)', harga: 5000, qty: 1 }
+            ])
+        },
+        {
+            'ID Transaksi': 'TRX-882102',
+            'Tanggal': `${today} 09:15`,
+            'Cabang': 'Cabang A',
+            'Kasir': 'kasir1',
+            'Total Belanja': 20000,
+            'Nama Pelanggan': 'Ibu Dewi [Takeaway - Kerupuk banyak]',
+            'No WA': '081398765432',
+            'Bayar': 20000,
+            'Kembalian': 0,
+            'Metode': 'Transfer (QRIS - Istana Bubur)',
+            'Items JSON': JSON.stringify([
+                { id: 'PRD-002', nama: 'Bubur Ayam Komplit (Ati Ampela + Telur)', harga: 20000, qty: 1 }
+            ])
+        }
+    ];
+}
+
+// Utility Toast
+function showToast(msg, type = 'info') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    const t = document.createElement('div');
+    const bgClass = type === 'error' ? 'bg-red-600' : (type === 'success' ? 'bg-emerald-600' : (type === 'warning' ? 'bg-amber-600' : 'bg-blue-600'));
+    const iconClass = type === 'error' ? 'fa-circle-exclamation' : (type === 'success' ? 'fa-circle-check' : (type === 'warning' ? 'fa-triangle-exclamation' : 'fa-circle-info'));
+    t.className = `p-3.5 rounded-2xl shadow-xl text-white text-xs sm:text-sm font-bold mb-2 flex items-center gap-2.5 transform transition-all duration-300 opacity-0 translate-y-[-20px] ${bgClass}`;
+    t.innerHTML = `<i class="fas ${iconClass} text-base shrink-0"></i> <span>${msg}</span>`;
+    container.appendChild(t);
+    setTimeout(() => { t.classList.remove('opacity-0', 'translate-y-[-20px]'); }, 10);
+    setTimeout(() => { t.classList.add('opacity-0'); setTimeout(() => t.remove(), 300); }, 3500);
+}
+
+function formatRupiah(angka) {
+    return Number(angka || 0).toLocaleString('id-ID');
+}
+
+function getTodayStringFormatted() {
+    const now = new Date();
+    return String(now.getDate()).padStart(2, '0') + '/' + String(now.getMonth() + 1).padStart(2, '0') + '/' + now.getFullYear();
+}
+
+function closeModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('hidden-view');
+}
+
+function openGuideModal(tabName = 'login') {
+    const el = document.getElementById('modal-guide');
+    if (el) el.classList.remove('hidden-view');
+    switchGuideTab(tabName);
+}
+
+function switchGuideTab(tabId) {
+    const tabs = ['login', 'kasir', 'admin', 'keamanan'];
+    tabs.forEach(t => {
+        const btn = document.getElementById(`btn-gtab-${t}`);
+        const panel = document.getElementById(`gpanel-${t}`);
+        if (btn) {
+            if (t === tabId) {
+                btn.className = 'guide-tab-btn px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 bg-red-600 text-white shadow-sm transition whitespace-nowrap';
+            } else {
+                btn.className = 'guide-tab-btn px-4 py-2.5 rounded-xl font-semibold text-xs flex items-center gap-2 bg-gray-100 text-gray-600 hover:bg-gray-200 transition whitespace-nowrap';
+            }
+        }
+        if (panel) {
+            if (t === tabId) {
+                panel.classList.remove('hidden-view');
+            } else {
+                panel.classList.add('hidden-view');
+            }
+        }
+    });
+}
+
+function togglePasswordVisibility(id, btn) {
+    const input = document.getElementById(id);
+    const icon = btn.querySelector('i');
+    if (!input || !icon) return;
+    if (input.type === "password") {
+        input.type = "text";
+        icon.classList.remove('fa-eye');
+        icon.classList.add('fa-eye-slash');
+    } else {
+        input.type = "password";
+        icon.classList.remove('fa-eye-slash');
+        icon.classList.add('fa-eye');
+    }
+}
+
+function toggleMenu() {
+    const menu = document.getElementById('dropdown-menu');
+    if (menu) menu.classList.toggle('hidden-view');
+}
+
+document.addEventListener('click', function(event) {
+    const menu = document.getElementById('dropdown-menu');
+    const btn = document.getElementById('btn-menu-toggle');
+    if (menu && !menu.classList.contains('hidden-view')) {
+        if (!menu.contains(event.target) && !btn.contains(event.target)) {
+            menu.classList.add('hidden-view');
+        }
+    }
+});
+
+function copyToClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(() => {
+            showToast('Nomor rekening disalin ke clipboard', 'success');
+        }).catch(() => fallbackCopy(text));
+    } else {
+        fallbackCopy(text);
+    }
+}
+
+function fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+        document.execCommand('copy');
+        showToast('Nomor rekening disalin ke clipboard', 'success');
+    } catch (err) {
+        showToast('Gagal menyalin nomor rekening', 'error');
+    }
+    ta.remove();
+}
+
+function applyRoleRestrictions() {
+    if (!CURRENT_USER) return;
+    const isAdmin = CURRENT_USER.role === 'Admin';
+    
+    document.querySelectorAll('.admin-only').forEach(el => {
+        if (isAdmin) {
+            el.classList.remove('hidden-view');
+            el.style.display = '';
+        } else {
+            el.classList.add('hidden-view');
+            el.style.display = 'none';
+        }
+    });
+
+    document.querySelectorAll('.kasir-only').forEach(el => {
+        if (isAdmin) {
+            el.classList.add('hidden-view');
+            el.style.display = 'none';
+        } else {
+            el.classList.remove('hidden-view');
+            el.style.display = '';
+        }
+    });
+
+    const kasirInfo = document.getElementById('kasir-outlet-info');
+    const trxSubtitle = document.getElementById('histori-trx-subtitle');
+    const headerSubtitle = document.getElementById('header-subtitle');
+    const dashOwner = document.getElementById('dash-owner');
+
+    if (!isAdmin) {
+        if (kasirInfo) kasirInfo.innerText = `Outlet: ${CURRENT_USER.cabang} | Kasir: ${CURRENT_USER.username}`;
+        if (trxSubtitle) trxSubtitle.innerText = `Riwayat transaksi cabang ${CURRENT_USER.cabang} hari ini`;
+        if (headerSubtitle) headerSubtitle.innerText = `Cabang ${CURRENT_USER.cabang}`;
+    } else {
+        if (headerSubtitle) headerSubtitle.innerText = `Dashboard Pusat`;
+        if (dashOwner) dashOwner.innerText = CURRENT_USER.username;
+        updateAdminDashboardGreeting();
+    }
+}
+
+function switchTab(tabId, isGoBack = false) {
+    if (!CURRENT_USER) return;
+    
+    if (CURRENT_USER.role !== 'Admin') {
+        const restrictedTabs = ['produk', 'slip', 'karyawan', 'histori-gaji'];
+        if (restrictedTabs.includes(tabId)) {
+            tabId = 'kasir';
+            showToast('Akses Ditolak. Anda masuk sebagai Kasir.', 'error');
+        }
+    }
+
+    const mainApp = document.getElementById('main-app');
+    if (!isGoBack && currentTab !== tabId && mainApp && !mainApp.classList.contains('hidden-view')) {
+        tabHistory.push(currentTab);
+        history.pushState({ tabId: tabId }, "", `#${tabId}`);
+    }
+    currentTab = tabId;
+
+    document.querySelectorAll('.view-content').forEach(el => el.classList.add('hidden-view'));
+    const targetView = document.getElementById('view-' + tabId);
+    if (targetView) targetView.classList.remove('hidden-view');
+    
+    document.querySelectorAll('.nav-item-dropdown').forEach(el => el.classList.remove('active', 'bg-gray-50'));
+    const activeTabBtn = document.getElementById('tab-' + tabId);
+    if (activeTabBtn) activeTabBtn.classList.add('active', 'bg-gray-50');
+
+    const namaMenu = { 
+        'profil': 'Dashboard', 'kasir': 'Kasir / POS', 'produk': 'Master Produk', 
+        'slip': 'Cetak Slip Gaji', 'karyawan': 'Karyawan', 'histori-trx': 'Riwayat Transaksi', 
+        'histori-gaji': 'Riwayat Gaji', 'printer': 'Pengaturan Printer', 'about': 'Tentang Aplikasi',
+        'chat': 'Chat Bantuan'
+    };
+    const titleEl = document.getElementById('header-title');
+    if (titleEl) titleEl.innerText = namaMenu[tabId] || 'Dashboard';
+    
+    if (tabId === 'profil') {
+        if (CURRENT_USER.role === 'Admin') {
+            updateAdminDashboardGreeting();
+            initDashboardCharts();
+        } else {
+            updateKasirDashboard();
+        }
+    }
+    if (tabId === 'karyawan') loadKaryawan();
+    if (tabId === 'slip') { loadKaryawanForSlip(); resetFormSlip(); } 
+    if (tabId === 'histori-trx') loadHistoriTransaksi();
+    if (tabId === 'histori-gaji') loadHistoriGaji();
+    if (tabId === 'produk') loadProduk();
+    if (tabId === 'kasir') { loadProdukKasir(); updateCartUI(); }
+    if (tabId === 'chat') { openChatView(); }
+}
+
+window.addEventListener('popstate', (e) => {
+    const mainApp = document.getElementById('main-app');
+    if (!mainApp || mainApp.classList.contains('hidden-view')) return; 
+    
+    const modals = ['modal-cart', 'modal-produk', 'modal-karyawan', 'modal-confirm', 'modal-logout'];
+    const openModal = modals.find(id => {
+        const el = document.getElementById(id);
+        return el && !el.classList.contains('hidden-view');
+    });
+    
+    if (openModal) {
+        closeModal(openModal);
+        history.pushState({ tabId: currentTab }, "", `#${currentTab}`); 
+        return;
+    }
+
+    if (tabHistory.length > 0) {
+        const prevTab = tabHistory.pop();
+        switchTab(prevTab, true);
+    } else {
+        let startTab = CURRENT_USER && CURRENT_USER.role === 'Admin' ? 'profil' : 'kasir';
+        history.pushState({ tabId: startTab }, "", `#${startTab}`);
+        switchTab(startTab, true);
+    }
+});
+
+function goBack() { history.back(); }
+
+document.addEventListener('touchstart', e => {
+    touchStartX = e.changedTouches[0].screenX; 
+    touchStartY = e.changedTouches[0].screenY;
+}, {passive: true});
+
+document.addEventListener('touchend', e => {
+    touchEndX = e.changedTouches[0].screenX; 
+    touchEndY = e.changedTouches[0].screenY;
+    const mainApp = document.getElementById('main-app');
+    if (!mainApp || mainApp.classList.contains('hidden-view')) return;
+    const modals = ['modal-cart', 'modal-produk', 'modal-karyawan', 'modal-confirm', 'modal-logout'];
+    const isModalOpen = modals.some(id => {
+        const el = document.getElementById(id);
+        return el && !el.classList.contains('hidden-view');
+    });
+    if (isModalOpen) return;
+    const swipeDistX = touchEndX - touchStartX; 
+    const swipeDistY = Math.abs(touchEndY - touchStartY);
+    if (swipeDistX > 70 && swipeDistY < 50 && touchStartX < 50) { goBack(); }
+}, {passive: true});
+
+function openLogoutModal() {
+    const el = document.getElementById('modal-logout');
+    if (el) el.classList.remove('hidden-view');
+}
+
+function processLogout() {
+    closeModal('modal-logout');
+    closeChatWebSocket();
+    cabangUnreadCounts = {};
+    chatUnreadCount = 0;
+    updateChatUnreadBadges();
+    
+    localStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(USER_DATA_KEY);
+    sessionStorage.removeItem(USER_DATA_KEY);
+    CURRENT_USER = null;
+    
+    const savedUser = localStorage.getItem('ib_saved_user');
+    const savedPass = localStorage.getItem('ib_saved_pass');
+    const isRemember = localStorage.getItem('ib_remember') === 'true';
+
+    const loginForm = document.getElementById('login-form');
+    if (loginForm) loginForm.reset();
+    
+    if (isRemember && savedUser && savedPass) {
+        document.getElementById('l-user').value = savedUser;
+        document.getElementById('l-pass').value = savedPass;
+        document.getElementById('remember-me').checked = true;
+    }
+    
+    document.getElementById('main-app').classList.add('hidden-view');
+    document.getElementById('auth-view').classList.remove('hidden-view');
+    
+    tabHistory = [];
+    history.pushState(null, "", window.location.pathname);
+    showToast('Berhasil keluar dari aplikasi', 'success');
+}
+
+// ====================================================
+// LOCAL PERSISTENCE STORAGE HANDLERS
+// ====================================================
+async function getStoredProdukList() {
+    const saved = localStorage.getItem(PRODUK_STORAGE_KEY);
+    return saved ? JSON.parse(saved) : DEFAULT_PRODUK;
+}
+
+async function getStoredTransaksiList() {
+    const saved = localStorage.getItem(TRX_STORAGE_KEY);
+    return saved ? JSON.parse(saved) : getSampleTransactions();
+}
+
+// Backend bridge with local persistence
+function callBackend(funcName, ...args) {
+    return new Promise((resolve, reject) => {
+        if (typeof google !== 'undefined' && google.script) {
+            google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[funcName](...args);
+        } else {
+            console.log(`[BACKEND/LOCAL] Memanggil: ${funcName}`, args);
+            setTimeout(async () => {
+                if (funcName === 'loginUser') {
+                    const inputIdentity = String(args[0] || '').trim().toLowerCase();
+                    const inputPass = String(args[1] || '').trim();
+                    const requestedRole = args[2] || currentLoginRole || 'Admin';
+
+                    const users = getAllUsers();
+                    const matched = users.find(u => 
+                        (u.username.toLowerCase() === inputIdentity || (u.email && u.email.toLowerCase() === inputIdentity))
+                    );
+
+                    if (!matched) {
+                        resolve({ success: false, message: 'Username/password salah. Silakan periksa kembali.' });
+                        return;
+                    }
+
+                    if (matched.password !== inputPass) {
+                        resolve({ success: false, message: 'Username/password salah. Silakan periksa kembali.' });
+                        return;
+                    }
+
+                    if (matched.isActive === false) {
+                        resolve({ 
+                            success: false, 
+                            needsActivation: true, 
+                            username: matched.username,
+                            message: 'Akun belum aktif! Anda wajib memasukkan Kode Autentikasi yang diberikan oleh Admin.' 
+                        });
+                        return;
+                    }
+
+                    // Strict role enforcement
+                    let roleNotice = null;
+                    if (requestedRole && matched.role !== requestedRole) {
+                        roleNotice = `Akun terdaftar sebagai ${matched.role}. Hak akses disesuaikan ke ${matched.role}.`;
+                    }
+
+                    resolve({
+                        success: true,
+                        user: {
+                            username: matched.username,
+                            fullName: matched.fullName || matched.username,
+                            role: matched.role,
+                            cabang: matched.cabang || (matched.role === 'Admin' ? 'Pusat' : 'Cabang A'),
+                            email: matched.email,
+                            phone: matched.phone
+                        },
+                        roleNotice: roleNotice
+                    });
+                } else if (funcName === 'registerUser') {
+                    const data = args[0];
+                    const users = getAllUsers();
+                    if (users.some(u => u.username.toLowerCase() === data.username.toLowerCase())) {
+                        resolve({ success: false, message: 'Username sudah terdaftar.' });
+                        return;
+                    }
+                    saveUserAccount(data);
+                    resolve({ success: true, message: 'Pendaftaran berhasil.' });
+                } else if (funcName === 'verifyAdminAuthCode') {
+                    const code = String(args[0] || '').trim().toUpperCase();
+                    const isValid = VALID_AUTH_CODES.map(c => c.toUpperCase()).includes(code);
+                    if (isValid) {
+                        resolve({ success: true });
+                    } else {
+                        resolve({ success: false, message: 'Kode autentikasi salah atau tidak valid.' });
+                    }
+                } else if (funcName === 'resetUserPassword') {
+                    const uname = String(args[0] || '').trim().toLowerCase();
+                    const newPass = String(args[1] || '').trim();
+                    const users = getAllUsers();
+                    const target = users.find(u => u.username.toLowerCase() === uname);
+                    if (target) {
+                        target.password = newPass;
+                        saveUserAccount(target);
+                        resolve({ success: true, message: 'Password berhasil direset.' });
+                    } else {
+                        resolve({ success: false, message: 'Pengguna tidak ditemukan.' });
+                    }
+                } else if (funcName === 'getProduk') {
+                    const list = await getStoredProdukList();
+                    resolve(list);
+                } else if (funcName === 'saveProduk') {
+                    const pData = args[0];
+                    let saved = localStorage.getItem(PRODUK_STORAGE_KEY);
+                    let list = saved ? JSON.parse(saved) : [...DEFAULT_PRODUK];
+                    let targetId = '';
+                    if (pData.rowIndex) {
+                        const idx = list.findIndex(item => String(item.rowIndex) === String(pData.rowIndex));
+                        if (idx !== -1) {
+                            list[idx]['Nama Produk'] = pData.nama;
+                            list[idx]['Harga'] = Number(pData.harga);
+                            if (pData.gambar) list[idx]['GambarBase64'] = pData.gambar;
+                            targetId = list[idx]['ID Produk'];
+                        }
+                    } else {
+                        const newId = 'PRD-' + String(list.length + 1).padStart(3, '0');
+                        targetId = newId;
+                        list.push({
+                            rowIndex: list.length + 1,
+                            'ID Produk': newId,
+                            'Nama Produk': pData.nama,
+                            'Harga': Number(pData.harga),
+                            'GambarBase64': pData.gambar || ''
+                        });
+                    }
+                    localStorage.setItem(PRODUK_STORAGE_KEY, JSON.stringify(list));
+                    resolve({ success: true, message: 'Produk berhasil disimpan' });
+                } else if (funcName === 'deleteProduk') {
+                    const rowIdx = args[0];
+                    let saved = localStorage.getItem(PRODUK_STORAGE_KEY);
+                    let list = saved ? JSON.parse(saved) : [...DEFAULT_PRODUK];
+                    list = list.filter(item => String(item.rowIndex) !== String(rowIdx));
+                    localStorage.setItem(PRODUK_STORAGE_KEY, JSON.stringify(list));
+                    resolve({ success: true, message: 'Produk berhasil dihapus' });
+                } else if (funcName === 'getKaryawan') {
+                    const saved = localStorage.getItem(KARYAWAN_STORAGE_KEY);
+                    const list = saved ? JSON.parse(saved) : DEFAULT_KARYAWAN;
+                    resolve(list);
+                } else if (funcName === 'saveKaryawan') {
+                    const kData = args[0];
+                    let saved = localStorage.getItem(KARYAWAN_STORAGE_KEY);
+                    let list = saved ? JSON.parse(saved) : [...DEFAULT_KARYAWAN];
+                    if (kData.rowIndex) {
+                        const idx = list.findIndex(item => String(item.rowIndex) === String(kData.rowIndex));
+                        if (idx !== -1) {
+                            list[idx] = { ...list[idx], ...kData };
+                        }
+                    } else {
+                        const newId = 'KRY-' + String(list.length + 1).padStart(3, '0');
+                        list.push({
+                            rowIndex: list.length + 1,
+                            'ID Karyawan': newId,
+                            ...kData
+                        });
+                    }
+                    localStorage.setItem(KARYAWAN_STORAGE_KEY, JSON.stringify(list));
+                    resolve({ success: true, message: 'Data karyawan berhasil disimpan' });
+                } else if (funcName === 'deleteKaryawan') {
+                    const rowIdx = args[0];
+                    let saved = localStorage.getItem(KARYAWAN_STORAGE_KEY);
+                    let list = saved ? JSON.parse(saved) : [...DEFAULT_KARYAWAN];
+                    list = list.filter(item => String(item.rowIndex) !== String(rowIdx));
+                    localStorage.setItem(KARYAWAN_STORAGE_KEY, JSON.stringify(list));
+                    resolve({ success: true, message: 'Data karyawan berhasil dihapus' });
+                } else if (funcName === 'getHistoriTransaksi') {
+                    const list = await getStoredTransaksiList();
+                    resolve(list);
+                } else if (funcName === 'processTransaksiKasir') {
+                    const trx = args[0];
+                    const trxId = 'TRX-' + Math.floor(100000 + Math.random() * 900000);
+                    const now = new Date();
+                    const tanggalFormatted = getTodayStringFormatted() + ' ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+                    
+                    const newTrxItem = {
+                        'ID Transaksi': trxId,
+                        'Tanggal': tanggalFormatted,
+                        'Cabang': CURRENT_USER ? CURRENT_USER.cabang : 'Pusat',
+                        'Kasir': CURRENT_USER ? CURRENT_USER.username : 'Kasir',
+                        'Total Belanja': trx.total,
+                        'Nama Pelanggan': `${trx.namaPelanggan || 'Umum'} [${trx.jenis || 'Dine In'}${trx.keterangan ? ' - ' + trx.keterangan : ''}]`,
+                        'No WA': trx.wa || '',
+                        'Bayar': trx.bayar,
+                        'Kembalian': trx.kembali,
+                        'Metode': trx.metode,
+                        'Items JSON': JSON.stringify(trx.items)
+                    };
+
+                    let saved = localStorage.getItem(TRX_STORAGE_KEY);
+                    let list = saved ? JSON.parse(saved) : getSampleTransactions();
+                    list.unshift(newTrxItem);
+                    localStorage.setItem(TRX_STORAGE_KEY, JSON.stringify(list));
+
+                    resolve({
+                        success: true,
+                        idTrx: trxId,
+                        message: 'Transaksi berhasil diproses & disimpan!'
+                    });
+                } else if (funcName === 'deleteTransaksi') {
+                    const idTrx = args[0];
+                    let saved = localStorage.getItem(TRX_STORAGE_KEY);
+                    let list = saved ? JSON.parse(saved) : getSampleTransactions();
+                    list = list.filter(t => String(t['ID Transaksi']) !== String(idTrx));
+                    localStorage.setItem(TRX_STORAGE_KEY, JSON.stringify(list));
+                    resolve({
+                        success: true,
+                        message: `Transaksi #${idTrx} berhasil dihapus`
+                    });
+                } else if (funcName === 'getHistori') {
+                    const saved = localStorage.getItem(GAJI_STORAGE_KEY);
+                    const list = saved ? JSON.parse(saved) : DEFAULT_HISTORI_GAJI;
+                    resolve(list);
+                } else if (funcName === 'processSlipGaji') {
+                    const sData = args[0];
+                    const harian = Number(sData.gajiHarian || 0);
+                    const hari = Number(sData.hariMasuk || 0);
+                    const bonus = Number(sData.bonus || 0);
+                    const potongan = Number(sData.potongan || 0);
+                    const totalGaji = (harian * hari) + bonus - potongan;
+                    const slipId = 'SLIP-' + Math.floor(100000 + Math.random() * 900000);
+
+                    const newSlip = {
+                        'ID Slip': slipId,
+                        'Nama': sData.nama,
+                        'ID Karyawan': sData.id,
+                        'Bulan': sData.bulan,
+                        'Hari Masuk': hari,
+                        'Gaji Harian': harian,
+                        'Bonus': bonus,
+                        'Potongan': potongan,
+                        'Total Gaji': totalGaji,
+                        'Cabang': sData.cabang || 'Pusat',
+                        'Jabatan': sData.jabatan || '-',
+                        'No WA': sData.wa || '',
+                        'Keterangan Libur': sData.keteranganLibur || '',
+                        'Link PDF': '#'
+                    };
+
+                    let saved = localStorage.getItem(GAJI_STORAGE_KEY);
+                    let list = saved ? JSON.parse(saved) : [...DEFAULT_HISTORI_GAJI];
+                    list.unshift(newSlip);
+                    localStorage.setItem(GAJI_STORAGE_KEY, JSON.stringify(list));
+
+                    resolve({
+                        success: true,
+                        message: 'Slip gaji berhasil dibuat & tersimpan di Riwayat!',
+                        idSlip: slipId,
+                        pdfUrl: '#',
+                        waLink: '#'
+                    });
+                } else if (funcName === 'deleteHistoriGaji') {
+                    const target = args[0];
+                    let saved = localStorage.getItem(GAJI_STORAGE_KEY);
+                    let list = saved ? JSON.parse(saved) : [...DEFAULT_HISTORI_GAJI];
+                    if (typeof target === 'number') {
+                        list.splice(target, 1);
+                    } else {
+                        list = list.filter((item, idx) => item['ID Slip'] !== target && String(idx) !== String(target));
+                    }
+                    localStorage.setItem(GAJI_STORAGE_KEY, JSON.stringify(list));
+                    resolve({ success: true, message: 'Data riwayat slip gaji berhasil dihapus' });
+                } else {
+                    resolve({ success: true, message: 'Simulator Mode (Success)' });
+                }
+            }, 300);
+        }
+    });
+}
+
+function parseDataArray(res) {
+    if (typeof res === 'string') { 
+        try { return JSON.parse(res); } catch(e) { return []; } 
+    }
+    if (Array.isArray(res)) return res;
+    if (res && typeof res === 'object' && res.data && Array.isArray(res.data)) return res.data;
+    return [];
+}
+
+function setLoginRole(role) {
+    currentLoginRole = role === 'Kasir' ? 'Kasir' : 'Admin';
+    const tabAdmin = document.getElementById('tab-login-admin');
+    const tabKasir = document.getElementById('tab-login-kasir');
+    const roleIcon = document.getElementById('login-role-icon');
+    const roleDesc = document.getElementById('login-role-desc');
+
+    if (currentLoginRole === 'Admin') {
+        if (tabAdmin) {
+            tabAdmin.className = 'flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition-all bg-red-600 text-white shadow-sm';
+            const i = tabAdmin.querySelector('i');
+            if (i) i.className = 'fas fa-crown text-amber-300';
+        }
+        if (tabKasir) {
+            tabKasir.className = 'flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition-all text-gray-600 hover:text-gray-900';
+            const i = tabKasir.querySelector('i');
+            if (i) i.className = 'fas fa-cash-register text-gray-400';
+        }
+        if (roleIcon) roleIcon.className = 'fas fa-shield-halved text-red-600';
+        if (roleDesc) roleDesc.innerText = 'Mode: Akses Penuh Sistem & Manajemen Pusat';
+    } else {
+        if (tabKasir) {
+            tabKasir.className = 'flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition-all bg-blue-600 text-white shadow-sm';
+            const i = tabKasir.querySelector('i');
+            if (i) i.className = 'fas fa-cash-register text-white';
+        }
+        if (tabAdmin) {
+            tabAdmin.className = 'flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition-all text-gray-600 hover:text-gray-900';
+            const i = tabAdmin.querySelector('i');
+            if (i) i.className = 'fas fa-crown text-gray-400';
+        }
+        if (roleIcon) roleIcon.className = 'fas fa-store text-blue-600';
+        if (roleDesc) roleDesc.innerText = 'Mode: Akses Kasir POS Cabang & Pesanan';
+    }
+}
+
+function setDemoLogin(username, password, role) {
+    const uInput = document.getElementById('l-user');
+    const pInput = document.getElementById('l-pass');
+    if (uInput) uInput.value = username;
+    if (pInput) pInput.value = password;
+    
+    if (role) {
+        setLoginRole(role);
+    } else {
+        setLoginRole(username.toLowerCase().includes('kasir') ? 'Kasir' : 'Admin');
+    }
+    
+    showToast(`Akun demo ${username} (${role || currentLoginRole}) dipilih`, 'info');
+}
+
+async function handleLogin(e) {
+    e.preventDefault();
+    
+    const user = (document.getElementById('l-user').value || '').trim();
+    const pass = (document.getElementById('l-pass').value || '').trim();
+    const isRememberMe = document.getElementById('remember-me').checked;
+    const btn = document.getElementById('btn-login');
+
+    if (!user || !pass) {
+        showToast('Username dan password wajib diisi!', 'warning');
+        return;
+    }
+    
+    btn.innerHTML = '<div class="loader border-white"></div>';
+    btn.disabled = true;
+    
+    try {
+        const res = await callBackend('loginUser', user, pass, currentLoginRole);
+        if (res.success) {
+            CURRENT_USER = res.user;
+            if (isRememberMe) {
+                localStorage.setItem(SESSION_KEY, 'true');
+                localStorage.setItem(USER_DATA_KEY, JSON.stringify(CURRENT_USER));
+                localStorage.setItem('ib_saved_user', user);
+                localStorage.setItem('ib_saved_pass', pass);
+                localStorage.setItem('ib_saved_role', CURRENT_USER.role);
+                localStorage.setItem('ib_remember', 'true');
+            } else {
+                sessionStorage.setItem(SESSION_KEY, 'true');
+                sessionStorage.setItem(USER_DATA_KEY, JSON.stringify(CURRENT_USER));
+                localStorage.removeItem(SESSION_KEY);
+                localStorage.removeItem(USER_DATA_KEY);
+                localStorage.removeItem('ib_saved_user');
+                localStorage.removeItem('ib_saved_pass');
+                localStorage.removeItem('ib_saved_role');
+                localStorage.removeItem('ib_remember');
+            }
+
+            if (res.roleNotice) {
+                showToast(res.roleNotice, 'info');
+            }
+            showToast(`Login berhasil! Selamat datang, ${CURRENT_USER.fullName || CURRENT_USER.username}`, 'success');
+            loginSuccessLogic();
+        } else {
+            showToast(res.message || 'Username atau password salah', 'error');
+            if (res.needsActivation) {
+                setTimeout(() => {
+                    openActivateAccountPrompt(res.username);
+                }, 1000);
+            }
+        }
+    } catch (e) {
+        showToast('Gagal terhubung ke server', 'error');
+    }
+    
+    btn.innerHTML = '<i class="fas fa-right-to-bracket"></i> Masuk';
+    btn.disabled = false;
+}
+
+function checkAutoLogin() {
+    const savedUser = localStorage.getItem('ib_saved_user');
+    const savedPass = localStorage.getItem('ib_saved_pass');
+    const savedRole = localStorage.getItem('ib_saved_role');
+    const isRemember = localStorage.getItem('ib_remember') === 'true';
+    const isLoggedLocal = localStorage.getItem(SESSION_KEY) === 'true';
+    const isLoggedSession = sessionStorage.getItem(SESSION_KEY) === 'true';
+
+    if (savedRole) {
+        setLoginRole(savedRole);
+    }
+
+    if (isRemember && savedUser) {
+        const uEl = document.getElementById('l-user');
+        const pEl = document.getElementById('l-pass');
+        const rEl = document.getElementById('remember-me');
+        if (uEl) uEl.value = savedUser;
+        if (pEl && savedPass) pEl.value = savedPass;
+        if (rEl) rEl.checked = true;
+    }
+
+    if (isLoggedLocal || isLoggedSession) {
+        const rawData = localStorage.getItem(USER_DATA_KEY) || sessionStorage.getItem(USER_DATA_KEY);
+        if (rawData) {
+            CURRENT_USER = JSON.parse(rawData);
+            loginSuccessLogic();
+            return;
+        }
+    }
+
+    // Default pre-fill for ease of use in demo / first open
+    const uInput = document.getElementById('l-user');
+    const pInput = document.getElementById('l-pass');
+    if (uInput && !uInput.value) uInput.value = 'admin';
+    if (pInput && !pInput.value) pInput.value = '123456';
+}
+
+// ==========================================
+// REGISTRASI, REFERRAL EMAIL & KODE AUTENTIKASI ADMIN
+// ==========================================
+let tempRegistration = null;
+let activeReferralCode = null;
+let referralExpiryTime = 0;
+let referralTimerInterval = null;
+
+function openRegisterModal() {
+    tempRegistration = null;
+    activeReferralCode = null;
+    if (referralTimerInterval) clearInterval(referralTimerInterval);
+
+    document.getElementById('register-step-1').classList.remove('hidden-view');
+    document.getElementById('register-step-2').classList.add('hidden-view');
+    document.getElementById('register-step-3').classList.add('hidden-view');
+    
+    updateRegisterStepIndicator(1);
+
+    document.getElementById('reg-nama').value = '';
+    document.getElementById('reg-user').value = '';
+    document.getElementById('reg-email').value = '';
+    document.getElementById('reg-wa').value = '';
+    document.getElementById('reg-role').value = currentLoginRole || 'Kasir';
+    document.getElementById('reg-cabang').value = 'Cabang A';
+    document.getElementById('reg-pass').value = '';
+    document.getElementById('reg-pass-conf').value = '';
+    document.getElementById('reg-input-referral').value = '';
+    document.getElementById('reg-auth-code').value = '';
+
+    const m = document.getElementById('modal-register');
+    if (m) m.classList.remove('hidden-view');
+}
+
+function updateRegisterStepIndicator(step) {
+    const s1B = document.getElementById('step-badge-1');
+    const s1L = document.getElementById('step-label-1');
+    const s2B = document.getElementById('step-badge-2');
+    const s2L = document.getElementById('step-label-2');
+    const s3B = document.getElementById('step-badge-3');
+    const s3L = document.getElementById('step-label-3');
+    const line1 = document.getElementById('step-line-1');
+    const line2 = document.getElementById('step-line-2');
+
+    if (step === 1) {
+        if (s1B) s1B.className = 'w-6 h-6 rounded-full bg-red-600 text-white font-bold text-xs flex items-center justify-center';
+        if (s1L) s1L.className = 'text-xs font-bold text-gray-800';
+        if (s2B) s2B.className = 'w-6 h-6 rounded-full bg-gray-200 text-gray-500 font-bold text-xs flex items-center justify-center';
+        if (s2L) s2L.className = 'text-xs font-bold text-gray-400';
+        if (s3B) s3B.className = 'w-6 h-6 rounded-full bg-gray-200 text-gray-500 font-bold text-xs flex items-center justify-center';
+        if (s3L) s3L.className = 'text-xs font-bold text-gray-400';
+        if (line1) line1.className = 'flex-1 h-0.5 bg-gray-200 mx-2';
+        if (line2) line2.className = 'flex-1 h-0.5 bg-gray-200 mx-2';
+    } else if (step === 2) {
+        if (s1B) s1B.className = 'w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center';
+        if (s1L) s1L.className = 'text-xs font-bold text-gray-800';
+        if (s2B) s2B.className = 'w-6 h-6 rounded-full bg-red-600 text-white font-bold text-xs flex items-center justify-center';
+        if (s2L) s2L.className = 'text-xs font-bold text-gray-800';
+        if (s3B) s3B.className = 'w-6 h-6 rounded-full bg-gray-200 text-gray-500 font-bold text-xs flex items-center justify-center';
+        if (s3L) s3L.className = 'text-xs font-bold text-gray-400';
+        if (line1) line1.className = 'flex-1 h-0.5 bg-emerald-600 mx-2';
+        if (line2) line2.className = 'flex-1 h-0.5 bg-gray-200 mx-2';
+    } else if (step === 3) {
+        if (s1B) s1B.className = 'w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center';
+        if (s1L) s1L.className = 'text-xs font-bold text-gray-800';
+        if (s2B) s2B.className = 'w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center';
+        if (s2L) s2L.className = 'text-xs font-bold text-gray-800';
+        if (s3B) s3B.className = 'w-6 h-6 rounded-full bg-red-600 text-white font-bold text-xs flex items-center justify-center';
+        if (s3L) s3L.className = 'text-xs font-bold text-gray-800';
+        if (line1) line1.className = 'flex-1 h-0.5 bg-emerald-600 mx-2';
+        if (line2) line2.className = 'flex-1 h-0.5 bg-emerald-600 mx-2';
+    }
+}
+
+function submitRegisterStep1() {
+    const nama = (document.getElementById('reg-nama').value || '').trim();
+    const user = (document.getElementById('reg-user').value || '').trim();
+    const email = (document.getElementById('reg-email').value || '').trim();
+    const wa = (document.getElementById('reg-wa').value || '').trim();
+    const role = document.getElementById('reg-role').value;
+    const cabang = document.getElementById('reg-cabang').value;
+    const pass = (document.getElementById('reg-pass').value || '').trim();
+    const passConf = (document.getElementById('reg-pass-conf').value || '').trim();
+
+    if (!nama || !user || !email || !wa || !pass || !passConf) {
+        showToast('Semua data wajib diisi!', 'warning');
+        return;
+    }
+
+    if (!email.includes('@') || !email.includes('.')) {
+        showToast('Format email tidak valid!', 'error');
+        return;
+    }
+
+    if (pass.length < 6) {
+        showToast('Password minimal 6 karakter!', 'error');
+        return;
+    }
+
+    if (pass !== passConf) {
+        showToast('Konfirmasi password tidak cocok!', 'error');
+        return;
+    }
+
+    // Cek username sudah dipakai
+    const allUsers = getAllUsers();
+    if (allUsers.some(u => u.username.toLowerCase() === user.toLowerCase())) {
+        showToast('Username sudah digunakan! Silakan pilih username lain.', 'error');
+        return;
+    }
+
+    tempRegistration = {
+        fullName: nama,
+        username: user,
+        email: email,
+        phone: wa,
+        role: role,
+        cabang: cabang,
+        password: pass,
+        isActive: false
+    };
+
+    // Buat kode referral 6 digit acak
+    activeReferralCode = String(Math.floor(100000 + Math.random() * 900000));
+    referralExpiryTime = Date.now() + 10 * 60 * 1000; // 10 menit
+
+    // Perbarui UI Step 2
+    document.getElementById('reg-display-email').innerText = email;
+    document.getElementById('reg-simulated-code').innerText = activeReferralCode;
+    document.getElementById('reg-input-referral').value = '';
+
+    document.getElementById('register-step-1').classList.add('hidden-view');
+    document.getElementById('register-step-2').classList.remove('hidden-view');
+    document.getElementById('register-step-3').classList.add('hidden-view');
+    updateRegisterStepIndicator(2);
+
+    startReferralTimer();
+    showToast(`Kode referral verifikasi telah dikirim ke ${email}`, 'success');
+}
+
+function startReferralTimer() {
+    if (referralTimerInterval) clearInterval(referralTimerInterval);
+    const timerEl = document.getElementById('reg-timer');
+
+    function update() {
+        const remaining = Math.max(0, referralExpiryTime - Date.now());
+        const mins = Math.floor(remaining / 60000);
+        const secs = Math.floor((remaining % 60000) / 1000);
+        if (timerEl) timerEl.innerText = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        if (remaining <= 0) {
+            clearInterval(referralTimerInterval);
+            if (timerEl) timerEl.innerText = 'Kedaluwarsa';
+        }
+    }
+    update();
+    referralTimerInterval = setInterval(update, 1000);
+}
+
+function autoFillReferralCode() {
+    if (activeReferralCode) {
+        const input = document.getElementById('reg-input-referral');
+        if (input) input.value = activeReferralCode;
+        showToast('Kode referral ditempel', 'info');
+    }
+}
+
+function resendReferralCode() {
+    if (!tempRegistration) return;
+    activeReferralCode = String(Math.floor(100000 + Math.random() * 900000));
+    referralExpiryTime = Date.now() + 10 * 60 * 1000;
+    const simEl = document.getElementById('reg-simulated-code');
+    if (simEl) simEl.innerText = activeReferralCode;
+    startReferralTimer();
+    showToast(`Kode referral baru telah dikirim ke ${tempRegistration.email}`, 'success');
+}
+
+function backToRegisterStep1() {
+    if (referralTimerInterval) clearInterval(referralTimerInterval);
+    document.getElementById('register-step-1').classList.remove('hidden-view');
+    document.getElementById('register-step-2').classList.add('hidden-view');
+    document.getElementById('register-step-3').classList.add('hidden-view');
+    updateRegisterStepIndicator(1);
+}
+
+function verifyReferralStep2() {
+    const inputCode = (document.getElementById('reg-input-referral').value || '').trim();
+    if (!inputCode) {
+        showToast('Masukkan 6 digit kode referral!', 'warning');
+        return;
+    }
+
+    if (Date.now() > referralExpiryTime) {
+        showToast('Kode referral salah atau kedaluwarsa! Silakan kirim ulang kode.', 'error');
+        return;
+    }
+
+    if (inputCode !== activeReferralCode) {
+        showToast('Kode referral salah atau kedaluwarsa! Periksa kembali email Anda.', 'error');
+        return;
+    }
+
+    if (referralTimerInterval) clearInterval(referralTimerInterval);
+
+    // Beralih ke Step 3: Masukkan Kode Autentikasi Admin
+    document.getElementById('register-step-1').classList.add('hidden-view');
+    document.getElementById('register-step-2').classList.add('hidden-view');
+    document.getElementById('register-step-3').classList.remove('hidden-view');
+    updateRegisterStepIndicator(3);
+
+    showToast('Kode referral terverifikasi! Masukkan Kode Autentikasi Admin.', 'success');
+}
+
+function backToRegisterStep2() {
+    document.getElementById('register-step-1').classList.add('hidden-view');
+    document.getElementById('register-step-2').classList.remove('hidden-view');
+    document.getElementById('register-step-3').classList.add('hidden-view');
+    updateRegisterStepIndicator(2);
+}
+
+function autoFillAuthCode(code) {
+    const input = document.getElementById('reg-auth-code');
+    if (input) input.value = code;
+}
+
+function activateAccountStep3() {
+    const inputAuthCode = (document.getElementById('reg-auth-code').value || '').trim().toUpperCase();
+    if (!inputAuthCode) {
+        showToast('Kode autentikasi wajib diisi!', 'warning');
+        return;
+    }
+
+    const isValidAuth = VALID_AUTH_CODES.map(c => c.toUpperCase()).includes(inputAuthCode);
+    if (!isValidAuth) {
+        showToast('Kode autentikasi salah atau tidak valid! Akun tidak dapat diaktifkan.', 'error');
+        return;
+    }
+
+    if (!tempRegistration) {
+        showToast('Data pendaftaran tidak ditemukan. Ulangi proses pendaftaran.', 'error');
+        return;
+    }
+
+    // Aktivasi akun berhasil!
+    tempRegistration.isActive = true;
+    tempRegistration.authCode = inputAuthCode;
+    saveUserAccount(tempRegistration);
+
+    showToast('Pendaftaran berhasil! Akun Anda telah aktif dan dapat digunakan.', 'success');
+    closeModal('modal-register');
+
+    // Isi ke form login agar pengguna bisa langsung masuk
+    const uInput = document.getElementById('l-user');
+    const pInput = document.getElementById('l-pass');
+    if (uInput) uInput.value = tempRegistration.username;
+    if (pInput) pInput.value = tempRegistration.password;
+
+    setLoginRole(tempRegistration.role);
+}
+
+function openActivateAccountPrompt(username) {
+    openRegisterModal();
+    const users = getAllUsers();
+    const u = users.find(x => x.username.toLowerCase() === (username || '').toLowerCase());
+    if (u) {
+        tempRegistration = u;
+        document.getElementById('register-step-1').classList.add('hidden-view');
+        document.getElementById('register-step-2').classList.add('hidden-view');
+        document.getElementById('register-step-3').classList.remove('hidden-view');
+        updateRegisterStepIndicator(3);
+    }
+}
+
+// ==========================================
+// BANTUAN LUPA USERNAME
+// ==========================================
+function openForgotUsernameModal() {
+    const m = document.getElementById('modal-forgot-username');
+    if (m) {
+        document.getElementById('fu-email').value = '';
+        document.getElementById('fu-wa').value = '';
+        const resBox = document.getElementById('fu-result-box');
+        if (resBox) resBox.classList.add('hidden-view');
+        m.classList.remove('hidden-view');
+    }
+}
+
+function handleFindUsername(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    const email = (document.getElementById('fu-email').value || '').trim().toLowerCase();
+    const wa = (document.getElementById('fu-wa').value || '').trim();
+
+    if (!email || !wa) {
+        showToast('Email dan nomor WhatsApp wajib diisi!', 'warning');
+        return;
+    }
+
+    const users = getAllUsers();
+    const matched = users.find(u => {
+        const uEmail = (u.email || '').toLowerCase();
+        const uPhone = (u.phone || '').replace(/\D/g, '');
+        const cleanWa = wa.replace(/\D/g, '');
+        return uEmail === email && (uPhone === cleanWa || uPhone.endsWith(cleanWa) || cleanWa.endsWith(uPhone));
+    });
+
+    if (matched) {
+        const resBox = document.getElementById('fu-result-box');
+        const foundEl = document.getElementById('fu-found-username');
+        if (resBox && foundEl) {
+            foundEl.innerText = matched.username;
+            resBox.classList.remove('hidden-view');
+        }
+        showToast('Akun ditemukan! Username Anda telah ditampilkan.', 'success');
+    } else {
+        showToast('Data tidak ditemukan! Pastikan email dan nomor WhatsApp sesuai.', 'error');
+    }
+}
+
+function useFoundUsername() {
+    const foundEl = document.getElementById('fu-found-username');
+    if (foundEl && foundEl.innerText) {
+        const uInput = document.getElementById('l-user');
+        if (uInput) uInput.value = foundEl.innerText;
+        closeModal('modal-forgot-username');
+        showToast(`Username ${foundEl.innerText} telah dimasukkan ke form login`, 'info');
+    }
+}
+
+// ==========================================
+// RESET PASSWORD (LUPA PASSWORD)
+// ==========================================
+let fpTempUser = null;
+let fpActiveOtp = null;
+
+function openForgotPasswordModal() {
+    const m = document.getElementById('modal-forgot-password');
+    if (m) {
+        document.getElementById('fp-step-1').classList.remove('hidden-view');
+        document.getElementById('fp-step-2').classList.add('hidden-view');
+        document.getElementById('fp-user').value = '';
+        document.getElementById('fp-email').value = '';
+        document.getElementById('fp-otp').value = '';
+        document.getElementById('fp-new-pass').value = '';
+        document.getElementById('fp-new-pass-conf').value = '';
+        m.classList.remove('hidden-view');
+    }
+}
+
+function submitForgotPasswordStep1() {
+    const user = (document.getElementById('fp-user').value || '').trim().toLowerCase();
+    const email = (document.getElementById('fp-email').value || '').trim().toLowerCase();
+
+    if (!user || !email) {
+        showToast('Username dan email wajib diisi!', 'warning');
+        return;
+    }
+
+    const users = getAllUsers();
+    const matched = users.find(u => u.username.toLowerCase() === user && (u.email || '').toLowerCase() === email);
+
+    if (!matched) {
+        showToast('Username atau email tidak terdaftar!', 'error');
+        return;
+    }
+
+    fpTempUser = matched;
+    fpActiveOtp = String(Math.floor(100000 + Math.random() * 900000));
+
+    const simEl = document.getElementById('fp-simulated-otp');
+    if (simEl) simEl.innerText = fpActiveOtp;
+
+    document.getElementById('fp-step-1').classList.add('hidden-view');
+    document.getElementById('fp-step-2').classList.remove('hidden-view');
+
+    showToast(`Kode OTP reset telah dikirim ke ${email}`, 'success');
+}
+
+function autoFillFpOtp() {
+    if (fpActiveOtp) {
+        const input = document.getElementById('fp-otp');
+        if (input) input.value = fpActiveOtp;
+        showToast('Kode OTP ditempel', 'info');
+    }
+}
+
+function backToFpStep1() {
+    document.getElementById('fp-step-1').classList.remove('hidden-view');
+    document.getElementById('fp-step-2').classList.add('hidden-view');
+}
+
+function submitForgotPasswordStep2() {
+    const otp = (document.getElementById('fp-otp').value || '').trim();
+    const newPass = (document.getElementById('fp-new-pass').value || '').trim();
+    const newPassConf = (document.getElementById('fp-new-pass-conf').value || '').trim();
+
+    if (!otp) {
+        showToast('Masukkan kode OTP!', 'warning');
+        return;
+    }
+
+    if (otp !== fpActiveOtp) {
+        showToast('Kode OTP salah!', 'error');
+        return;
+    }
+
+    if (newPass.length < 6) {
+        showToast('Password baru minimal 6 karakter!', 'error');
+        return;
+    }
+
+    if (newPass !== newPassConf) {
+        showToast('Konfirmasi password baru tidak cocok!', 'error');
+        return;
+    }
+
+    fpTempUser.password = newPass;
+    saveUserAccount(fpTempUser);
+
+    showToast('Password berhasil diubah! Silakan login dengan password baru.', 'success');
+    closeModal('modal-forgot-password');
+
+    const pInput = document.getElementById('l-pass');
+    if (pInput) pInput.value = newPass;
+}
+
+function loginSuccessLogic() {
+    document.getElementById('auth-view').classList.add('hidden-view');
+    document.getElementById('main-app').classList.remove('hidden-view');
+    
+    applyRoleRestrictions();
+    initChatWebSocket();
+
+    const now = new Date();
+    const monthDash = document.getElementById('filter-month-dashboard');
+    if (monthDash) monthDash.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2, '0')}`;
+    
+    if (CURRENT_USER.role !== 'Admin') {
+        loadHistoriTransaksi().then(() => updateKasirDashboard());
+    }
+
+    tabHistory = [];
+    let startTab = CURRENT_USER.role === 'Admin' ? 'profil' : 'profil';
+    history.pushState({ tabId: startTab }, "", `#${startTab}`);
+    
+    switchTab(startTab, true);
+}
+
+// Helper tanggal & waktu lokal
+function getHariTanggalIndo() {
+    const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+    const now = new Date();
+    return `${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+}
+
+function extractTrxHour(dateStr) {
+    if (!dateStr) return null;
+    const match = String(dateStr).match(/(\d{1,2})[:.](\d{2})/);
+    if (match) {
+        const h = parseInt(match[1], 10);
+        if (!isNaN(h) && h >= 0 && h <= 23) return h;
+    }
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d.getHours();
+    return null;
+}
+
+// Kasir Dashboard
+function updateKasirDashboard() {
+    if (!CURRENT_USER || CURRENT_USER.role === 'Admin') return;
+    
+    const namaKasir = CURRENT_USER.username || 'Kasir';
+    const cabangKasir = CURRENT_USER.cabang || 'Pusat';
+
+    const namaEl = document.getElementById('profil-kasir-nama');
+    const cabangEl = document.getElementById('profil-kasir-cabang');
+    const chartCabangEl = document.getElementById('kasir-chart-cabang-label');
+    const todayDateEl = document.getElementById('kasir-today-date');
+
+    if (namaEl) namaEl.innerText = namaKasir;
+    if (cabangEl) cabangEl.innerText = cabangKasir;
+    if (chartCabangEl) chartCabangEl.innerText = cabangKasir;
+    if (todayDateEl) todayDateEl.innerText = getHariTanggalIndo();
+    
+    let totalPenjualan = 0;
+    let trxCount = 0;
+    let totalItems = 0;
+    const menuCounter = {};
+
+    // Interval jam operasional kasir untuk grafik
+    const timeSlots = ['06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'];
+    const salesBySlot = {
+        '06:00': 0, '08:00': 0, '10:00': 0, '12:00': 0,
+        '14:00': 0, '16:00': 0, '18:00': 0, '20:00': 0, '22:00': 0
+    };
+    const countBySlot = {
+        '06:00': 0, '08:00': 0, '10:00': 0, '12:00': 0,
+        '14:00': 0, '16:00': 0, '18:00': 0, '20:00': 0, '22:00': 0
+    };
+
+    (HISTORI_TRX_CACHE || []).forEach(t => {
+        const isCabangMatch = !CURRENT_USER.cabang || t['Cabang'] === CURRENT_USER.cabang;
+        if (!isCabangMatch || !isDateTrxToday(t['Tanggal'])) return;
+
+        trxCount++;
+        const omset = Number(t['Total Belanja']) || 0;
+        totalPenjualan += omset;
+
+        // Parse items
+        try {
+            const items = JSON.parse(t['Items JSON'] || '[]');
+            items.forEach(item => {
+                const qty = Number(item.qty) || 1;
+                totalItems += qty;
+                const namaMenu = item.nama || 'Menu';
+                menuCounter[namaMenu] = (menuCounter[namaMenu] || 0) + qty;
+            });
+        } catch(e) {}
+
+        // Jam transaksi
+        const hour = extractTrxHour(t['Tanggal']);
+        let slot = '08:00';
+        if (hour !== null) {
+            if (hour < 8) slot = '06:00';
+            else if (hour < 10) slot = '08:00';
+            else if (hour < 12) slot = '10:00';
+            else if (hour < 14) slot = '12:00';
+            else if (hour < 16) slot = '14:00';
+            else if (hour < 18) slot = '16:00';
+            else if (hour < 20) slot = '18:00';
+            else if (hour < 22) slot = '20:00';
+            else slot = '22:00';
+        }
+        salesBySlot[slot] = (salesBySlot[slot] || 0) + omset;
+        countBySlot[slot] = (countBySlot[slot] || 0) + 1;
+    });
+
+    const avgTrx = trxCount > 0 ? Math.round(totalPenjualan / trxCount) : 0;
+    
+    const statHariIni = document.getElementById('stat-kasir-hari-ini');
+    const statTrxCount = document.getElementById('stat-kasir-trx-count');
+    const statAvgTrx = document.getElementById('stat-kasir-avg-trx');
+    const statTotalItems = document.getElementById('stat-kasir-total-items');
+
+    if (statHariIni) statHariIni.innerText = 'Rp ' + formatRupiah(totalPenjualan);
+    if (statTrxCount) statTrxCount.innerHTML = `<i class="fas fa-receipt text-emerald-200 mr-1"></i> ${trxCount} Transaksi Selesai`;
+    if (statAvgTrx) statAvgTrx.innerText = 'Rp ' + formatRupiah(avgTrx);
+    if (statTotalItems) statTotalItems.innerText = `${totalItems} menu`;
+
+    // Render Menu Terlaris Hari Ini
+    const topContainer = document.getElementById('kasir-top-products-list');
+    if (topContainer) {
+        const sortedMenus = Object.entries(menuCounter).sort((a, b) => b[1] - a[1]);
+        if (sortedMenus.length > 0) {
+            const medals = ['text-amber-500', 'text-gray-400', 'text-amber-700', 'text-blue-500'];
+            topContainer.innerHTML = sortedMenus.slice(0, 4).map((entry, idx) => {
+                return `
+                    <span class="inline-flex items-center gap-1.5 bg-amber-50 text-amber-900 border border-amber-200 px-2.5 py-1 rounded-lg text-[11px] font-bold shadow-xs">
+                        <i class="fas fa-award ${medals[idx] || 'text-gray-400'}"></i> ${entry[0]} 
+                        <span class="bg-amber-200 text-amber-900 text-[10px] px-1.5 py-0.2 rounded font-black ml-0.5">${entry[1]}x</span>
+                    </span>
+                `;
+            }).join('');
+        } else {
+            topContainer.innerHTML = `<span class="text-gray-400 italic text-[11px]">Belum ada penjualan menu tercatat hari ini</span>`;
+        }
+    }
+
+    // Render Grafik Penjualan Hari Ini
+    const canvasKasir = document.getElementById('chart-kasir-penjualan');
+    if (canvasKasir && typeof Chart !== 'undefined') {
+        const ctx = canvasKasir.getContext('2d');
+        if (chartKasirPenjualan) {
+            chartKasirPenjualan.destroy();
+            chartKasirPenjualan = null;
+        }
+        
+        const chartData = timeSlots.map(slot => salesBySlot[slot] || 0);
+
+        chartKasirPenjualan = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: timeSlots,
+                datasets: [{
+                    label: 'Penjualan Hari Ini',
+                    data: chartData,
+                    backgroundColor: '#10b981',
+                    hoverBackgroundColor: '#059669',
+                    borderRadius: 6,
+                    borderSkipped: false,
+                    maxBarThickness: 36
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#1e293b',
+                        titleFont: { size: 12, weight: 'bold' },
+                        bodyFont: { size: 11 },
+                        padding: 10,
+                        cornerRadius: 8,
+                        displayColors: false,
+                        callbacks: {
+                            title: function(items) {
+                                if (!items.length) return '';
+                                return `Jam Operasional: Sekitar ${items[0].label}`;
+                            },
+                            label: function(context) {
+                                const slot = context.label;
+                                const val = context.raw || 0;
+                                const count = countBySlot[slot] || 0;
+                                return [
+                                    `Total Omset: Rp ${formatRupiah(val)}`,
+                                    `Jumlah Transaksi: ${count} transaksi`
+                                ];
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { display: false },
+                        ticks: {
+                            font: { size: 10, weight: '600' },
+                            color: '#64748b'
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: '#f1f5f9'
+                        },
+                        ticks: {
+                            font: { size: 10 },
+                            color: '#94a3b8',
+                            callback: function(value) {
+                                if (value >= 1000000) return 'Rp ' + (value / 1000000) + 'jt';
+                                if (value >= 1000) return 'Rp ' + (value / 1000) + 'rb';
+                                return 'Rp ' + value;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+// Sapaan & Waktu Real-Time Dashboard Admin
+let adminLiveClockTimer = null;
+
+function getGreetingByHour(hours) {
+    if (hours >= 4 && hours < 11) {
+        return {
+            text: 'Selamat Pagi ☀️',
+            icon: 'fas fa-sun text-amber-300',
+            motto: 'Awali hari dengan memeriksa persiapan bahan, stok bubur, dan kesiapan kasir di seluruh cabang.'
+        };
+    } else if (hours >= 11 && hours < 15) {
+        return {
+            text: 'Selamat Siang 🌤️',
+            icon: 'fas fa-cloud-sun text-amber-200',
+            motto: 'Jam makan siang berlangsung, pantau kelancaran pesanan, antrean, dan omset di seluruh outlet.'
+        };
+    } else if (hours >= 15 && hours < 18) {
+        return {
+            text: 'Selamat Sore 🌅',
+            icon: 'fas fa-sun text-orange-300',
+            motto: 'Pantau pergerakan transaksi sore dan koordinasi dengan kasir cabang jika ada kendala.'
+        };
+    } else {
+        return {
+            text: 'Selamat Malam 🌙',
+            icon: 'fas fa-moon text-indigo-200',
+            motto: 'Waktu rekapitulasi penjualan harian dan evaluasi penutupan kasir seluruh cabang Istana Bubur.'
+        };
+    }
+}
+
+function updateAdminDashboardGreeting() {
+    if (!CURRENT_USER || CURRENT_USER.role !== 'Admin') return;
+
+    const now = new Date();
+    const hours = now.getHours();
+    const greeting = getGreetingByHour(hours);
+
+    const greetingTextEl = document.getElementById('admin-dash-greeting-text');
+    const greetingIconEl = document.getElementById('admin-dash-greeting-icon');
+    const mottoEl = document.getElementById('admin-dash-motto');
+    const ownerEl = document.getElementById('dash-owner');
+    const dateEl = document.getElementById('admin-live-date');
+    const clockEl = document.getElementById('admin-live-clock');
+
+    if (greetingTextEl) greetingTextEl.innerText = greeting.text;
+    if (greetingIconEl) greetingIconEl.className = greeting.icon;
+    if (mottoEl) mottoEl.innerText = greeting.motto;
+
+    const adminName = CURRENT_USER.username ? (CURRENT_USER.username.charAt(0).toUpperCase() + CURRENT_USER.username.slice(1)) : 'Admin Pusat';
+    if (ownerEl) {
+        ownerEl.innerText = `${adminName} (Istana Bubur)`;
+    }
+
+    const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+    
+    if (dateEl) {
+        dateEl.innerText = `${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+    }
+
+    const pad = (n) => String(n).padStart(2, '0');
+    if (clockEl) {
+        clockEl.innerText = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    }
+
+    // Jalankan timer real-time clock setiap detik jika belum ada
+    if (!adminLiveClockTimer) {
+        adminLiveClockTimer = setInterval(() => {
+            const cur = new Date();
+            const curClockEl = document.getElementById('admin-live-clock');
+            if (curClockEl) {
+                curClockEl.innerText = `${pad(cur.getHours())}:${pad(cur.getMinutes())}:${pad(cur.getSeconds())}`;
+            }
+            if (cur.getHours() === 0 && cur.getMinutes() === 0 && cur.getSeconds() < 2) {
+                const curDateEl = document.getElementById('admin-live-date');
+                if (curDateEl) {
+                    curDateEl.innerText = `${days[cur.getDay()]}, ${cur.getDate()} ${months[cur.getMonth()]} ${cur.getFullYear()}`;
+                }
+            }
+        }, 1000);
+    }
+}
+
+// Admin Dashboard & Charts
+async function initDashboardCharts() {
+    if (!CURRENT_USER || CURRENT_USER.role !== 'Admin') return;
+    
+    updateAdminDashboardGreeting();
+    
+    const todayStr = new Date().toISOString().split('T')[0];
+    const sDate = document.getElementById('filter-start-date');
+    const eDate = document.getElementById('filter-end-date');
+    if (sDate && !sDate.value) sDate.value = todayStr;
+    if (eDate && !eDate.value) eDate.value = todayStr;
+
+    try { 
+        const resGaji = await callBackend('getHistori'); 
+        HISTORI_GAJI_CACHE = parseDataArray(resGaji); 
+    } catch(e){}
+
+    try { 
+        const resKaryawan = await callBackend('getKaryawan'); 
+        KARYAWAN_CACHE = parseDataArray(resKaryawan); 
+    } catch(e){}
+
+    try { 
+        const resTrx = await callBackend('getHistoriTransaksi'); 
+        HISTORI_TRX_CACHE = parseDataArray(resTrx); 
+    } catch(e){}
+
+    populateCabangFilterDashboard(); 
+    updateDashboardCharts();
+}
+
+function populateCabangFilterDashboard() {
+    const filter = document.getElementById('filter-cabang-dashboard');
+    if (!filter) return;
+    const cabangs = new Set();
+    (HISTORI_TRX_CACHE || []).forEach(t => { if (t['Cabang']) cabangs.add(t['Cabang']); });
+    let html = '<option value="Semua">Semua Cabang</option>';
+    cabangs.forEach(c => html += `<option value="${c}">${c}</option>`);
+    filter.innerHTML = html;
+}
+
+function parseTrxDate(dateStr) {
+    if (!dateStr) return null;
+    const parts = dateStr.split(' ');
+    if (parts.length === 0) return null;
+    const dateParts = parts[0].split('/');
+    if (dateParts.length !== 3) return null;
+    return new Date(dateParts[2], dateParts[1] - 1, dateParts[0]);
+}
+
+function resetDateFilter() {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const sDate = document.getElementById('filter-start-date');
+    const eDate = document.getElementById('filter-end-date');
+    if (sDate) sDate.value = todayStr;
+    if (eDate) eDate.value = todayStr;
+    updateDashboardCharts();
+}
+
+function updateDashboardCharts() {
+    if (!CURRENT_USER || CURRENT_USER.role !== 'Admin') return;
+    const filterVal = document.getElementById('filter-month-dashboard')?.value;
+    const filterCabang = document.getElementById('filter-cabang-dashboard')?.value || 'Semua';
+    const filterStartDate = document.getElementById('filter-start-date')?.value;
+    const filterEndDate = document.getElementById('filter-end-date')?.value;
+    
+    const statKaryawan = document.getElementById('stat-karyawan');
+    if (statKaryawan) statKaryawan.innerText = KARYAWAN_CACHE ? KARYAWAN_CACHE.length : 0;
+
+    let filteredGaji = HISTORI_GAJI_CACHE || [];
+    if (filterVal) filteredGaji = filteredGaji.filter(g => g['Bulan'] === filterVal);
+    
+    let totalPokok = 0, totalBonus = 0, totalPotongan = 0, totalBersih = 0;
+    filteredGaji.forEach(g => {
+        const bonus = Number(g['Bonus']) || 0, potongan = Number(g['Potongan']) || 0, total = Number(g['Total Gaji']) || 0;
+        totalPokok += (total - bonus + potongan); 
+        totalBonus += bonus; 
+        totalPotongan += potongan; 
+        totalBersih += total;
+    });
+
+    const statGaji = document.getElementById('stat-gaji');
+    if (statGaji) statGaji.innerText = 'Rp ' + formatRupiah(totalBersih);
+
+    const canvasDonut = document.getElementById('chart-penggajian');
+    if (canvasDonut) {
+        const ctxDonut = canvasDonut.getContext('2d');
+        if (chartPenggajian) chartPenggajian.destroy();
+        let donutData = [totalPokok, totalBonus, totalPotongan];
+        let donutBgColors = ['#3b82f6', '#10b981', '#ef4444'];
+        let donutLabels = ['Gaji Pokok', 'Bonus', 'Potongan'];
+        if (totalPokok === 0 && totalBonus === 0 && totalPotongan === 0) { 
+            donutData = [1]; 
+            donutBgColors = ['#e5e7eb']; 
+            donutLabels = ['Belum Ada Data']; 
+        }
+        chartPenggajian = new Chart(ctxDonut, { 
+            type: 'doughnut', 
+            data: { labels: donutLabels, datasets: [{ data: donutData, backgroundColor: donutBgColors, borderWidth: 0, hoverOffset: 4 }] }, 
+            options: { responsive: true, maintainAspectRatio: false, cutout: '70%', plugins: { legend: { position: 'right', labels: { boxWidth: 10, font: {size: 10} } }, tooltip: { enabled: (totalBersih > 0) } } } 
+        });
+    }
+
+    const branchCounts = {};
+    (KARYAWAN_CACHE || []).forEach(k => { 
+        const branch = k['Lokasi Cabang'] || 'Pusat'; 
+        branchCounts[branch] = (branchCounts[branch] || 0) + 1; 
+    });
+
+    const canvasBar = document.getElementById('chart-karyawan');
+    if (canvasBar) {
+        const ctxBar = canvasBar.getContext('2d');
+        if (chartKaryawan) chartKaryawan.destroy();
+        chartKaryawan = new Chart(ctxBar, { 
+            type: 'bar', 
+            data: { labels: Object.keys(branchCounts).length ? Object.keys(branchCounts) : ['Belum Ada Data'], datasets: [{ label: 'Karyawan', data: Object.values(branchCounts).length ? Object.values(branchCounts) : [0], backgroundColor: '#ef4444', borderRadius: 4 }] }, 
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { stepSize: 1, font: {size: 10} } }, x: { ticks: { font: {size: 10} } } }, plugins: { legend: { display: false } } } 
+        });
+    }
+
+    let filteredTrx = HISTORI_TRX_CACHE || [];
+    if (filterCabang !== 'Semua') filteredTrx = filteredTrx.filter(t => t['Cabang'] === filterCabang);
+    if (filterStartDate || filterEndDate) {
+        let start = filterStartDate ? new Date(filterStartDate) : null;
+        let end = filterEndDate ? new Date(filterEndDate) : null;
+        if (start) start.setHours(0, 0, 0, 0); 
+        if (end) end.setHours(23, 59, 59, 999);
+        filteredTrx = filteredTrx.filter(t => {
+            const trxDate = parseTrxDate(t['Tanggal']); 
+            if (!trxDate) return false;
+            let isValid = true;
+            if (start && trxDate < start) isValid = false; 
+            if (end && trxDate > end) isValid = false;
+            return isValid;
+        });
+    }
+    
+    let totalPenjualan = 0; 
+    let trxCount = filteredTrx.length; 
+    const penjualanPerCabang = {};
+    filteredTrx.forEach(t => { 
+        const cabang = t['Cabang'] || 'Pusat'; 
+        const omset = Number(t['Total Belanja']) || 0; 
+        totalPenjualan += omset; 
+        penjualanPerCabang[cabang] = (penjualanPerCabang[cabang] || 0) + omset; 
+    });
+
+    const statPenjualan = document.getElementById('stat-penjualan');
+    const statTrxCount = document.getElementById('stat-trx-count');
+    if (statPenjualan) statPenjualan.innerText = 'Rp ' + formatRupiah(totalPenjualan); 
+    if (statTrxCount) statTrxCount.innerText = `${trxCount} Transaksi Selesai`;
+
+    const canvasPenjualan = document.getElementById('chart-penjualan');
+    if (canvasPenjualan) {
+        const ctxPenjualan = canvasPenjualan.getContext('2d');
+        if (chartPenjualan) chartPenjualan.destroy();
+        chartPenjualan = new Chart(ctxPenjualan, { 
+            type: 'bar', 
+            data: { labels: Object.keys(penjualanPerCabang).length ? Object.keys(penjualanPerCabang) : ['Belum Ada Data'], datasets: [{ label: 'Total Penjualan', data: Object.values(penjualanPerCabang).length ? Object.values(penjualanPerCabang) : [0], backgroundColor: '#10b981', borderRadius: 4 }] }, 
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { callback: function(value) { return 'Rp ' + (value/1000) + 'k'; }, font: {size: 10} } }, x: { ticks: { font: {size: 10} } } }, plugins: { legend: { display: false } } } 
+        });
+    }
+}
+
+// Karyawan & Slip Gaji Logic
+async function loadKaryawan() {
+    const loading = document.getElementById('loading-karyawan');
+    if (loading) loading.classList.remove('hidden-view');
+    const list = document.getElementById('list-karyawan');
+    if (list) list.innerHTML = '';
+    try {
+        const res = await callBackend('getKaryawan'); 
+        KARYAWAN_CACHE = parseDataArray(res); 
+        if (KARYAWAN_CACHE.length === 0) { 
+            list.innerHTML = `<div class="text-center text-gray-400 py-10"><i class="fas fa-users-slash text-4xl mb-3"></i><p class="text-sm">Belum ada karyawan</p></div>`; 
+        } else { 
+            list.innerHTML = KARYAWAN_CACHE.map(k => `
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center gap-2">
+                    <div class="flex-1 overflow-hidden">
+                        <p class="font-bold text-sm text-gray-800 truncate">${k['Nama']}</p>
+                        <p class="text-[10px] text-gray-500 truncate">${k['Lokasi Cabang']} &bull; ${k['Jabatan']}</p>
+                        <p class="text-[10px] text-gray-400 mt-0.5">Rp ${formatRupiah(k['Gaji Harian'])}/hari</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick='editKaryawan(${JSON.stringify(k)})' class="bg-blue-50 text-blue-600 w-8 h-8 flex items-center justify-center rounded-lg text-xs font-bold hover:bg-blue-100 transition"><i class="fas fa-edit"></i></button>
+                        <button onclick="confirmHapusKaryawan(${k.rowIndex})" class="bg-red-50 text-red-600 w-8 h-8 flex items-center justify-center rounded-lg text-xs font-bold hover:bg-red-100 transition"><i class="fas fa-trash"></i></button>
+                    </div>
+                </div>`).join(''); 
+        }
+        if (CURRENT_USER.role === 'Admin') initDashboardCharts(); 
+    } catch (e) { 
+        showToast('Gagal memuat karyawan', 'error'); 
+    }
+    if (loading) loading.classList.add('hidden-view');
+}
+
+function openFormKaryawan() { 
+    document.getElementById('form-karyawan').reset(); 
+    document.getElementById('k-rowIndex').value = ''; 
+    document.getElementById('modal-title').innerHTML = 'Tambah Karyawan <button onclick="closeModal(\'modal-karyawan\')"><i class="fas fa-times text-gray-400"></i></button>'; 
+    document.getElementById('modal-karyawan').classList.remove('hidden-view'); 
+}
+
+function editKaryawan(k) { 
+    openFormKaryawan(); 
+    document.getElementById('modal-title').innerHTML = 'Edit Karyawan <button onclick="closeModal(\'modal-karyawan\')"><i class="fas fa-times text-gray-400"></i></button>'; 
+    document.getElementById('k-rowIndex').value = k.rowIndex; 
+    document.getElementById('k-nama').value = k['Nama'] || ''; 
+    document.getElementById('k-gender').value = k['Jenis Kelamin'] || 'Laki-laki'; 
+    document.getElementById('k-jabatan').value = k['Jabatan'] || 'Kasir'; 
+    document.getElementById('k-cabang').value = k['Lokasi Cabang'] || ''; 
+    document.getElementById('k-wa').value = k['No WA'] || ''; 
+    document.getElementById('k-gaji').value = k['Gaji Harian'] || ''; 
+    document.getElementById('k-email').value = k['Email'] || ''; 
+}
+
+async function saveKaryawanData(e) { 
+    e.preventDefault(); 
+    const btn = document.getElementById('btn-save-karyawan'); 
+    btn.innerHTML = '<div class="loader border-white"></div> Menyimpan...'; 
+    btn.disabled = true; 
+    const data = { 
+        rowIndex: document.getElementById('k-rowIndex').value, 
+        'Nama': document.getElementById('k-nama').value, 
+        'Jenis Kelamin': document.getElementById('k-gender').value, 
+        'Jabatan': document.getElementById('k-jabatan').value, 
+        'Lokasi Cabang': document.getElementById('k-cabang').value, 
+        'No WA': document.getElementById('k-wa').value, 
+        'Gaji Harian': document.getElementById('k-gaji').value, 
+        'Email': document.getElementById('k-email').value 
+    }; 
+    try { 
+        const res = await callBackend('saveKaryawan', data); 
+        if (res.success) { 
+            showToast(res.message, 'success'); 
+            closeModal('modal-karyawan'); 
+            loadKaryawan(); 
+        } else { 
+            showToast(res.message, 'error'); 
+        } 
+    } catch(err) { 
+        showToast('Gagal menyimpan karyawan', 'error'); 
+    } 
+    btn.innerHTML = 'Simpan'; 
+    btn.disabled = false; 
+}
+
+function confirmHapusKaryawan(id) { 
+    document.getElementById('confirm-title').innerText = 'Hapus Karyawan?'; 
+    document.getElementById('btn-confirm-action').onclick = async () => { 
+        closeModal('modal-confirm'); 
+        try { 
+            const res = await callBackend('deleteKaryawan', id); 
+            if (res.success) { 
+                showToast(res.message, 'success'); 
+                loadKaryawan(); 
+            } 
+        } catch(e) { 
+            showToast('Gagal menghapus data', 'error'); 
+        } 
+    }; 
+    document.getElementById('modal-confirm').classList.remove('hidden-view'); 
+}
+
+async function loadKaryawanForSlip() { 
+    if (!Array.isArray(KARYAWAN_CACHE) || KARYAWAN_CACHE.length === 0) { 
+        try { 
+            const res = await callBackend('getKaryawan'); 
+            KARYAWAN_CACHE = parseDataArray(res); 
+        } catch(e) {} 
+    } 
+    const select = document.getElementById('s-karyawan'); 
+    if (select) {
+        select.innerHTML = '<option value="">-- Pilih Karyawan --</option>' + (KARYAWAN_CACHE || []).map(k => `<option value="${k['ID Karyawan']}">${k['Nama']} - ${k['Lokasi Cabang']}</option>`).join(''); 
+    }
+}
+
+function autoFillSlipGaji() { 
+    const id = document.getElementById('s-karyawan').value; 
+    const k = KARYAWAN_CACHE.find(x => String(x['ID Karyawan']) === String(id)); 
+    if (k) { 
+        document.getElementById('s-gaji').value = k['Gaji Harian']; 
+        hitungTotalGaji(); 
+    } else { 
+        document.getElementById('s-gaji').value = ''; 
+        document.getElementById('s-total').innerText = 'Rp 0'; 
+    } 
+}
+
+function hitungTotalGaji() { 
+    const harian = Number(document.getElementById('s-gaji').value || 0);
+    const hari = Number(document.getElementById('s-hari').value || 0);
+    const bonus = Number(document.getElementById('s-bonus').value || 0);
+    const potongan = Number(document.getElementById('s-potongan').value || 0); 
+    const total = (harian * hari) + bonus - potongan; 
+    document.getElementById('s-total').innerText = 'Rp ' + formatRupiah(total); 
+}
+
+function resetFormSlip() { 
+    const form = document.getElementById('form-slip');
+    if (form) form.reset(); 
+    document.getElementById('s-total').innerText = 'Rp 0'; 
+    document.getElementById('hasil-slip').classList.add('hidden-view'); 
+    const now = new Date(); 
+    document.getElementById('s-bulan').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2, '0')}`; 
+}
+
+async function generateSlip(e) { 
+    e.preventDefault(); 
+    const btn = document.getElementById('btn-generate-slip'); 
+    const kId = document.getElementById('s-karyawan').value; 
+    const k = (KARYAWAN_CACHE || []).find(x => String(x['ID Karyawan']) === String(kId)); 
+    if (!k) { 
+        showToast('Silahkan pilih Karyawan terlebih dahulu!', 'error'); 
+        return; 
+    } 
+    btn.innerHTML = '<div class="loader border-white"></div> Memproses...'; 
+    btn.disabled = true; 
+    const data = { 
+        id: k['ID Karyawan'], 
+        nama: k['Nama'], 
+        cabang: k['Lokasi Cabang'], 
+        jabatan: k['Jabatan'], 
+        wa: k['No WA'], 
+        gajiHarian: k['Gaji Harian'], 
+        bulan: document.getElementById('s-bulan').value, 
+        hariMasuk: document.getElementById('s-hari').value, 
+        keteranganLibur: document.getElementById('s-keterangan').value, 
+        bonus: document.getElementById('s-bonus').value, 
+        potongan: document.getElementById('s-potongan').value 
+    }; 
+    try { 
+        const res = await callBackend('processSlipGaji', data); 
+        if (res.success) { 
+            document.getElementById('hasil-slip').classList.remove('hidden-view'); 
+            
+            const slipObj = {
+                'ID Slip': res.idSlip || 'SLIP-NEW',
+                'Nama': k['Nama'],
+                'ID Karyawan': k['ID Karyawan'],
+                'Bulan': data.bulan,
+                'Hari Masuk': data.hariMasuk,
+                'Gaji Harian': data.gajiHarian,
+                'Bonus': data.bonus,
+                'Potongan': data.potongan,
+                'Total Gaji': (Number(data.gajiHarian) * Number(data.hariMasuk)) + Number(data.bonus) - Number(data.potongan),
+                'Cabang': k['Lokasi Cabang'] || 'Pusat',
+                'Jabatan': k['Jabatan'] || '-',
+                'No WA': k['No WA'] || '',
+                'Keterangan Libur': data.keteranganLibur,
+                'Link PDF': res.pdfUrl || '#'
+            };
+
+            const linkPdf = document.getElementById('link-pdf');
+            if (linkPdf) {
+                linkPdf.onclick = (ev) => {
+                    ev.preventDefault();
+                    cetakSlipGajiPDF(slipObj);
+                };
+            }
+            const linkWa = document.getElementById('link-wa');
+            if (linkWa) {
+                linkWa.onclick = (ev) => {
+                    ev.preventDefault();
+                    kirimWaSlipGajiDirect(slipObj);
+                };
+            }
+
+            showToast(res.message, 'success'); 
+            HISTORI_GAJI_CACHE = []; 
+        } else { 
+            showToast(res.message, 'error'); 
+        } 
+    } catch(err) { 
+        showToast('Gagal mencetak slip', 'error'); 
+    } 
+    btn.innerHTML = '<i class="fas fa-print"></i> Cetak PDF'; 
+    btn.disabled = false; 
+}
+
+// Produk Master Logic
+async function loadProduk() { 
+    const loading = document.getElementById('loading-produk');
+    if (loading) loading.classList.remove('hidden-view'); 
+    const list = document.getElementById('list-produk');
+    if (list) list.innerHTML = ''; 
+    try { 
+        const res = await callBackend('getProduk'); 
+        PRODUK_CACHE = parseDataArray(res); 
+        renderListProduk(); 
+    } catch(e) { 
+        showToast('Gagal memuat produk', 'error'); 
+    } 
+    if (loading) loading.classList.add('hidden-view'); 
+}
+
+function renderListProduk() { 
+    const list = document.getElementById('list-produk'); 
+    const searchInput = document.getElementById('search-produk'); 
+    const keyword = searchInput ? searchInput.value.toLowerCase() : ''; 
+    let filteredProduk = PRODUK_CACHE; 
+    if (keyword) { 
+        filteredProduk = PRODUK_CACHE.filter(p => { 
+            const nama = (p['Nama Produk'] || '').toLowerCase(); 
+            const id = String(p['ID Produk'] || '').toLowerCase(); 
+            return nama.includes(keyword) || id.includes(keyword); 
+        }); 
+    } 
+    if (filteredProduk.length === 0) { 
+        list.innerHTML = `<div class="col-span-full text-center text-gray-400 py-10"><i class="fas fa-box-open text-4xl mb-3"></i><p class="text-sm">Produk tidak ditemukan</p></div>`; 
+        return; 
+    } 
+    list.innerHTML = filteredProduk.map(p => `
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
+            <div class="h-28 bg-gray-100 relative">
+                ${p['GambarBase64'] ? `<img src="${p['GambarBase64']}" class="w-full h-full object-cover">` : `<div class="w-full h-full flex items-center justify-center text-gray-300"><i class="fas fa-image text-3xl"></i></div>`}
+            </div>
+            <div class="p-3 flex flex-col flex-1">
+                <p class="font-bold text-xs text-gray-800 line-clamp-2 mb-1">${p['Nama Produk']}</p>
+                <p class="text-xs text-gray-500 font-medium mb-2">Rp ${formatRupiah(p['Harga'])}</p>
+                <div class="flex gap-2 mt-auto pt-2 border-t border-gray-100">
+                    <button onclick='editProduk(${JSON.stringify(p)})' class="flex-1 bg-blue-50 text-blue-600 py-1.5 rounded-lg text-xs font-bold hover:bg-blue-100 transition"><i class="fas fa-edit"></i></button>
+                    <button onclick="confirmHapusProduk(${p.rowIndex})" class="flex-1 bg-red-50 text-red-600 py-1.5 rounded-lg text-xs font-bold hover:bg-red-100 transition"><i class="fas fa-trash"></i></button>
+                </div>
+            </div>
+        </div>`).join(''); 
+}
+
+function openFormProduk() { 
+    document.getElementById('form-produk').reset(); 
+    document.getElementById('pr-rowIndex').value = ''; 
+    document.getElementById('pr-base64').value = ''; 
+    document.getElementById('pr-preview').classList.add('hidden-view'); 
+    document.getElementById('pr-placeholder').classList.remove('hidden-view'); 
+    document.getElementById('mp-title').innerText = 'Tambah Produk'; 
+    document.getElementById('modal-produk').classList.remove('hidden-view'); 
+}
+
+function editProduk(p) { 
+    openFormProduk(); 
+    document.getElementById('mp-title').innerText = 'Edit Produk'; 
+    document.getElementById('pr-rowIndex').value = p.rowIndex; 
+    document.getElementById('pr-nama').value = p['Nama Produk']; 
+    document.getElementById('pr-harga').value = p['Harga']; 
+    if (p['GambarBase64']) { 
+        document.getElementById('pr-base64').value = p['GambarBase64']; 
+        document.getElementById('pr-preview').src = p['GambarBase64']; 
+        document.getElementById('pr-preview').classList.remove('hidden-view'); 
+        document.getElementById('pr-placeholder').classList.add('hidden-view'); 
+    } 
+}
+
+function previewImage(event) { 
+    const file = event.target.files[0]; 
+    if (!file) return; 
+    const reader = new FileReader(); 
+    reader.onload = function(e) { 
+        document.getElementById('pr-base64').value = e.target.result; 
+        document.getElementById('pr-preview').src = e.target.result; 
+        document.getElementById('pr-preview').classList.remove('hidden-view'); 
+        document.getElementById('pr-placeholder').classList.add('hidden-view'); 
+    }; 
+    reader.readAsDataURL(file); 
+}
+
+async function saveProdukData(e) { 
+    e.preventDefault(); 
+    const btn = document.getElementById('btn-save-produk'); 
+    btn.innerHTML = '<div class="loader border-white"></div> Menyimpan...'; 
+    btn.disabled = true; 
+    const data = { 
+        rowIndex: document.getElementById('pr-rowIndex').value, 
+        nama: document.getElementById('pr-nama').value, 
+        harga: document.getElementById('pr-harga').value, 
+        gambar: document.getElementById('pr-base64').value 
+    }; 
+    try { 
+        const res = await callBackend('saveProduk', data); 
+        if (res.success) { 
+            showToast(res.message, 'success'); 
+            closeModal('modal-produk'); 
+            loadProduk(); 
+        } else { 
+            showToast(res.message, 'error'); 
+        } 
+    } catch(err) { 
+        showToast('Gagal menyimpan produk', 'error'); 
+    } 
+    btn.innerHTML = 'Simpan Produk'; 
+    btn.disabled = false; 
+}
+
+function confirmHapusProduk(id) { 
+    document.getElementById('confirm-title').innerText = 'Hapus Produk?'; 
+    document.getElementById('btn-confirm-action').onclick = async () => { 
+        closeModal('modal-confirm'); 
+        try { 
+            const res = await callBackend('deleteProduk', id); 
+            if (res.success) { 
+                showToast(res.message, 'success'); 
+                loadProduk(); 
+            } 
+        } catch(e) { 
+            showToast('Gagal menghapus data', 'error'); 
+        } 
+    }; 
+    document.getElementById('modal-confirm').classList.remove('hidden-view'); 
+}
+
+// Kasir POS & Cart Logic
+function loadProdukKasir() {
+    if (!PRODUK_CACHE || PRODUK_CACHE.length === 0) {
+        callBackend('getProduk').then(res => {
+            PRODUK_CACHE = parseDataArray(res);
+            renderKasirProdukList();
+        });
+    } else {
+        renderKasirProdukList();
+    }
+}
+
+function renderKasirProdukList() {
+    const list = document.getElementById('list-kasir-produk');
+    if (!list) return;
+    const searchInput = document.getElementById('search-kasir-produk');
+    const keyword = searchInput ? searchInput.value.toLowerCase() : '';
+    
+    let filteredProduk = PRODUK_CACHE;
+    if (keyword) {
+        filteredProduk = PRODUK_CACHE.filter(p => {
+            const nama = (p['Nama Produk'] || '').toLowerCase();
+            return nama.includes(keyword);
+        });
+    }
+
+    if (filteredProduk.length === 0) {
+        list.innerHTML = `<div class="col-span-full text-center text-gray-400 py-10"><i class="fas fa-box-open text-4xl mb-3"></i><p class="text-sm">Produk tidak ditemukan</p></div>`;
+        return;
+    }
+    
+    list.innerHTML = filteredProduk.map(p => `
+        <div onclick="addToCart('${p['ID Produk']}')" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col cursor-pointer hover:border-red-400 hover:shadow-md transition">
+            <div class="h-24 bg-gray-100 relative">
+                ${p['GambarBase64'] ? `<img src="${p['GambarBase64']}" class="w-full h-full object-cover">` : `<div class="w-full h-full flex items-center justify-center text-gray-300"><i class="fas fa-image text-2xl"></i></div>`}
+            </div>
+            <div class="p-2 flex flex-col flex-1 text-center">
+                <p class="font-bold text-[10px] text-gray-800 line-clamp-2 mb-1">${p['Nama Produk']}</p>
+                <p class="text-[10px] text-red-600 font-bold mt-auto">Rp ${formatRupiah(p['Harga'])}</p>
+            </div>
+        </div>
+    `).join('');
+}
+
+function addToCart(id) {
+    const p = PRODUK_CACHE.find(x => String(x['ID Produk']) === String(id));
+    if (!p) return;
+    const existing = CART.find(x => String(x.id) === String(id));
+    if (existing) { 
+        existing.qty += 1; 
+    } else { 
+        CART.push({ id: p['ID Produk'], nama: p['Nama Produk'], harga: Number(p['Harga']), qty: 1 }); 
+    }
+    updateCartUI();
+    showToast(p['Nama Produk'] + ' ditambahkan', 'success');
+}
+
+function updateCartUI() {
+    const total = CART.reduce((sum, item) => sum + (item.harga * item.qty), 0);
+    const badge = document.getElementById('cart-badge');
+    const totalBanner = document.getElementById('cart-total-banner');
+    const modalTotal = document.getElementById('cart-modal-total');
+
+    if (badge) badge.innerText = CART.reduce((s, i) => s + i.qty, 0);
+    if (totalBanner) totalBanner.innerText = 'Rp ' + formatRupiah(total);
+    if (modalTotal) modalTotal.innerText = 'Rp ' + formatRupiah(total);
+    
+    const container = document.getElementById('cart-items-container');
+    if (!container) return;
+    if (CART.length === 0) {
+        container.innerHTML = `<div class="text-center text-gray-400 mt-10"><i class="fas fa-shopping-basket text-4xl mb-3"></i><p class="text-sm">Keranjang kosong</p></div>`;
+        return;
+    }
+    
+    container.innerHTML = CART.map((item, index) => `
+        <div class="bg-white p-3 rounded-xl shadow-sm border border-gray-100 mb-2 flex justify-between items-center">
+            <div class="flex-1">
+                <p class="font-bold text-xs text-gray-800 line-clamp-1">${item.nama}</p>
+                <p class="text-[10px] text-red-600 font-semibold mt-0.5">Rp ${formatRupiah(item.harga)}</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="flex items-center bg-gray-50 rounded-lg border border-gray-200">
+                    <button type="button" onclick="changeQty(${index}, -1)" class="w-7 h-7 flex items-center justify-center text-gray-600 hover:bg-gray-200 rounded-l-lg">-</button>
+                    <span class="text-xs font-bold w-6 text-center">${item.qty}</span>
+                    <button type="button" onclick="changeQty(${index}, 1)" class="w-7 h-7 flex items-center justify-center text-gray-600 hover:bg-gray-200 rounded-r-lg">+</button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function changeQty(index, delta) {
+    if (!CART[index]) return;
+    CART[index].qty += delta;
+    if (CART[index].qty <= 0) CART.splice(index, 1);
+    updateCartUI();
+}
+
+function openCartModal() {
+    if (CART.length === 0) {
+        showToast('Keranjang masih kosong', 'error');
+        return;
+    }
+    document.getElementById('modal-cart').classList.remove('hidden-view');
+    document.getElementById('form-checkout').classList.remove('hidden-view');
+    document.getElementById('checkout-result').classList.add('hidden-view');
+    
+    const cashRadio = document.querySelector('input[name="metode-bayar"][value="Cash"]');
+    if (cashRadio) cashRadio.checked = true;
+    togglePaymentMethod('Cash'); 
+    
+    const coBayar = document.getElementById('co-bayar');
+    if (coBayar) coBayar.value = '';
+    
+    hitungKembalian();
+}
+
+function clearCart() { 
+    CART = []; 
+    updateCartUI(); 
+    closeModal('modal-cart'); 
+}
+
+function togglePaymentMethod(method) {
+    const secCash = document.getElementById('section-cash');
+    const secTrf = document.getElementById('section-transfer');
+    const coBayar = document.getElementById('co-bayar');
+
+    if (method === 'Cash') {
+        if (secCash) secCash.classList.remove('hidden-view');
+        if (secTrf) secTrf.classList.add('hidden-view');
+        if (coBayar) coBayar.required = true;
+    } else {
+        if (secCash) secCash.classList.add('hidden-view');
+        if (secTrf) secTrf.classList.remove('hidden-view');
+        if (coBayar) {
+            coBayar.required = false;
+            coBayar.value = '';
+        }
+        const kembaliEl = document.getElementById('co-kembali');
+        if (kembaliEl) kembaliEl.innerText = 'Rp 0';
+    }
+}
+
+function hitungKembalian() {
+    const total = CART.reduce((sum, item) => sum + (item.harga * item.qty), 0);
+    const bayar = Number(document.getElementById('co-bayar')?.value) || 0;
+    const kembali = bayar - total;
+    
+    const kembaliEl = document.getElementById('co-kembali');
+    if (!kembaliEl) return;
+    if (kembali < 0) {
+        kembaliEl.innerText = 'Kurang Rp ' + formatRupiah(Math.abs(kembali));
+        kembaliEl.className = 'text-red-500 font-bold';
+    } else {
+        kembaliEl.innerText = 'Rp ' + formatRupiah(kembali);
+        kembaliEl.className = 'text-green-600 font-bold';
+    }
+}
+
+// PROCESS CHECKOUT (Fix: populates LAST_TRX_DATA so PDF, WhatsApp & Thermal buttons work!)
+async function processCheckout(e) {
+    if (e && e.preventDefault) e.preventDefault(); 
+    
+    if (CART.length === 0) { 
+        showToast('Keranjang masih kosong!', 'error'); 
+        return; 
+    }
+    
+    let total = 0; 
+    CART.forEach(i => total += (i.harga * i.qty));
+    
+    const selectedMetode = document.querySelector('input[name="metode-bayar"]:checked')?.value || 'Cash';
+    let bayar = total;
+    let kembali = 0;
+    let infoPembayaran = selectedMetode;
+
+    if (selectedMetode === 'Cash') {
+        bayar = Number(document.getElementById('co-bayar')?.value || 0);
+        if (bayar < total) { 
+            showToast('Uang pembayaran kurang!', 'error'); 
+            return; 
+        }
+        kembali = bayar - total;
+    } else {
+        const bank = document.getElementById('co-bank')?.value || 'Transfer';
+        const ref = document.getElementById('co-ref')?.value || '';
+        infoPembayaran = `Transfer (${bank}${ref ? ' - Ref: ' + ref : ''})`;
+    }
+    
+    const btn = document.getElementById('btn-checkout');
+    if (btn) {
+        btn.innerHTML = '<div class="loader border-white"></div> Memproses...'; 
+        btn.disabled = true;
+    }
+
+    const namaPelangganInput = document.getElementById('co-nama')?.value.trim() || 'Umum';
+    const waInput = document.getElementById('co-wa')?.value.trim() || '';
+    const jenisInput = document.getElementById('co-jenis')?.value || 'Dine In';
+    const ketInput = document.getElementById('co-keterangan')?.value.trim() || '';
+    
+    const dataTrx = {
+        namaPelanggan: namaPelangganInput,
+        wa: waInput,
+        jenis: jenisInput,
+        keterangan: ketInput,
+        items: JSON.parse(JSON.stringify(CART)),
+        total: total,
+        bayar: bayar,
+        kembali: kembali,
+        metode: infoPembayaran
+    };
+    
+    try {
+        const res = await callBackend('processTransaksiKasir', dataTrx);
+        
+        if (res.success) {
+            const trxId = res.idTrx || ('TRX-' + Math.floor(100000 + Math.random() * 900000));
+            const now = new Date();
+            const tanggalFormatted = getTodayStringFormatted() + ' ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+
+            // CRITICAL FIX: Save to LAST_TRX_DATA so PDF, WA, and Thermal receipt work!
+            LAST_TRX_DATA = {
+                id: trxId,
+                cabang: CURRENT_USER ? CURRENT_USER.cabang : 'Pusat',
+                kasir: CURRENT_USER ? CURRENT_USER.username : 'Kasir',
+                tanggal: tanggalFormatted,
+                nama_pelanggan: namaPelangganInput,
+                no_wa: waInput,
+                jenis_pesanan: jenisInput,
+                keterangan: ketInput,
+                items: JSON.parse(JSON.stringify(CART)),
+                total: total,
+                bayar: bayar,
+                kembali: kembali,
+                metode: infoPembayaran,
+                pdfUrl: res.pdfUrl || null,
+                waLink: res.waLink || null
+            };
+
+            document.getElementById('form-checkout').classList.add('hidden-view');
+            document.getElementById('checkout-result').classList.remove('hidden-view');
+            
+            showToast(res.message || 'Transaksi berhasil!', 'success');
+            
+            // Reload transaction history cache
+            loadHistoriTransaksi();
+        } else {
+            showToast(res.message || 'Gagal memproses transaksi', 'error');
+            if (btn) {
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> Selesaikan Transaksi'; 
+                btn.disabled = false;
+            }
+        }
+    } catch(err) {
+        showToast('Gagal memproses transaksi', 'error');
+        if (btn) {
+            btn.innerHTML = '<i class="fas fa-check-circle"></i> Selesaikan Transaksi'; 
+            btn.disabled = false;
+        }
+    }
+}
+
+function resetCart() {
+    CART = [];
+    updateCartUI();
+    const form = document.getElementById('form-checkout');
+    if (form) form.reset();
+    const kembaliEl = document.getElementById('co-kembali');
+    if (kembaliEl) kembaliEl.innerText = 'Rp 0';
+    const jenisEl = document.getElementById('co-jenis');
+    if (jenisEl) jenisEl.value = 'Dine In';
+    closeModal('modal-cart');
+}
+
+// ==========================================
+// FEATURE: CETAK / LIHAT NOTA PDF
+// ==========================================
+function generateReceiptHTML(trx) {
+    const itemsHtml = (trx.items || []).map(it => `
+        <tr style="border-bottom: 1px dashed #e5e7eb;">
+            <td style="padding: 4px 0; font-weight: bold; color: #1f2937;">${it.nama}</td>
+            <td style="padding: 4px 0; text-align: center; color: #4b5563;">${it.qty}</td>
+            <td style="padding: 4px 0; text-align: right; color: #4b5563;">${formatRupiah(it.harga)}</td>
+            <td style="padding: 4px 0; text-align: right; font-weight: bold; color: #111827;">${formatRupiah(it.qty * it.harga)}</td>
+        </tr>
+    `).join('');
+
+    return `
+        <div id="pdf-receipt-content" style="width: 320px; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #ffffff; padding: 20px; box-sizing: border-box; color: #1f2937; line-height: 1.4;">
+            <div style="text-align: center; margin-bottom: 12px; border-bottom: 2px dashed #9ca3af; padding-bottom: 12px;">
+                <h1 style="font-size: 20px; font-weight: 800; margin: 0; color: #dc2626; letter-spacing: 1px;">ISTANA BUBUR</h1>
+                <p style="font-size: 11px; font-weight: 600; color: #4b5563; margin: 2px 0;">Sistem Manajemen & Kasir</p>
+                <p style="font-size: 10px; color: #6b7280; margin: 2px 0;">Outlet: ${trx.cabang || 'Pusat'}</p>
+            </div>
+
+            <div style="font-size: 11px; margin-bottom: 12px; border-bottom: 1px dashed #d1d5db; padding-bottom: 8px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                    <span style="color: #6b7280;">No. Trx:</span>
+                    <span style="font-weight: 700; color: #111827;">#${trx.id}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                    <span style="color: #6b7280;">Tanggal:</span>
+                    <span>${trx.tanggal || getTodayStringFormatted()}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                    <span style="color: #6b7280;">Kasir:</span>
+                    <span>${trx.kasir || '-'}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                    <span style="color: #6b7280;">Pelanggan:</span>
+                    <span style="font-weight: 600;">${trx.nama_pelanggan || 'Umum'}</span>
+                </div>
+                ${trx.no_wa ? `<div style="display: flex; justify-content: space-between; margin-bottom: 2px;"><span style="color: #6b7280;">No. WA:</span><span>${trx.no_wa}</span></div>` : ''}
+                ${trx.jenis_pesanan ? `<div style="display: flex; justify-content: space-between; margin-bottom: 2px;"><span style="color: #6b7280;">Tipe:</span><span style="background: #fef2f2; color: #b91c1c; padding: 1px 6px; border-radius: 4px; font-weight: 600;">${trx.jenis_pesanan}</span></div>` : ''}
+                ${trx.keterangan ? `<div style="display: flex; justify-content: space-between; margin-bottom: 2px;"><span style="color: #6b7280;">Catatan:</span><span>${trx.keterangan}</span></div>` : ''}
+            </div>
+
+            <table style="width: 100%; font-size: 11px; border-collapse: collapse; margin-bottom: 12px;">
+                <thead>
+                    <tr style="border-bottom: 1px solid #9ca3af; color: #6b7280; font-size: 10px; text-transform: uppercase;">
+                        <th style="text-align: left; padding-bottom: 4px;">Item</th>
+                        <th style="text-align: center; padding-bottom: 4px;">Qty</th>
+                        <th style="text-align: right; padding-bottom: 4px;">Harga</th>
+                        <th style="text-align: right; padding-bottom: 4px;">Subtotal</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${itemsHtml}
+                </tbody>
+            </table>
+
+            <div style="border-top: 2px dashed #9ca3af; padding-top: 8px; margin-bottom: 14px; font-size: 11px;">
+                <div style="display: flex; justify-content: space-between; font-size: 14px; font-weight: 800; margin-bottom: 6px; color: #111827;">
+                    <span>TOTAL</span>
+                    <span style="color: #16a34a;">Rp ${formatRupiah(trx.total)}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 3px; color: #4b5563;">
+                    <span>Metode Pembayaran:</span>
+                    <span style="font-weight: 600;">${trx.metode || 'Cash'}</span>
+                </div>
+                ${trx.bayar ? `
+                <div style="display: flex; justify-content: space-between; margin-bottom: 3px; color: #4b5563;">
+                    <span>Bayar / Tunai:</span>
+                    <span>Rp ${formatRupiah(trx.bayar)}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; color: #4b5563;">
+                    <span>Kembalian:</span>
+                    <span style="font-weight: 600;">Rp ${formatRupiah(trx.kembali)}</span>
+                </div>` : ''}
+            </div>
+
+            <div style="text-align: center; border-top: 1px dashed #d1d5db; padding-top: 12px; font-size: 11px; color: #4b5563;">
+                <p style="margin: 2px 0; font-weight: 700; color: #111827;">TERIMA KASIH ATAS KUNJUNGAN ANDA</p>
+                <p style="margin: 2px 0; font-size: 10px; color: #6b7280;">Selamat Menikmati Hidangan Istana Bubur</p>
+            </div>
+        </div>
+    `;
+}
+
+function cetakNotaPDF(data = null) {
+    const trx = data || LAST_TRX_DATA;
+    if (!trx) {
+        showToast('Tidak ada data transaksi untuk dibuat PDF', 'error');
+        return;
+    }
+
+    showToast('Membuat Nota PDF...', 'info');
+
+    const tempContainer = document.createElement('div');
+    tempContainer.style.position = 'fixed';
+    tempContainer.style.left = '-9999px';
+    tempContainer.style.top = '0';
+    tempContainer.innerHTML = generateReceiptHTML(trx);
+    document.body.appendChild(tempContainer);
+
+    const receiptElement = tempContainer.firstElementChild;
+
+    if (typeof html2pdf !== 'undefined') {
+        const opt = {
+            margin: [4, 4, 4, 4],
+            filename: `Nota_${trx.id || 'Transaksi'}.pdf`,
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+            jsPDF: { unit: 'mm', format: [80, Math.max(160, 90 + ((trx.items?.length || 1) * 14))], orientation: 'portrait' }
+        };
+
+        html2pdf().set(opt).from(receiptElement).save().then(() => {
+            showToast('Nota PDF berhasil diunduh!', 'success');
+            tempContainer.remove();
+        }).catch(err => {
+            console.error('html2pdf error:', err);
+            // Fallback iframe print
+            printReceiptFallback(receiptElement.innerHTML);
+            tempContainer.remove();
+        });
+    } else {
+        printReceiptFallback(receiptElement.innerHTML);
+        tempContainer.remove();
+    }
+}
+
+function printReceiptFallback(htmlContent) {
+    const frame = document.getElementById('print-frame');
+    if (frame) {
+        const doc = frame.contentWindow.document;
+        doc.open();
+        doc.write(`
+            <html>
+                <head>
+                    <title>Nota Transaksi</title>
+                    <style>
+                        body { margin: 0; padding: 10px; font-family: monospace; }
+                        @media print { body { width: 80mm; } }
+                    </style>
+                </head>
+                <body>${htmlContent}</body>
+            </html>
+        `);
+        doc.close();
+        setTimeout(() => {
+            frame.contentWindow.focus();
+            frame.contentWindow.print();
+            showToast('Membuka dialog cetak PDF', 'info');
+        }, 500);
+    }
+}
+
+// ==========================================
+// FEATURE: KIRIM WHATSAPP
+// ==========================================
+function kirimWhatsApp(data = null) {
+    const trx = data || LAST_TRX_DATA;
+    if (!trx) {
+        showToast('Tidak ada data transaksi untuk dikirim ke WhatsApp', 'error');
+        return;
+    }
+
+    let noWa = (trx.no_wa || '').trim();
+    if (!noWa) {
+        noWa = prompt('Masukkan nomor WhatsApp pelanggan (contoh: 08123456789):', '');
+        if (noWa === null) return; // Batal
+        noWa = noWa.trim();
+    }
+
+    // Format nomor HP ke 62...
+    let cleanWa = noWa.replace(/[^0-9]/g, '');
+    if (cleanWa.startsWith('0')) {
+        cleanWa = '62' + cleanWa.slice(1);
+    } else if (cleanWa.startsWith('8')) {
+        cleanWa = '62' + cleanWa;
+    }
+
+    const itemsText = (trx.items || []).map(i => `• ${i.nama} (${i.qty}x @Rp ${formatRupiah(i.harga)}) = Rp ${formatRupiah(i.qty * i.harga)}`).join('\n');
+
+    const waMessage = 
+`*NOTA TRANSAKSI - ISTANA BUBUR*
+===============================
+*No. Trx:* #${trx.id}
+*Tanggal:* ${trx.tanggal || getTodayStringFormatted()}
+*Cabang:* ${trx.cabang || 'Pusat'}
+*Kasir:* ${trx.kasir || '-'}
+*Pelanggan:* ${trx.nama_pelanggan || 'Umum'}
+${trx.jenis_pesanan ? `*Tipe Pesanan:* ${trx.jenis_pesanan}\n` : ''}${trx.keterangan ? `*Catatan:* ${trx.keterangan}\n` : ''}===============================
+*Rincian Pesanan:*
+${itemsText}
+===============================
+*TOTAL BELANJA: Rp ${formatRupiah(trx.total)}*
+*Pembayaran:* ${trx.metode || 'Cash'}${trx.bayar ? `\n*Tunai:* Rp ${formatRupiah(trx.bayar)}\n*Kembalian:* Rp ${formatRupiah(trx.kembali)}` : ''}
+===============================
+_Terima kasih telah berbelanja di Istana Bubur!_
+_Selamat menikmati hidangan kami._`;
+
+    const encodedMsg = encodeURIComponent(waMessage);
+    const waUrl = cleanWa 
+        ? `https://api.whatsapp.com/send?phone=${cleanWa}&text=${encodedMsg}`
+        : `https://api.whatsapp.com/send?text=${encodedMsg}`;
+
+    const link = document.createElement('a');
+    link.href = waUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    showToast('Membuka WhatsApp...', 'success');
+}
+
+// ==========================================
+// RIWAYAT TRANSAKSI LOGIC & ACTIONS
+// ==========================================
+async function loadHistoriTransaksi() {
+    const loading = document.getElementById('loading-histori-trx');
+    if (loading) loading.classList.remove('hidden-view');
+    try { 
+        const res = await callBackend('getHistoriTransaksi'); 
+        HISTORI_TRX_CACHE = parseDataArray(res); 
+        
+        if (CURRENT_USER && CURRENT_USER.role === 'Admin') {
+            const filter = document.getElementById('filter-cabang-trx');
+            if (filter) {
+                const cabangs = new Set();
+                HISTORI_TRX_CACHE.forEach(t => { if (t['Cabang']) cabangs.add(t['Cabang']); });
+                let html = '<option value="Semua">Semua Cabang</option>';
+                cabangs.forEach(c => html += `<option value="${c}">${c}</option>`);
+                const prevVal = filter.value;
+                filter.innerHTML = html;
+                if (Array.from(filter.options).some(o => o.value === prevVal)) filter.value = prevVal;
+            }
+        }
+
+        renderHistoriTransaksi(); 
+        if (CURRENT_USER && CURRENT_USER.role !== 'Admin') updateKasirDashboard();
+    } catch(e) { 
+        console.error('Error loading histori transaksi:', e);
+    }
+    if (loading) loading.classList.add('hidden-view');
+}
+
+function refreshHistoriTransaksi() { 
+    loadHistoriTransaksi(); 
+}
+
+function isDateTrxToday(dateStr) {
+    if (!dateStr) return false;
+    const todayFormatted = getTodayStringFormatted(); // DD/MM/YYYY
+    if (String(dateStr).trim().startsWith(todayFormatted)) return true;
+    
+    // Parse using parseTrxDate
+    const parsed = parseTrxDate(dateStr);
+    if (parsed) {
+        const now = new Date();
+        return parsed.getDate() === now.getDate() &&
+               parsed.getMonth() === now.getMonth() &&
+               parsed.getFullYear() === now.getFullYear();
+    }
+    
+    // Parse using standard Date
+    const nativeDate = new Date(dateStr);
+    if (!isNaN(nativeDate.getTime())) {
+        const now = new Date();
+        return nativeDate.getDate() === now.getDate() &&
+               nativeDate.getMonth() === now.getMonth() &&
+               nativeDate.getFullYear() === now.getFullYear();
+    }
+    return false;
+}
+
+function renderHistoriTransaksi() {
+    const list = document.getElementById('list-histori-transaksi');
+    if (!list) return;
+    const keyword = (document.getElementById('search-trx')?.value || '').toLowerCase();
+    const cabangFilter = document.getElementById('filter-cabang-trx')?.value || 'Semua';
+    const isAdmin = CURRENT_USER && CURRENT_USER.role === 'Admin';
+    
+    const subtitleEl = document.getElementById('histori-trx-subtitle');
+    if (subtitleEl) {
+        subtitleEl.innerText = isAdmin 
+            ? 'Daftar seluruh riwayat transaksi penjualan kasir' 
+            : `Riwayat transaksi khusus hari ini (${CURRENT_USER?.cabang || 'Cabang'})`;
+    }
+
+    let filtered = HISTORI_TRX_CACHE || [];
+    
+    // JIKA KASIR: HANYA tampil riwayat transaksi hari ini saja (dan cabang kasir jika ada)
+    if (!isAdmin) {
+        filtered = filtered.filter(t => {
+            const isCabangMatch = !CURRENT_USER?.cabang || t['Cabang'] === CURRENT_USER.cabang;
+            return isCabangMatch && isDateTrxToday(t['Tanggal']);
+        });
+    } else {
+        // JIKA ADMIN: bisa filter berdasarkan cabang atau melihat semua riwayat
+        if (cabangFilter !== 'Semua') {
+            filtered = filtered.filter(t => t['Cabang'] === cabangFilter);
+        }
+    }
+    
+    if (keyword) {
+        filtered = filtered.filter(t => {
+            const id = String(t['ID Transaksi'] || '').toLowerCase();
+            const nama = (t['Nama Pelanggan'] || '').toLowerCase();
+            return id.includes(keyword) || nama.includes(keyword);
+        });
+    }
+    
+    if (filtered.length === 0) { 
+        list.innerHTML = `<div class="text-center text-gray-400 py-10"><i class="fas fa-receipt text-4xl mb-3"></i><p class="text-sm font-semibold">${!isAdmin ? 'Tidak ada riwayat transaksi untuk hari ini' : 'Tidak ada riwayat transaksi'}</p></div>`; 
+        return; 
+    }
+
+    list.innerHTML = filtered.map(t => {
+        let displayNama = t['Nama Pelanggan'] || 'Umum';
+        let extractJenis = '';
+        const match = displayNama.match(/(.+) \[(.+)\]/);
+        if (match) {
+            displayNama = match[1];
+            let ketFull = match[2];
+            let spl = ketFull.split(' - ');
+            extractJenis = spl[0]; 
+        }
+
+        const idTrx = t['ID Transaksi'];
+
+        // Tombol hapus HANYA TAMPIL untuk Admin. Kasir TIDAK MENAMPILKAN tombol hapus.
+        const deleteButtonHtml = isAdmin ? `
+            <button onclick="confirmHapusTransaksi('${idTrx}')" title="Hapus Transaksi (Admin)" class="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm active:scale-95 transition font-bold text-[10px]">
+                <i class="fas fa-trash-alt"></i> Hapus
+            </button>
+        ` : '';
+
+        return `
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-2 hover:border-gray-200 transition">
+            <div class="flex justify-between items-start">
+                <div>
+                    <p class="font-bold text-sm text-gray-900">#${idTrx}</p>
+                    <p class="text-[10px] text-gray-500">${t['Tanggal']} &bull; ${t['Cabang']}</p>
+                </div>
+                <p class="font-extrabold text-green-600 text-sm">Rp ${formatRupiah(t['Total Belanja'])}</p>
+            </div>
+            
+            <div class="bg-gray-50 rounded-lg p-2.5 flex justify-between items-center text-[10px] text-gray-600 flex-wrap gap-2">
+                <div class="flex items-center gap-1.5 overflow-hidden">
+                    <i class="fas fa-user text-gray-400 text-xs"></i>
+                    <span class="font-bold text-gray-800 truncate">${displayNama}</span> 
+                    ${extractJenis ? `<span class="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[9px] font-semibold">${extractJenis}</span>` : ''} 
+                </div>
+
+                <!-- Action Buttons: Cetak Struk, PDF, WA, & Hapus (Khusus Admin) -->
+                <div class="flex items-center gap-1.5 flex-wrap">
+                    <button onclick="reprintStrukTrx('${idTrx}')" title="Cetak ke Printer Bluetooth" class="bg-gray-900 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-gray-800 active:scale-95 transition font-bold text-[10px]">
+                        <i class="fas fa-print"></i> Struk
+                    </button>
+                    <button onclick="cetakNotaPDFFromHistory('${idTrx}')" title="Lihat / Download Nota PDF" class="bg-red-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-red-700 active:scale-95 transition font-bold text-[10px]">
+                        <i class="fas fa-file-pdf"></i> PDF
+                    </button>
+                    <button onclick="kirimWhatsAppFromHistory('${idTrx}')" title="Kirim Nota via WhatsApp" class="bg-emerald-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-emerald-700 active:scale-95 transition font-bold text-[10px]">
+                        <i class="fab fa-whatsapp"></i> WA
+                    </button>
+                    ${deleteButtonHtml}
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+// Function: Konfirmasi & Hapus Transaksi (Khusus Admin)
+function confirmHapusTransaksi(idTrx) {
+    if (!CURRENT_USER || CURRENT_USER.role !== 'Admin') {
+        showToast('Hanya Admin yang memiliki wewenang untuk menghapus transaksi', 'error');
+        return;
+    }
+
+    const trx = (HISTORI_TRX_CACHE || []).find(t => String(t['ID Transaksi']) === String(idTrx));
+    if (!trx) {
+        showToast('Data transaksi tidak ditemukan', 'error');
+        return;
+    }
+
+    let displayNama = trx['Nama Pelanggan'] || 'Umum';
+    const match = displayNama.match(/(.+) \[(.+)\]/);
+    if (match) displayNama = match[1];
+
+    const modalConfirm = document.getElementById('modal-confirm');
+    const titleEl = document.getElementById('confirm-title');
+    const msgEl = document.getElementById('confirm-message');
+    const btnAction = document.getElementById('btn-confirm-action');
+
+    if (titleEl) titleEl.innerText = 'Hapus Transaksi?';
+    if (msgEl) msgEl.innerText = `Apakah Anda yakin ingin menghapus Transaksi #${idTrx} (${displayNama} - Rp ${formatRupiah(trx['Total Belanja'])})? Tindakan ini tidak dapat dibatalkan.`;
+
+    if (btnAction) {
+        btnAction.onclick = async () => {
+            closeModal('modal-confirm');
+            try {
+                const res = await callBackend('deleteTransaksi', idTrx);
+                if (res.success) {
+                    showToast(res.message || `Transaksi #${idTrx} berhasil dihapus`, 'success');
+                    HISTORI_TRX_CACHE = (HISTORI_TRX_CACHE || []).filter(t => String(t['ID Transaksi']) !== String(idTrx));
+                    renderHistoriTransaksi();
+                    if (CURRENT_USER.role === 'Admin') {
+                        updateDashboardCharts();
+                    } else {
+                        updateKasirDashboard();
+                    }
+                } else {
+                    showToast(res.message || 'Gagal menghapus transaksi', 'error');
+                }
+            } catch(e) {
+                showToast('Gagal menghapus transaksi', 'error');
+            }
+        };
+    }
+
+    if (modalConfirm) modalConfirm.classList.remove('hidden-view');
+}
+
+function getTrxDataFromHistory(idTrx) {
+    const trx = (HISTORI_TRX_CACHE || []).find(t => String(t['ID Transaksi']) === String(idTrx));
+    if (!trx) return null;
+
+    let items = [];
+    try { 
+        items = JSON.parse(trx['Items JSON'] || '[]'); 
+    } catch(e) {
+        items = [];
+    }
+
+    let namaP = trx['Nama Pelanggan'] || 'Umum';
+    let jenisP = '';
+    let ketP = '';
+    const match = namaP.match(/(.+) \[(.+)\]/);
+    if (match) {
+        namaP = match[1];
+        const notes = match[2].split(' - ');
+        jenisP = notes[0] || '';
+        ketP = notes[1] || '';
+    }
+
+    return {
+        id: trx['ID Transaksi'],
+        cabang: trx['Cabang'] || 'Pusat',
+        kasir: trx['Kasir'] || '-',
+        tanggal: trx['Tanggal'] || '',
+        nama_pelanggan: namaP,
+        no_wa: trx['No WA'] || '',
+        jenis_pesanan: jenisP,
+        keterangan: ketP,
+        items: items,
+        total: Number(trx['Total Belanja']) || 0,
+        metode: trx['Metode'] || (trx['Bayar'] ? (trx['Kembalian'] >= 0 ? 'Cash' : 'Transfer') : 'Cash'),
+        bayar: Number(trx['Bayar']) || 0,
+        kembali: Number(trx['Kembalian']) || 0,
+        pdfUrl: trx['Link PDF'] || null
+    };
+}
+
+function cetakNotaPDFFromHistory(idTrx) {
+    const data = getTrxDataFromHistory(idTrx);
+    if (!data) {
+        showToast('Data transaksi tidak ditemukan', 'error');
+        return;
+    }
+    cetakNotaPDF(data);
+}
+
+function kirimWhatsAppFromHistory(idTrx) {
+    const data = getTrxDataFromHistory(idTrx);
+    if (!data) {
+        showToast('Data transaksi tidak ditemukan', 'error');
+        return;
+    }
+    kirimWhatsApp(data);
+}
+
+async function reprintStrukTrx(idTrx) {
+    const trxData = getTrxDataFromHistory(idTrx);
+    if (!trxData) { 
+        showToast('Data transaksi tidak ditemukan', 'error'); 
+        return; 
+    }
+    LAST_TRX_DATA = trxData;
+    await cetakStrukThermal();
+}
+
+// Histori Gaji Logic
+async function loadHistoriGaji() { 
+    const loading = document.getElementById('loading-histori-gaji');
+    if (loading) loading.classList.remove('hidden-view'); 
+    try { 
+        const res = await callBackend('getHistori'); 
+        HISTORI_GAJI_CACHE = parseDataArray(res); 
+        renderHistoriGaji(); 
+    } catch(e) { } 
+    if (loading) loading.classList.add('hidden-view'); 
+}
+
+function refreshHistoriGaji() { 
+    loadHistoriGaji(); 
+}
+
+// Helper format bulan Indonesia
+function formatBulanIndo(bulanStr) {
+    if (!bulanStr) return '-';
+    if (bulanStr.includes('-')) {
+        const parts = bulanStr.split('-');
+        if (parts.length === 2) {
+            const y = parts[0];
+            const m = parseInt(parts[1], 10) - 1;
+            const namaBulan = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+            if (m >= 0 && m < 12) {
+                return `${namaBulan[m]} ${y}`;
+            }
+        }
+    }
+    return bulanStr;
+}
+
+function renderHistoriGaji() { 
+    const list = document.getElementById('list-histori-gaji'); 
+    if (!list) return;
+    const keyword = (document.getElementById('search-gaji')?.value || '').toLowerCase(); 
+    let filtered = HISTORI_GAJI_CACHE || []; 
+    if (keyword) { 
+        filtered = filtered.filter(t => { 
+            const nama = (t['Nama'] || '').toLowerCase(); 
+            const bulan = String(t['Bulan'] || '').toLowerCase(); 
+            return nama.includes(keyword) || bulan.includes(keyword); 
+        }); 
+    } 
+    if (filtered.length === 0) { 
+        list.innerHTML = `<div class="text-center text-gray-400 py-10"><i class="fas fa-file-invoice text-4xl mb-3"></i><p class="text-sm">Tidak ada riwayat slip gaji</p></div>`; 
+        return; 
+    } 
+    list.innerHTML = filtered.map((t, idx) => {
+        const noWa = t['No WA'] || '';
+        const bulanDisplay = formatBulanIndo(t['Bulan']);
+        return `
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col sm:flex-row justify-between sm:items-center gap-3 hover:border-gray-200 transition">
+            <div class="flex-1">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <p class="font-bold text-sm text-gray-900">${t['Nama']}</p>
+                    ${t['Jabatan'] ? `<span class="bg-gray-100 text-gray-600 text-[10px] font-semibold px-2 py-0.5 rounded-full">${t['Jabatan']}</span>` : ''}
+                    ${t['Cabang'] ? `<span class="bg-blue-50 text-blue-600 text-[10px] font-semibold px-2 py-0.5 rounded-full">${t['Cabang']}</span>` : ''}
+                </div>
+                <p class="text-[11px] text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
+                    <span><i class="far fa-calendar-alt text-gray-400 mr-1"></i> Periode: <b>${bulanDisplay}</b></span>
+                    ${t['Hari Masuk'] ? `<span>&bull; Masuk: <b>${t['Hari Masuk']} hr</b></span>` : ''}
+                    ${noWa ? `<span>&bull; <i class="fab fa-whatsapp text-emerald-500"></i> ${noWa}</span>` : ''}
+                </p>
+                <div class="mt-1 flex items-baseline gap-2">
+                    <p class="text-xs font-bold text-gray-500">Total Gaji:</p>
+                    <p class="font-black text-red-600 text-base">Rp ${formatRupiah(t['Total Gaji'])}</p>
+                </div>
+            </div>
+
+            <!-- Tombol Aksi: Lihat/Download PDF, Kirim Slip Gaji ke WhatsApp Karyawan, & Hapus -->
+            <div class="flex items-center gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-100 flex-wrap">
+                <button onclick="lihatPdfSlipGaji(${idx})" title="Lihat / Unduh Slip Gaji PDF" class="bg-gray-900 hover:bg-gray-800 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
+                    <i class="fas fa-file-pdf text-red-400"></i> PDF
+                </button>
+                <button onclick="kirimWaSlipGaji(${idx})" title="Kirim Link & Rincian Slip Gaji ke No. WhatsApp Karyawan" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
+                    <i class="fab fa-whatsapp text-white text-sm"></i> Kirim WA
+                </button>
+                <button onclick="confirmHapusHistoriGaji(${idx})" title="Hapus Riwayat Slip Gaji" class="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
+                    <i class="fas fa-trash-alt"></i> Hapus
+                </button>
+            </div>
+        </div>`;
+    }).join(''); 
+}
+
+// Function: Hapus Slip Gaji from Riwayat Gaji
+function confirmHapusHistoriGaji(idx) {
+    const item = (HISTORI_GAJI_CACHE || [])[idx];
+    if (!item) {
+        showToast('Data slip gaji tidak ditemukan', 'error');
+        return;
+    }
+
+    const nama = item['Nama'] || 'Karyawan';
+    const bulan = formatBulanIndo(item['Bulan']);
+    const modalConfirm = document.getElementById('modal-confirm');
+    const titleEl = document.getElementById('confirm-title');
+    const msgEl = document.getElementById('confirm-message');
+    const btnAction = document.getElementById('btn-confirm-action');
+
+    if (titleEl) titleEl.innerText = 'Hapus Riwayat Gaji?';
+    if (msgEl) msgEl.innerText = `Apakah Anda yakin ingin menghapus slip gaji ${nama} (${bulan})? Tindakan ini tidak dapat dibatalkan.`;
+    
+    if (btnAction) {
+        btnAction.onclick = async () => {
+            closeModal('modal-confirm');
+            try {
+                const targetId = item['ID Slip'] || idx;
+                const res = await callBackend('deleteHistoriGaji', targetId);
+                if (res.success) {
+                    showToast(res.message || 'Riwayat slip gaji berhasil dihapus', 'success');
+                    HISTORI_GAJI_CACHE.splice(idx, 1);
+                    renderHistoriGaji();
+                    if (CURRENT_USER && CURRENT_USER.role === 'Admin') {
+                        updateDashboardCharts();
+                    }
+                } else {
+                    showToast(res.message || 'Gagal menghapus riwayat gaji', 'error');
+                }
+            } catch(e) {
+                showToast('Gagal menghapus riwayat gaji', 'error');
+            }
+        };
+    }
+
+    if (modalConfirm) modalConfirm.classList.remove('hidden-view');
+}
+
+// Function: Kirim WhatsApp Slip Gaji Karyawan from Riwayat Gaji
+function kirimWaSlipGaji(idx) {
+    const t = (HISTORI_GAJI_CACHE || [])[idx];
+    if (!t) {
+        showToast('Data slip gaji tidak ditemukan', 'error');
+        return;
+    }
+    kirimWaSlipGajiDirect(t);
+}
+
+function kirimWaSlipGajiDirect(t) {
+    // 1. Cari nomor WhatsApp karyawan
+    let noWa = (t['No WA'] || '').trim();
+    if (!noWa && Array.isArray(KARYAWAN_CACHE)) {
+        const k = KARYAWAN_CACHE.find(item => 
+            (t['ID Karyawan'] && String(item['ID Karyawan']) === String(t['ID Karyawan'])) ||
+            (item['Nama'] && item['Nama'].toLowerCase() === (t['Nama'] || '').toLowerCase())
+        );
+        if (k && k['No WA']) {
+            noWa = String(k['No WA']).trim();
+        }
+    }
+
+    if (!noWa) {
+        noWa = prompt(`Masukkan nomor WhatsApp untuk karyawan ${t['Nama']} (contoh: 08123456789):`, '');
+        if (noWa === null) return; // Dibatalkan pengguna
+        noWa = noWa.trim();
+    }
+
+    // 2. Normalisasi nomor WA ke format 628...
+    let cleanWa = noWa.replace(/[^0-9]/g, '');
+    if (cleanWa.startsWith('0')) {
+        cleanWa = '62' + cleanWa.slice(1);
+    } else if (cleanWa.startsWith('8')) {
+        cleanWa = '62' + cleanWa;
+    }
+
+    const bulanFormatted = formatBulanIndo(t['Bulan']);
+    const bonus = Number(t['Bonus']) || 0;
+    const potongan = Number(t['Potongan']) || 0;
+    const totalGaji = Number(t['Total Gaji']) || 0;
+    const harian = Number(t['Gaji Harian']) || 0;
+    const hari = Number(t['Hari Masuk']) || 0;
+    const pokok = (harian && hari) ? (harian * hari) : (totalGaji - bonus + potongan);
+
+    // Keterangan Link PDF jika tersedia
+    let linkPdfSection = '';
+    if (t['Link PDF'] && t['Link PDF'] !== '#' && t['Link PDF'].startsWith('http')) {
+        linkPdfSection = `*Link Unduh Slip Gaji PDF:*\n${t['Link PDF']}\n\n`;
+    } else {
+        linkPdfSection = `*Status Dokumen:*\nTelah diverifikasi & disahkan resmi oleh Manajemen Istana Bubur\n\n`;
+    }
+
+    // Format Pesan WhatsApp
+    const waMessage = 
+`*SLIP GAJI KARYAWAN - ISTANA BUBUR*
+================================
+Halo *${t['Nama']}*,
+Berikut adalah rincian slip gaji Anda:
+*Periode:* ${bulanFormatted}
+*Lokasi Cabang:* ${t['Cabang'] || 'Pusat'}
+*Jabatan:* ${t['Jabatan'] || '-'}
+--------------------------------
+*Rincian Gaji:*
+${hari ? `• Hari Masuk : ${hari} hari (@Rp ${formatRupiah(harian)})\n` : ''}• Gaji Pokok : Rp ${formatRupiah(pokok)}
+• Bonus & Tunjangan : Rp ${formatRupiah(bonus)}
+• Potongan Gaji : Rp ${formatRupiah(potongan)}
+${t['Keterangan Libur'] ? `• Keterangan : ${t['Keterangan Libur']}\n` : ''}--------------------------------
+*TOTAL DITERIMA : Rp ${formatRupiah(totalGaji)}*
+================================
+${linkPdfSection}_Terima kasih atas kerja keras, loyalitas, dan dedikasi Anda di Istana Bubur._`;
+
+    const encodedMsg = encodeURIComponent(waMessage);
+    const waUrl = cleanWa 
+        ? `https://api.whatsapp.com/send?phone=${cleanWa}&text=${encodedMsg}`
+        : `https://api.whatsapp.com/send?text=${encodedMsg}`;
+
+    const linkEl = document.createElement('a');
+    linkEl.href = waUrl;
+    linkEl.target = '_blank';
+    linkEl.rel = 'noopener noreferrer';
+    document.body.appendChild(linkEl);
+    linkEl.click();
+    linkEl.remove();
+
+    showToast(`Membuka WhatsApp untuk ${t['Nama']}...`, 'success');
+}
+
+// Function: Lihat / Download Slip Gaji PDF from Riwayat Gaji
+function lihatPdfSlipGaji(idx) {
+    const t = (HISTORI_GAJI_CACHE || [])[idx];
+    if (!t) {
+        showToast('Data slip gaji tidak ditemukan', 'error');
+        return;
+    }
+    cetakSlipGajiPDF(t);
+}
+
+function cetakSlipGajiPDF(t) {
+    if (t['Link PDF'] && t['Link PDF'] !== '#' && t['Link PDF'].startsWith('http')) {
+        window.open(t['Link PDF'], '_blank');
+        return;
+    }
+
+    showToast('Membuat Slip Gaji PDF...', 'info');
+
+    const bonus = Number(t['Bonus']) || 0;
+    const potongan = Number(t['Potongan']) || 0;
+    const totalGaji = Number(t['Total Gaji']) || 0;
+    const harian = Number(t['Gaji Harian']) || 0;
+    const hari = Number(t['Hari Masuk']) || 0;
+    const pokok = (harian && hari) ? (harian * hari) : (totalGaji - bonus + potongan);
+    const bulanFormatted = formatBulanIndo(t['Bulan']);
+
+    const tempContainer = document.createElement('div');
+    tempContainer.style.position = 'fixed';
+    tempContainer.style.left = '-9999px';
+    tempContainer.style.top = '0';
+    tempContainer.innerHTML = `
+        <div style="width: 420px; font-family: 'Inter', -apple-system, sans-serif; background: #ffffff; padding: 24px; box-sizing: border-box; color: #1f2937; line-height: 1.5; border: 1px solid #e5e7eb;">
+            <div style="text-align: center; border-bottom: 2px solid #dc2626; padding-bottom: 12px; margin-bottom: 16px;">
+                <h1 style="font-size: 20px; font-weight: 800; margin: 0; color: #dc2626; letter-spacing: 1px;">ISTANA BUBUR</h1>
+                <p style="font-size: 11px; font-weight: 700; color: #374151; margin: 3px 0; text-transform: uppercase;">SLIP GAJI KARYAWAN RESMI</p>
+                <p style="font-size: 10px; color: #6b7280; margin: 0;">Periode: ${bulanFormatted}</p>
+            </div>
+
+            <div style="font-size: 11px; margin-bottom: 14px; background: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                    <span style="color: #64748b;">Nama Karyawan:</span>
+                    <span style="font-weight: 700; color: #0f172a;">${t['Nama']}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                    <span style="color: #64748b;">Jabatan:</span>
+                    <span style="font-weight: 600; color: #334155;">${t['Jabatan'] || '-'}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                    <span style="color: #64748b;">Lokasi Penempatan:</span>
+                    <span style="font-weight: 600; color: #334155;">${t['Cabang'] || 'Pusat'}</span>
+                </div>
+                ${t['No WA'] ? `<div style="display: flex; justify-content: space-between;"><span style="color: #64748b;">No. WhatsApp:</span><span style="font-weight: 600; color: #334155;">${t['No WA']}</span></div>` : ''}
+            </div>
+
+            <table style="width: 100%; font-size: 11px; border-collapse: collapse; margin-bottom: 14px;">
+                <thead>
+                    <tr style="border-bottom: 1px solid #cbd5e1; color: #475569; background: #f1f5f9;">
+                        <th style="text-align: left; padding: 6px 8px;">Komponen Gaji</th>
+                        <th style="text-align: right; padding: 6px 8px;">Nominal</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom: 1px dashed #e2e8f0;">
+                        <td style="padding: 6px 8px;">Gaji Pokok ${hari ? `(${hari} hari x Rp ${formatRupiah(harian)})` : ''}</td>
+                        <td style="padding: 6px 8px; text-align: right; font-weight: 600;">Rp ${formatRupiah(pokok)}</td>
+                    </tr>
+                    <tr style="border-bottom: 1px dashed #e2e8f0;">
+                        <td style="padding: 6px 8px; color: #16a34a;">Bonus & Tunjangan</td>
+                        <td style="padding: 6px 8px; text-align: right; font-weight: 600; color: #16a34a;">+ Rp ${formatRupiah(bonus)}</td>
+                    </tr>
+                    <tr style="border-bottom: 1px dashed #e2e8f0;">
+                        <td style="padding: 6px 8px; color: #dc2626;">Potongan ${t['Keterangan Libur'] ? `(${t['Keterangan Libur']})` : ''}</td>
+                        <td style="padding: 6px 8px; text-align: right; font-weight: 600; color: #dc2626;">- Rp ${formatRupiah(potongan)}</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div style="border-top: 2px solid #0f172a; padding-top: 8px; margin-bottom: 18px;">
+                <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: 800; color: #0f172a;">
+                    <span>TOTAL DITERIMA:</span>
+                    <span style="color: #dc2626;">Rp ${formatRupiah(totalGaji)}</span>
+                </div>
+            </div>
+
+            <div style="text-align: center; border-top: 1px dashed #cbd5e1; padding-top: 12px; font-size: 10px; color: #64748b;">
+                <p style="margin: 0; font-style: italic;">Slip gaji ini sah dan diterbitkan secara digital oleh Sistem Manajemen Istana Bubur.</p>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(tempContainer);
+
+    const el = tempContainer.firstElementChild;
+    if (typeof html2pdf !== 'undefined') {
+        const cleanName = (t['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9]/g, '_');
+        const cleanBulan = (t['Bulan'] || '').replace(/[^a-zA-Z0-9]/g, '_');
+        const opt = {
+            margin: [4, 4, 4, 4],
+            filename: `Slip_Gaji_${cleanName}_${cleanBulan}.pdf`,
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2 },
+            jsPDF: { unit: 'mm', format: 'a5', orientation: 'portrait' }
+        };
+        html2pdf().set(opt).from(el).save().then(() => {
+            showToast('Slip Gaji PDF berhasil diunduh!', 'success');
+            tempContainer.remove();
+        }).catch(() => {
+            tempContainer.remove();
+        });
+    } else {
+        window.print();
+        tempContainer.remove();
+    }
+}
+
+// ==========================================
+// BLUETOOTH THERMAL PRINTER ESC/POS LOGIC
+// ==========================================
+let printerDevice = null; 
+let printerServer = null; 
+let printerCharacteristic = null; 
+let isNativeBluetooth = false; 
+let connectedPrinterMac = null; 
+const PRINTER_SETTINGS_KEY = 'ib_printer_settings';
+let printerSettings = { paperSize: '58', copies: 1, savedMac: null, savedName: null };
+
+function initPrinterSettings() {
+    const saved = localStorage.getItem(PRINTER_SETTINGS_KEY);
+    if (saved) {
+        printerSettings = { ...printerSettings, ...JSON.parse(saved) };
+        if (document.getElementById('printer-paper-size')) document.getElementById('printer-paper-size').value = printerSettings.paperSize;
+        if (document.getElementById('printer-copies')) document.getElementById('printer-copies').value = printerSettings.copies;
+        if (window.AndroidPrinter && printerSettings.savedMac) { 
+            updatePrinterStatus('Menghubungkan ke ' + printerSettings.savedName + '...', 'warning'); 
+            try { window.AndroidPrinter.connect(printerSettings.savedMac, printerSettings.savedName); } catch(e) {} 
+        }
+    }
+}
+
+function savePrinterSettings() { 
+    printerSettings.paperSize = document.getElementById('printer-paper-size').value; 
+    printerSettings.copies = parseInt(document.getElementById('printer-copies').value) || 1; 
+    localStorage.setItem(PRINTER_SETTINGS_KEY, JSON.stringify(printerSettings)); 
+    showToast('Pengaturan printer disimpan', 'success'); 
+}
+
+function updatePrinterStatus(text, state='disconnected') { 
+    const badge = document.getElementById('printer-status-badge'); 
+    if (!badge) return; 
+    badge.innerText = text; 
+    badge.className = 'text-[10px] font-bold px-2 py-1 rounded '; 
+    if (state === 'connected') badge.className += 'bg-green-100 text-green-700'; 
+    else if (state === 'warning') badge.className += 'bg-yellow-100 text-yellow-700'; 
+    else badge.className += 'bg-gray-100 text-gray-600'; 
+}
+
+window.onAndroidPrinterConnected = function(mac, name) { 
+    isNativeBluetooth = true; 
+    connectedPrinterMac = mac; 
+    printerSettings.savedMac = mac; 
+    printerSettings.savedName = name; 
+    savePrinterSettings(); 
+    updatePrinterStatus('Terhubung: ' + name, 'connected'); 
+    showToast('Printer Terhubung', 'success'); 
+};
+
+window.onAndroidPrinterDisconnected = function() { 
+    connectedPrinterMac = null; 
+    updatePrinterStatus('Tidak Terhubung', 'disconnected'); 
+    showToast('Printer Terputus', 'error'); 
+};
+
+async function scanPrinters() {
+    if (window.AndroidPrinter) {
+        try { 
+            window.AndroidPrinter.scanAndConnect(); 
+            if (typeof window.AndroidPrinter.getPairedDevices === 'function') { 
+                const devicesStr = window.AndroidPrinter.getPairedDevices(); 
+                if (devicesStr) renderPrinterListNative(JSON.parse(devicesStr)); 
+            } 
+        } catch(e) { 
+            showToast('Gagal memanggil fungsi Bluetooth Native Android', 'error'); 
+        } 
+        return;
+    }
+    if (!navigator.bluetooth) { 
+        showToast('Browser tidak mendukung Web Bluetooth.', 'error'); 
+        return; 
+    }
+    try {
+        updatePrinterStatus('Mencari...', 'warning');
+        printerDevice = await navigator.bluetooth.requestDevice({ 
+            filters: [{ services: ['000018f0-0000-1000-8000-00805f9b34fb'] }], 
+            optionalServices: ['e7810a71-73ae-499d-8c15-faa9aef0c3f2'] 
+        });
+        printerDevice.addEventListener('gattserverdisconnected', () => { 
+            updatePrinterStatus('Tidak Terhubung', 'disconnected'); 
+            printerCharacteristic = null; 
+        });
+        updatePrinterStatus('Menghubungkan...', 'warning'); 
+        printerServer = await printerDevice.gatt.connect();
+        const services = await printerServer.getPrimaryServices();
+        if (services.length > 0) {
+            const characteristics = await services[0].getCharacteristics();
+            if (characteristics.length > 0) {
+                printerCharacteristic = characteristics.find(c => c.properties.write || c.properties.writeWithoutResponse) || characteristics[0];
+                updatePrinterStatus('Terhubung: ' + printerDevice.name, 'connected'); 
+                printerSettings.savedName = printerDevice.name; 
+                savePrinterSettings(); 
+                showToast('Printer WebBLE Terhubung', 'success'); 
+                return;
+            }
+        } 
+        throw new Error('Characteristic Write tidak ditemukan');
+    } catch(err) { 
+        updatePrinterStatus('Tidak Terhubung', 'disconnected'); 
+    }
+}
+
+function renderPrinterListNative(devices) {
+    const container = document.getElementById('printer-list-container'); 
+    const list = document.getElementById('printer-list'); 
+    if (!container || !list) return;
+    container.classList.remove('hidden-view');
+    if (devices.length === 0) { 
+        list.innerHTML = `<p class="text-xs text-center text-gray-400 py-4">Tidak ada perangkat tersimpan di Android</p>`; 
+        return; 
+    }
+    list.innerHTML = devices.map(d => `
+        <button onclick="connectNativePrinter('${d.address}', '${d.name}')" class="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl text-left hover:bg-blue-50 transition flex justify-between items-center">
+            <div>
+                <p class="text-sm font-bold text-gray-800">${d.name}</p>
+                <p class="text-[10px] text-gray-500">${d.address}</p>
+            </div>
+            <i class="fas fa-link text-blue-500"></i>
+        </button>`).join('');
+}
+
+function connectNativePrinter(mac, name) { 
+    if (window.AndroidPrinter) { 
+        updatePrinterStatus('Menghubungkan...', 'warning'); 
+        try { 
+            window.AndroidPrinter.connect(mac, name); 
+        } catch(e) { 
+            showToast('Koneksi Gagal', 'error'); 
+            updatePrinterStatus('Tidak Terhubung', 'disconnected'); 
+        } 
+    } 
+}
+
+function disconnectPrinter() { 
+    if (window.AndroidPrinter) { 
+        try { window.AndroidPrinter.disconnect(); } catch(e){} 
+        onAndroidPrinterDisconnected(); 
+    } else if (printerDevice && printerDevice.gatt.connected) { 
+        printerDevice.gatt.disconnect(); 
+    } 
+}
+
+class EscPos {
+    constructor() { this.buffer = []; }
+    init() { this.buffer.push(27, 64); return this; }
+    alignCenter() { this.buffer.push(27, 97, 1); return this; }
+    alignLeft() { this.buffer.push(27, 97, 0); return this; }
+    alignRight() { this.buffer.push(27, 97, 2); return this; }
+    bold(on) { this.buffer.push(27, 69, on ? 1 : 0); return this; }
+    size(w, h) { this.buffer.push(29, 33, (w-1)*16 + (h-1)); return this; }
+    text(str) { for (let i=0; i<str.length; i++) this.buffer.push(str.charCodeAt(i)); return this; }
+    textLine(str) { return this.text(str).feed(1); }
+    feed(lines=1) { for (let i=0; i<lines; i++) this.buffer.push(10); return this; }
+    cut() { this.buffer.push(29, 86, 65, 0); return this; }
+    getBuffer() { return new Uint8Array(this.buffer); }
+    getBase64() { 
+        let binary = ''; 
+        const bytes = this.getBuffer(); 
+        for (let i = 0; i < bytes.byteLength; i++) { binary += String.fromCharCode(bytes[i]); } 
+        return window.btoa(binary); 
+    }
+}
+
+function formatLineLR(left, right, maxLen) { 
+    let str = left.substring(0, maxLen - right.length - 1); 
+    const spaces = maxLen - str.length - right.length; 
+    if (spaces > 0) { str += ' '.repeat(spaces) + right; } 
+    else { str += ' ' + right; } 
+    return str; 
+}
+
+function printSeparator(maxLen, char='-') { return char.repeat(maxLen); }
+
+async function sendDataToPrinter(escPosData) {
+    const base64Data = escPosData.getBase64();
+    for (let i=0; i<printerSettings.copies; i++) {
+        if (window.AndroidPrinter) { 
+            try { window.AndroidPrinter.printBase64(base64Data); } catch (e) { throw new Error('Native print error'); } 
+        } else if (printerCharacteristic) { 
+            const buffer = escPosData.getBuffer(); 
+            const CHUNK_SIZE = 512; 
+            for (let j = 0; j < buffer.length; j += CHUNK_SIZE) { 
+                await printerCharacteristic.writeValue(buffer.slice(j, j + CHUNK_SIZE)); 
+            } 
+        } else { 
+            showToast('Printer belum terhubung! Menggunakan preview struk...', 'info'); 
+            return false; 
+        }
+        if (i < printerSettings.copies - 1) await new Promise(r => setTimeout(r, 1000));
+    } 
+    return true;
+}
+
+async function testPrint() {
+    const p = new EscPos(); 
+    p.init().alignCenter().bold(true).size(2,2).textLine("TEST PRINT").size(1,1).bold(false).feed(1)
+     .textLine("Istana Bubur").textLine("Printer Berhasil Tersambung!").feed(1)
+     .textLine("Kertas: " + printerSettings.paperSize + "mm")
+     .textLine("Copy: " + printerSettings.copies + "x").feed(4).cut();
+    try { 
+        const res = await sendDataToPrinter(p); 
+        if (res) showToast('Test cetak dikirim ke printer', 'success'); 
+    } catch(e) { 
+        showToast('Gagal mencetak. Cek koneksi.', 'error'); 
+    }
+}
+
+async function cetakStrukThermal() {
+    if (!LAST_TRX_DATA) { 
+        showToast('Tidak ada data transaksi', 'error'); 
+        return; 
+    }
+    
+    if (!window.AndroidPrinter && !printerCharacteristic) { 
+        showToast('Hubungkan Printer Bluetooth di menu Pengaturan Printer terlebih dahulu!', 'error'); 
+        setTimeout(() => switchTab('printer'), 600); 
+        return; 
+    }
+
+    const t = LAST_TRX_DATA; 
+    const p = new EscPos(); 
+    const maxChars = printerSettings.paperSize === '80' ? 48 : 32;
+
+    p.init().alignCenter().bold(true).size(2,2).textLine("ISTANA BUBUR").size(1,1).bold(false)
+     .textLine("Cabang: " + (t.cabang || "Pusat"))
+     .textLine(t.tanggal || new Date().toLocaleString('id-ID'))
+     .textLine("Kasir: " + (t.kasir || "-"))
+     .textLine(printSeparator(maxChars)).alignLeft();
+     
+    if (t.nama_pelanggan) p.textLine("Pel: " + t.nama_pelanggan);
+    if (t.no_wa) p.textLine("WA: " + t.no_wa);
+    if (t.jenis_pesanan) p.textLine("Tipe: " + t.jenis_pesanan); 
+    if (t.keterangan) p.textLine("Ket: " + t.keterangan); 
+    
+    p.textLine(printSeparator(maxChars));
+
+    (t.items || []).forEach(item => {
+        p.textLine(item.nama);
+        const detail = `${item.qty} x ${formatRupiah(item.harga)}`;
+        const subtotal = formatRupiah(item.qty * item.harga);
+        p.textLine(formatLineLR(detail, subtotal, maxChars));
+    });
+
+    p.textLine(printSeparator(maxChars));
+    p.bold(true).textLine(formatLineLR("TOTAL", formatRupiah(t.total), maxChars)).bold(false);
+     
+    p.textLine(formatLineLR("Tipe Bayar", t.metode || "Cash", maxChars));
+    if (t.metode === 'Cash' || !t.metode) { 
+        p.textLine(formatLineLR("Tunai", formatRupiah(t.bayar || t.total), maxChars)); 
+        p.textLine(formatLineLR("Kembali", formatRupiah(t.kembali || 0), maxChars)); 
+    }
+    
+    p.alignCenter().feed(2).textLine("Terima Kasih").textLine("Silahkan Datang Kembali").feed(4).cut();
+
+    try { 
+        await sendDataToPrinter(p); 
+        showToast('Struk sedang dicetak...', 'success'); 
+    } catch(e) { 
+        showToast('Gagal mencetak struk, cek koneksi.', 'error'); 
+    }
+}
+
+// Global initialization
+document.addEventListener('DOMContentLoaded', () => { 
+    initPrinterSettings(); 
+    checkAutoLogin(); 
+});
+
+// Bind methods to window so onclick attributes can access them globally
+window.handleLogin = handleLogin;
+window.togglePasswordVisibility = togglePasswordVisibility;
+window.toggleMenu = toggleMenu;
+window.switchTab = switchTab;
+window.openLogoutModal = openLogoutModal;
+window.processLogout = processLogout;
+window.closeModal = closeModal;
+window.copyToClipboard = copyToClipboard;
+window.openFormProduk = openFormProduk;
+window.editProduk = editProduk;
+window.previewImage = previewImage;
+window.saveProdukData = saveProdukData;
+window.confirmHapusProduk = confirmHapusProduk;
+window.renderListProduk = renderListProduk;
+window.openFormKaryawan = openFormKaryawan;
+window.editKaryawan = editKaryawan;
+window.saveKaryawanData = saveKaryawanData;
+window.confirmHapusKaryawan = confirmHapusKaryawan;
+window.autoFillSlipGaji = autoFillSlipGaji;
+window.hitungTotalGaji = hitungTotalGaji;
+window.resetFormSlip = resetFormSlip;
+window.generateSlip = generateSlip;
+window.renderKasirProdukList = renderKasirProdukList;
+window.addToCart = addToCart;
+window.changeQty = changeQty;
+window.openCartModal = openCartModal;
+window.clearCart = clearCart;
+window.togglePaymentMethod = togglePaymentMethod;
+window.hitungKembalian = hitungKembalian;
+window.processCheckout = processCheckout;
+window.resetCart = resetCart;
+window.cetakStrukThermal = cetakStrukThermal;
+window.cetakNotaPDF = cetakNotaPDF;
+window.kirimWhatsApp = kirimWhatsApp;
+window.cetakNotaPDFFromHistory = cetakNotaPDFFromHistory;
+window.kirimWhatsAppFromHistory = kirimWhatsAppFromHistory;
+window.reprintStrukTrx = reprintStrukTrx;
+window.refreshHistoriTransaksi = refreshHistoriTransaksi;
+window.renderHistoriTransaksi = renderHistoriTransaksi;
+window.confirmHapusTransaksi = confirmHapusTransaksi;
+window.isDateTrxToday = isDateTrxToday;
+window.refreshHistoriGaji = refreshHistoriGaji;
+window.renderHistoriGaji = renderHistoriGaji;
+window.confirmHapusHistoriGaji = confirmHapusHistoriGaji;
+window.kirimWaSlipGaji = kirimWaSlipGaji;
+window.kirimWaSlipGajiDirect = kirimWaSlipGajiDirect;
+window.lihatPdfSlipGaji = lihatPdfSlipGaji;
+window.cetakSlipGajiPDF = cetakSlipGajiPDF;
+window.formatBulanIndo = formatBulanIndo;
+window.savePrinterSettings = savePrinterSettings;
+window.scanPrinters = scanPrinters;
+window.disconnectPrinter = disconnectPrinter;
+window.testPrint = testPrint;
+window.updateDashboardCharts = updateDashboardCharts;
+window.resetDateFilter = resetDateFilter;
+window.updateKasirDashboard = updateKasirDashboard;
+window.getHariTanggalIndo = getHariTanggalIndo;
+
+// ==========================================
+// REAL-TIME CHAT BANTUAN (ADMIN & SELURUH CABANG)
+// ==========================================
+
+function initChatWebSocket() {
+    if (!CURRENT_USER) return;
+    if (wsChat && (wsChat.readyState === WebSocket.OPEN || wsChat.readyState === WebSocket.CONNECTING)) {
+        return;
+    }
+
+    try {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/chat`;
+        wsChat = new WebSocket(wsUrl);
+
+        updateChatWsStatus('connecting');
+
+        wsChat.onopen = () => {
+            updateChatWsStatus('online');
+            // Register current user session with WebSocket server
+            wsChat.send(JSON.stringify({
+                type: 'register',
+                user: {
+                    username: CURRENT_USER.username,
+                    role: CURRENT_USER.role,
+                    cabang: CURRENT_USER.cabang
+                }
+            }));
+        };
+
+        wsChat.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'init') {
+                    CHAT_MESSAGES = Array.isArray(data.messages) ? data.messages : [];
+                    if (data.onlineUsers) {
+                        updateOnlineUsersUI(data.onlineUsers);
+                    }
+                    if (currentTab === 'chat') {
+                        renderChatMessages();
+                        if (CURRENT_USER.role === 'Admin') renderAdminCabangTabs();
+                    }
+                } else if (data.type === 'new_message') {
+                    const newMsg = data.message;
+                    if (!newMsg) return;
+
+                    // Idempotent check
+                    const exists = CHAT_MESSAGES.some(m => m.id === newMsg.id);
+                    if (!exists) {
+                        CHAT_MESSAGES.push(newMsg);
+                    }
+
+                    const isFromSelf = (CURRENT_USER && newMsg.sender === CURRENT_USER.username);
+
+                    // Play bright audio chime for incoming messages from others
+                    if (!isFromSelf) {
+                        playChatNotificationSound();
+                    }
+
+                    const isCurrentTabChat = (currentTab === 'chat');
+
+                    if (CURRENT_USER && CURRENT_USER.role === 'Admin') {
+                        const targetBranch = newMsg.cabang || 'Cabang A';
+                        const isLookingAtThisBranch = isCurrentTabChat && (currentAdminChatCabang === targetBranch || currentAdminChatCabang === 'Semua');
+
+                        if (isLookingAtThisBranch) {
+                            renderChatMessages(newMsg.id);
+                            renderAdminCabangTabs();
+                            if (isUserScrolledUp) {
+                                showScrollBottomButton();
+                            } else {
+                                scrollChatToBottom(false);
+                            }
+                        } else {
+                            if (!isFromSelf) {
+                                if (targetBranch !== 'Semua') {
+                                    cabangUnreadCounts[targetBranch] = (cabangUnreadCounts[targetBranch] || 0) + 1;
+                                }
+                                chatUnreadCount++;
+                                updateChatUnreadBadges();
+                                if (isCurrentTabChat) {
+                                    renderAdminCabangTabs();
+                                }
+                                showChatNotificationPopup(newMsg);
+                            }
+                        }
+                    } else if (CURRENT_USER && CURRENT_USER.role === 'Kasir') {
+                        const userCabang = CURRENT_USER.cabang || 'Cabang A';
+                        const isRelevant = (newMsg.cabang === userCabang || newMsg.cabang === 'Semua');
+
+                        if (isRelevant) {
+                            if (isCurrentTabChat) {
+                                renderChatMessages(newMsg.id);
+                                if (isUserScrolledUp) {
+                                    showScrollBottomButton();
+                                } else {
+                                    scrollChatToBottom(false);
+                                }
+                            } else {
+                                if (!isFromSelf) {
+                                    chatUnreadCount++;
+                                    updateChatUnreadBadges();
+                                    showChatNotificationPopup(newMsg);
+                                }
+                            }
+                        }
+                    }
+                } else if (data.type === 'presence') {
+                    if (data.onlineUsers) {
+                        updateOnlineUsersUI(data.onlineUsers);
+                    }
+                } else if (data.type === 'typing') {
+                    handleIncomingTyping(data);
+                }
+            } catch (err) {
+                console.error('Error handling WebSocket message:', err);
+            }
+        };
+
+        wsChat.onclose = () => {
+            updateChatWsStatus('offline');
+            if (CURRENT_USER) {
+                setTimeout(() => {
+                    initChatWebSocket();
+                }, 4000);
+            }
+        };
+
+        wsChat.onerror = (err) => {
+            console.warn('WebSocket error:', err);
+            updateChatWsStatus('offline');
+        };
+    } catch (e) {
+        console.error('Failed to initialize WebSocket:', e);
+        updateChatWsStatus('offline');
+    }
+}
+
+function closeChatWebSocket() {
+    if (wsChat) {
+        try {
+            wsChat.close();
+        } catch (e) {}
+        wsChat = null;
+    }
+    chatUnreadCount = 0;
+    updateChatUnreadBadges();
+}
+
+function updateChatWsStatus(status) {
+    const badge = document.getElementById('chat-ws-status-badge');
+    const text = document.getElementById('chat-ws-status-text');
+    const dot = document.getElementById('chat-ws-dot');
+    if (!badge || !text || !dot) return;
+
+    if (status === 'online') {
+        badge.className = 'inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200';
+        dot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+        text.innerText = 'Online (Live)';
+    } else if (status === 'connecting') {
+        badge.className = 'inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200';
+        dot.className = 'w-2 h-2 rounded-full bg-amber-500 animate-pulse';
+        text.innerText = 'Menghubungkan...';
+    } else {
+        badge.className = 'inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200';
+        dot.className = 'w-2 h-2 rounded-full bg-gray-400';
+        text.innerText = 'Mode Cadangan (HTTP)';
+    }
+}
+
+function updateOnlineUsersUI(onlineUsers) {
+    const el = document.getElementById('chat-online-count');
+    if (!el || !Array.isArray(onlineUsers)) return;
+    const count = Math.max(1, onlineUsers.length);
+    el.innerText = `${count} Online`;
+}
+
+// ==========================================
+// NOTIFIKASI AUDIO & POPUP CHAT
+// ==========================================
+
+function playChatNotificationSound() {
+    if (!isChatSoundEnabled) return;
+    try {
+        if (!audioCtx) {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (AudioContextClass) {
+                audioCtx = new AudioContextClass();
+            }
+        }
+        if (audioCtx && audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        if (!audioCtx) return;
+
+        const now = audioCtx.currentTime;
+        // Two-tone cheerful bell: 587.33Hz (D5) -> 880Hz (A5)
+        const osc1 = audioCtx.createOscillator();
+        const gain1 = audioCtx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(587.33, now);
+        gain1.gain.setValueAtTime(0.12, now);
+        gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+        osc1.connect(gain1);
+        gain1.connect(audioCtx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.2);
+
+        const osc2 = audioCtx.createOscillator();
+        const gain2 = audioCtx.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(880, now + 0.08);
+        gain2.gain.setValueAtTime(0.18, now + 0.08);
+        gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
+        osc2.connect(gain2);
+        gain2.connect(audioCtx.destination);
+        osc2.start(now + 0.08);
+        osc2.stop(now + 0.4);
+    } catch (err) {
+        console.log('Audio notification skipped:', err);
+    }
+}
+
+function toggleChatSound() {
+    isChatSoundEnabled = !isChatSoundEnabled;
+    localStorage.setItem('ib_chat_sound', isChatSoundEnabled ? 'on' : 'off');
+    updateChatSoundUI();
+    if (isChatSoundEnabled) {
+        playChatNotificationSound();
+        showToast('🔊 Suara Notifikasi Chat: AKTIF', 'info');
+    } else {
+        showToast('🔇 Suara Notifikasi Chat: NONAKTIF', 'info');
+    }
+}
+
+function updateChatSoundUI() {
+    const icon = document.getElementById('icon-chat-sound');
+    const text = document.getElementById('text-chat-sound');
+    if (icon && text) {
+        if (isChatSoundEnabled) {
+            icon.className = 'fas fa-volume-up text-xs text-blue-600';
+            text.innerText = 'Suara: ON';
+        } else {
+            icon.className = 'fas fa-volume-mute text-xs text-gray-400';
+            text.innerText = 'Suara: OFF';
+        }
+    }
+}
+
+function showChatNotificationPopup(newMsg) {
+    if (!newMsg) return;
+    const container = document.getElementById('chat-notification-banner-container');
+    if (!container) return;
+
+    const popupId = 'chat-popup-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const popup = document.createElement('div');
+    popup.id = popupId;
+    popup.className = 'pointer-events-auto bg-white border-2 border-red-500 rounded-2xl p-3.5 shadow-2xl shadow-red-900/20 transform transition-all duration-300 translate-y-[-15px] opacity-0 flex items-start gap-3 w-full';
+
+    const isFromAdmin = newMsg.role === 'Admin';
+    const senderDisplay = isFromAdmin ? 'Admin Pusat' : `${newMsg.sender} (${newMsg.cabang || 'Cabang'})`;
+    const roleBadge = isFromAdmin ? '👑 Pusat' : `🏪 ${newMsg.cabang || 'Cabang'}`;
+    const truncatedText = escapeHtml(newMsg.text.length > 75 ? newMsg.text.slice(0, 72) + '...' : newMsg.text);
+
+    popup.innerHTML = `
+        <div class="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center text-lg shrink-0 border border-red-100 relative">
+            <i class="fas fa-comment-dots"></i>
+            <span class="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-500 animate-ping"></span>
+            <span class="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-600"></span>
+        </div>
+        <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-1.5 mb-1">
+                <span class="text-xs font-black text-gray-900 truncate">${escapeHtml(senderDisplay)}</span>
+                <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 shrink-0">${roleBadge}</span>
+            </div>
+            <p class="text-xs text-gray-700 leading-snug break-words mb-2.5 line-clamp-2">${truncatedText}</p>
+            <div class="flex items-center gap-2">
+                <button onclick="openChatFromNotification('${newMsg.cabang || 'Cabang A'}', '${popupId}')" class="text-xs bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold px-3 py-1 rounded-lg transition shadow-xs flex items-center gap-1.5">
+                    <i class="fas fa-reply text-[10px]"></i>
+                    <span>Buka Chat</span>
+                </button>
+                <button onclick="dismissChatPopup('${popupId}')" class="text-xs text-gray-500 hover:text-gray-800 font-medium px-2 py-1 rounded-lg hover:bg-gray-100 transition">
+                    Tutup
+                </button>
+            </div>
+        </div>
+        <button onclick="dismissChatPopup('${popupId}')" class="text-gray-400 hover:text-gray-600 p-1 -mr-1 -mt-1 text-xs transition">
+            <i class="fas fa-times"></i>
+        </button>
+    `;
+
+    container.appendChild(popup);
+
+    requestAnimationFrame(() => {
+        popup.classList.remove('translate-y-[-15px]', 'opacity-0');
+    });
+
+    popup._dismissTimer = setTimeout(() => {
+        dismissChatPopup(popupId);
+    }, 7000);
+}
+
+function dismissChatPopup(popupId) {
+    const el = document.getElementById(popupId);
+    if (!el) return;
+    clearTimeout(el._dismissTimer);
+    el.classList.add('opacity-0', 'scale-95');
+    setTimeout(() => {
+        el.remove();
+    }, 250);
+}
+
+function openChatFromNotification(cabang, popupId) {
+    dismissChatPopup(popupId);
+    if (CURRENT_USER && CURRENT_USER.role === 'Admin') {
+        currentAdminChatCabang = (cabang && cabang !== 'Semua') ? cabang : 'Semua';
+    }
+    switchTab('chat');
+}
+
+function handleChatScroll() {
+    const box = document.getElementById('chat-messages-box');
+    const btn = document.getElementById('btn-scroll-bottom-chat');
+    if (!box) return;
+
+    const distanceFromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
+    isUserScrolledUp = (distanceFromBottom > 90);
+
+    if (!isUserScrolledUp && btn) {
+        btn.classList.add('hidden-view');
+    }
+}
+
+function showScrollBottomButton() {
+    const btn = document.getElementById('btn-scroll-bottom-chat');
+    if (btn) btn.classList.remove('hidden-view');
+}
+
+function scrollChatToBottom(smooth = true) {
+    const box = document.getElementById('chat-messages-box');
+    const btn = document.getElementById('btn-scroll-bottom-chat');
+    if (btn) btn.classList.add('hidden-view');
+    isUserScrolledUp = false;
+    if (box) {
+        box.scrollTo({
+            top: box.scrollHeight,
+            behavior: smooth ? 'smooth' : 'auto'
+        });
+    }
+}
+
+function updateChatUnreadBadges() {
+    const tabBadge = document.getElementById('badge-unread-chat');
+    const headerBadge = document.getElementById('header-unread-badge');
+    const headerPing = document.getElementById('header-unread-ping');
+    const menuDot = document.getElementById('menu-unread-dot');
+    const adminDashBadge = document.getElementById('admin-dash-unread-badge');
+    const kasirDashBadge = document.getElementById('kasir-dash-unread-badge');
+    const chatIcon = document.getElementById('header-chat-icon');
+
+    if (chatUnreadCount > 0) {
+        const countText = chatUnreadCount > 99 ? '99+' : String(chatUnreadCount);
+
+        if (tabBadge) {
+            tabBadge.innerText = countText;
+            tabBadge.classList.remove('hidden-view');
+        }
+        if (headerBadge) {
+            headerBadge.innerText = countText;
+            headerBadge.classList.remove('hidden-view');
+        }
+        if (headerPing) {
+            headerPing.classList.remove('hidden-view');
+        }
+        if (menuDot) {
+            menuDot.classList.remove('hidden-view');
+        }
+        if (adminDashBadge) {
+            adminDashBadge.innerText = `${countText} Pesan Baru`;
+            adminDashBadge.classList.remove('hidden-view');
+        }
+        if (kasirDashBadge) {
+            kasirDashBadge.innerText = `${countText} Baru`;
+            kasirDashBadge.classList.remove('hidden-view');
+        }
+        if (chatIcon) {
+            chatIcon.classList.add('animate-bounce');
+        }
+
+        // Tanda notifikasi di Tab browser
+        document.title = `(${countText}) 💬 Pesan Baru | Istana Bubur`;
+    } else {
+        if (tabBadge) tabBadge.classList.add('hidden-view');
+        if (headerBadge) headerBadge.classList.add('hidden-view');
+        if (headerPing) headerPing.classList.add('hidden-view');
+        if (menuDot) menuDot.classList.add('hidden-view');
+        if (adminDashBadge) adminDashBadge.classList.add('hidden-view');
+        if (kasirDashBadge) kasirDashBadge.classList.add('hidden-view');
+        if (chatIcon) {
+            chatIcon.classList.remove('animate-bounce');
+        }
+
+        // Kembalikan judul halaman
+        document.title = 'Istana Bubur';
+    }
+}
+
+function openChatView() {
+    if (!CURRENT_USER) return;
+
+    if (CURRENT_USER.role === 'Admin') {
+        if (currentAdminChatCabang !== 'Semua') {
+            cabangUnreadCounts[currentAdminChatCabang] = 0;
+        } else {
+            cabangUnreadCounts = {};
+        }
+        chatUnreadCount = Object.values(cabangUnreadCounts).reduce((a, b) => a + b, 0);
+    } else {
+        chatUnreadCount = 0;
+    }
+
+    updateChatUnreadBadges();
+    updateChatSoundUI();
+
+    initChatWebSocket();
+
+    const kasirLabel = document.getElementById('kasir-chat-cabang-label');
+    if (kasirLabel) {
+        kasirLabel.innerText = CURRENT_USER.cabang || 'Cabang A';
+    }
+
+    const headerDesc = document.getElementById('chat-header-desc');
+    if (headerDesc) {
+        if (CURRENT_USER.role === 'Admin') {
+            headerDesc.innerText = 'Pusat Bantuan & Komunikasi Seluruh Cabang Istana Bubur';
+        } else {
+            headerDesc.innerText = `Terhubung langsung dengan Admin Pusat (Cabang: ${CURRENT_USER.cabang || 'Cabang A'})`;
+        }
+    }
+
+    if (CURRENT_USER.role === 'Admin') {
+        renderAdminCabangTabs();
+    }
+
+    renderChatMessages();
+
+    setTimeout(() => {
+        scrollChatToBottom(false);
+        const input = document.getElementById('chat-input-text');
+        if (input) input.focus();
+    }, 100);
+}
+
+function renderAdminCabangTabs() {
+    const container = document.getElementById('admin-cabang-pill-container');
+    if (!container) return;
+
+    const cabangSet = new Set(['Semua', 'Cabang A', 'Cabang B', 'Cabang C']);
+    if (Array.isArray(HISTORI_TRX_CACHE)) {
+        HISTORI_TRX_CACHE.forEach(t => {
+            if (t['Cabang']) cabangSet.add(t['Cabang']);
+        });
+    }
+    CHAT_MESSAGES.forEach(m => {
+        if (m.cabang && m.cabang !== 'Semua') cabangSet.add(m.cabang);
+    });
+
+    const cabangs = Array.from(cabangSet);
+    container.innerHTML = cabangs.map(c => {
+        const isActive = (c === currentAdminChatCabang);
+        const label = c === 'Semua' ? '📢 Semua Cabang (Broadcast)' : `🏪 ${c}`;
+        const activeClass = isActive 
+            ? 'bg-red-600 text-white font-bold shadow-sm' 
+            : 'bg-gray-100 text-gray-700 hover:bg-gray-200 font-medium';
+
+        const unreadThisCabang = (c === 'Semua') ? 0 : (cabangUnreadCounts[c] || 0);
+        const unreadBadgeHtml = unreadThisCabang > 0
+            ? `<span class="ml-1.5 px-1.5 py-0.2 rounded-full text-[9px] font-black ${isActive ? 'bg-white text-red-600' : 'bg-red-600 text-white animate-pulse'}">${unreadThisCabang}</span>`
+            : '';
+
+        return `
+            <button onclick="selectAdminChatCabang('${c}')" class="shrink-0 text-xs px-3.5 py-1.5 rounded-xl transition active:scale-95 flex items-center ${activeClass}">
+                <span>${label}</span>
+                ${unreadBadgeHtml}
+            </button>
+        `;
+    }).join('');
+}
+
+function selectAdminChatCabang(cabang) {
+    currentAdminChatCabang = cabang;
+    if (cabang !== 'Semua') {
+        cabangUnreadCounts[cabang] = 0;
+    } else {
+        cabangUnreadCounts = {};
+    }
+    chatUnreadCount = Object.values(cabangUnreadCounts).reduce((a, b) => a + b, 0);
+    updateChatUnreadBadges();
+
+    renderAdminCabangTabs();
+    renderChatMessages();
+    scrollChatToBottom(false);
+    
+    const input = document.getElementById('chat-input-text');
+    if (input) {
+        input.placeholder = cabang === 'Semua' 
+            ? 'Kirim pesan broadcast ke SEMUA cabang...' 
+            : `Tulis balasan ke ${cabang}...`;
+        input.focus();
+    }
+}
+
+function renderChatMessages(highlightMessageId = null) {
+    const container = document.getElementById('chat-messages-box');
+    const titleEl = document.getElementById('chat-active-channel-title');
+    const countEl = document.getElementById('chat-message-count');
+    if (!container || !CURRENT_USER) return;
+
+    const isAdmin = CURRENT_USER.role === 'Admin';
+    let filtered = [];
+
+    if (isAdmin) {
+        if (currentAdminChatCabang === 'Semua') {
+            filtered = [...CHAT_MESSAGES];
+            if (titleEl) titleEl.innerText = 'Ruang Chat: Seluruh Cabang (Semua)';
+        } else {
+            filtered = CHAT_MESSAGES.filter(m => m.cabang === currentAdminChatCabang || m.cabang === 'Semua');
+            if (titleEl) titleEl.innerText = `Ruang Chat: ${currentAdminChatCabang}`;
+        }
+    } else {
+        const userCabang = CURRENT_USER.cabang || 'Cabang A';
+        filtered = CHAT_MESSAGES.filter(m => m.cabang === userCabang || m.cabang === 'Semua');
+        if (titleEl) titleEl.innerText = `Ruang Chat: ${userCabang} ↔ Admin Pusat`;
+    }
+
+    if (countEl) {
+        countEl.innerText = `${filtered.length} pesan`;
+    }
+
+    if (filtered.length === 0) {
+        container.innerHTML = `
+            <div class="h-full flex flex-col items-center justify-center text-center p-6 text-gray-400">
+                <div class="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 text-2xl mb-3">
+                    <i class="fas fa-comments"></i>
+                </div>
+                <p class="text-sm font-bold text-gray-700 mb-1">Belum Ada Percakapan</p>
+                <p class="text-xs text-gray-400 max-w-xs">
+                    ${isAdmin ? 'Belum ada pesan pada saluran ini. Pilih cabang lain atau kirim pesan baru di bawah.' : 'Mulai chat untuk menghubungi Admin Pusat terkait bantuan operasional, printer, stok, atau kasir.'}
+                </p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = filtered.map(msg => {
+        const isSelf = msg.sender === CURRENT_USER.username;
+        const isBroadcast = msg.cabang === 'Semua';
+        const isHighlighted = (msg.id && msg.id === highlightMessageId);
+        const highlightClass = isHighlighted ? 'ring-4 ring-amber-400 ring-offset-2 animate-pulse' : '';
+
+        if (isSelf) {
+            return `
+                <div class="flex flex-col items-end">
+                    <div class="max-w-[85%] sm:max-w-[75%] bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl rounded-tr-none px-4 py-2.5 shadow-sm ${highlightClass}">
+                        <div class="flex items-center justify-between gap-2 mb-1">
+                            <span class="text-[10px] font-bold text-red-100">${msg.role === 'Admin' ? 'Admin Pusat' : (CURRENT_USER.cabang || 'Kasir')}</span>
+                            ${isBroadcast ? '<span class="text-[9px] bg-white/20 text-white px-1.5 py-0.5 rounded font-semibold">Broadcast</span>' : ''}
+                        </div>
+                        <p class="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(msg.text)}</p>
+                        <div class="flex items-center justify-end gap-1.5 mt-1.5 text-[10px] text-red-100">
+                            <span>${msg.formattedTime || ''}</span>
+                            <i class="fas fa-check-double text-[9px]"></i>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else {
+            const isMsgAdmin = msg.role === 'Admin';
+            const roleBadgeClass = isMsgAdmin 
+                ? 'bg-red-50 text-red-700 border-red-200' 
+                : 'bg-blue-50 text-blue-700 border-blue-200';
+            const roleLabel = isMsgAdmin 
+                ? 'Admin Pusat' 
+                : `${msg.sender} (${msg.cabang})`;
+
+            return `
+                <div class="flex flex-col items-start">
+                    <div class="max-w-[85%] sm:max-w-[75%] bg-white border border-gray-200 text-gray-800 rounded-2xl rounded-tl-none px-4 py-2.5 shadow-xs ${highlightClass}">
+                        <div class="flex items-center justify-between gap-2 mb-1">
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-xs font-bold text-gray-900">${escapeHtml(msg.sender)}</span>
+                                <span class="text-[9px] font-bold px-1.5 py-0.5 rounded border ${roleBadgeClass}">${roleLabel}</span>
+                            </div>
+                            ${isBroadcast ? '<span class="text-[9px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded font-semibold">Broadcast</span>' : ''}
+                        </div>
+                        <p class="text-xs sm:text-sm leading-relaxed text-gray-700 whitespace-pre-wrap break-words">${escapeHtml(msg.text)}</p>
+                        <div class="flex items-center justify-end mt-1.5 text-[10px] text-gray-400">
+                            <span>${msg.formattedTime || ''}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+    }).join('');
+
+    if (!isUserScrolledUp) {
+        container.scrollTop = container.scrollHeight;
+    }
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+async function handleSendChatMessage(e) {
+    if (e) e.preventDefault();
+    if (!CURRENT_USER) return;
+
+    const input = document.getElementById('chat-input-text');
+    if (!input) return;
+    const text = input.value.trim();
+    if (!text) return;
+
+    let targetCabang = 'Semua';
+    if (CURRENT_USER.role === 'Admin') {
+        targetCabang = currentAdminChatCabang;
+    } else {
+        targetCabang = CURRENT_USER.cabang || 'Cabang A';
+    }
+
+    input.value = '';
+
+    if (wsChat && wsChat.readyState === WebSocket.OPEN) {
+        wsChat.send(JSON.stringify({ type: 'typing', isTyping: false }));
+        isTypingSent = false;
+    }
+
+    if (wsChat && wsChat.readyState === WebSocket.OPEN) {
+        wsChat.send(JSON.stringify({
+            type: 'chat_message',
+            cabang: targetCabang,
+            sender: CURRENT_USER.username,
+            text: text
+        }));
+    } else {
+        // Fallback to HTTP REST
+        try {
+            const resp = await fetch('/api/chat/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    cabang: targetCabang,
+                    sender: CURRENT_USER.username,
+                    role: CURRENT_USER.role,
+                    text: text
+                })
+            });
+            const res = await resp.json();
+            if (res.success && res.message) {
+                const exists = CHAT_MESSAGES.some(m => m.id === res.message.id);
+                if (!exists) {
+                    CHAT_MESSAGES.push(res.message);
+                    renderChatMessages();
+                }
+            }
+        } catch (err) {
+            console.error('Error fallback sending chat:', err);
+            showToast('Gagal mengirim pesan chat', 'error');
+        }
+    }
+
+    setTimeout(() => {
+        const box = document.getElementById('chat-messages-box');
+        if (box) box.scrollTop = box.scrollHeight;
+    }, 50);
+}
+
+function sendQuickPrompt(promptText) {
+    const input = document.getElementById('chat-input-text');
+    if (input) {
+        input.value = promptText;
+        handleSendChatMessage(null);
+    }
+}
+
+function handleChatTyping(e) {
+    if (!wsChat || wsChat.readyState !== WebSocket.OPEN) return;
+    if (!isTypingSent) {
+        isTypingSent = true;
+        wsChat.send(JSON.stringify({ type: 'typing', isTyping: true }));
+    }
+    clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => {
+        isTypingSent = false;
+        if (wsChat && wsChat.readyState === WebSocket.OPEN) {
+            wsChat.send(JSON.stringify({ type: 'typing', isTyping: false }));
+        }
+    }, 2000);
+}
+
+function handleIncomingTyping(data) {
+    if (!CURRENT_USER || data.sender === CURRENT_USER.username) return;
+    const indicator = document.getElementById('chat-typing-indicator');
+    const textEl = document.getElementById('chat-typing-text');
+    if (!indicator || !textEl) return;
+
+    if (data.isTyping) {
+        textEl.innerText = `${data.sender} (${data.role === 'Admin' ? 'Admin Pusat' : data.cabang}) sedang mengetik...`;
+        indicator.classList.remove('hidden-view');
+        clearTimeout(indicator._hideTimer);
+        indicator._hideTimer = setTimeout(() => {
+            indicator.classList.add('hidden-view');
+        }, 3000);
+    } else {
+        indicator.classList.add('hidden-view');
+    }
+}
+
+async function refreshChatHistory() {
+    if (!CURRENT_USER) return;
+    try {
+        const targetCabang = CURRENT_USER.role === 'Admin' ? currentAdminChatCabang : (CURRENT_USER.cabang || 'Cabang A');
+        const resp = await fetch(`/api/chat/messages?cabang=${encodeURIComponent(targetCabang)}&role=${encodeURIComponent(CURRENT_USER.role)}`);
+        const res = await resp.json();
+        if (res.success && Array.isArray(res.messages)) {
+            CHAT_MESSAGES = res.messages;
+            renderChatMessages();
+            if (CURRENT_USER.role === 'Admin') renderAdminCabangTabs();
+            showToast('Riwayat chat berhasil dimuat ulang', 'success');
+        }
+    } catch (e) {
+        console.error('Error refreshing chat:', e);
+    }
+}
+
+// Global window bindings for authentication & account management
+window.setLoginRole = setLoginRole;
+window.setDemoLogin = setDemoLogin;
+window.handleLogin = handleLogin;
+window.checkAutoLogin = checkAutoLogin;
+
+window.openRegisterModal = openRegisterModal;
+window.submitRegisterStep1 = submitRegisterStep1;
+window.autoFillReferralCode = autoFillReferralCode;
+window.resendReferralCode = resendReferralCode;
+window.backToRegisterStep1 = backToRegisterStep1;
+window.verifyReferralStep2 = verifyReferralStep2;
+window.backToRegisterStep2 = backToRegisterStep2;
+window.autoFillAuthCode = autoFillAuthCode;
+window.activateAccountStep3 = activateAccountStep3;
+window.openActivateAccountPrompt = openActivateAccountPrompt;
+
+window.openForgotUsernameModal = openForgotUsernameModal;
+window.handleFindUsername = handleFindUsername;
+window.useFoundUsername = useFoundUsername;
+
+window.openForgotPasswordModal = openForgotPasswordModal;
+window.submitForgotPasswordStep1 = submitForgotPasswordStep1;
+window.autoFillFpOtp = autoFillFpOtp;
+window.backToFpStep1 = backToFpStep1;
+window.submitForgotPasswordStep2 = submitForgotPasswordStep2;
+
+// Chat & Dashboard bindings
+window.initChatWebSocket = initChatWebSocket;
+window.closeChatWebSocket = closeChatWebSocket;
+window.openChatView = openChatView;
+window.renderAdminCabangTabs = renderAdminCabangTabs;
+window.selectAdminChatCabang = selectAdminChatCabang;
+window.renderChatMessages = renderChatMessages;
+window.handleSendChatMessage = handleSendChatMessage;
+window.sendQuickPrompt = sendQuickPrompt;
+window.handleChatTyping = handleChatTyping;
+window.refreshChatHistory = refreshChatHistory;
+window.playChatNotificationSound = playChatNotificationSound;
+window.toggleChatSound = toggleChatSound;
+window.updateChatSoundUI = updateChatSoundUI;
+window.showChatNotificationPopup = showChatNotificationPopup;
+window.dismissChatPopup = dismissChatPopup;
+window.openChatFromNotification = openChatFromNotification;
+window.handleChatScroll = handleChatScroll;
+window.showScrollBottomButton = showScrollBottomButton;
+window.scrollChatToBottom = scrollChatToBottom;
+window.updateAdminDashboardGreeting = updateAdminDashboardGreeting;
+window.openGuideModal = openGuideModal;
+window.switchGuideTab = switchGuideTab;
+
+
+</script>

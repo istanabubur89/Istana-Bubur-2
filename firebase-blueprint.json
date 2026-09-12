@@ -1,0 +1,107 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Akun pengguna sistem kasir dan admin Istana Bubur",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "ID unik pengguna" },
+        "fullName": { "type": "string", "maxLength": 100, "description": "Nama lengkap" },
+        "username": { "type": "string", "maxLength": 50, "pattern": "^[a-zA-Z0-9_.-]+$", "description": "Username akun" },
+        "email": { "type": "string", "maxLength": 100, "description": "Email aktif pengguna" },
+        "phone": { "type": "string", "maxLength": 25, "description": "Nomor WhatsApp" },
+        "role": { "type": "string", "enum": ["Admin", "Kasir"], "description": "Peran hak akses" },
+        "cabang": { "type": "string", "maxLength": 50, "description": "Nama cabang penempatan" },
+        "isActive": { "type": "boolean", "description": "Status keaktifan akun" },
+        "authCode": { "type": "string", "maxLength": 50, "description": "Kode autentikasi verifikasi" },
+        "createdAt": { "type": "string", "description": "Waktu pendaftaran" }
+      },
+      "required": ["username", "role", "cabang"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Menu makanan dan minuman Istana Bubur",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 50, "description": "ID Produk (contoh: PRD-001)" },
+        "nama": { "type": "string", "maxLength": 100, "description": "Nama produk makanan/minuman" },
+        "harga": { "type": "number", "description": "Harga jual dalam Rupiah" },
+        "gambar": { "type": "string", "description": "URL atau Base64 gambar produk" },
+        "kategori": { "type": "string", "maxLength": 50, "description": "Kategori produk" }
+      },
+      "required": ["nama", "harga"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Catatan transaksi penjualan kasir",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 50, "description": "ID Transaksi penjualan" },
+        "tanggal": { "type": "string", "maxLength": 30, "description": "Tanggal transaksi" },
+        "jam": { "type": "string", "maxLength": 20, "description": "Waktu jam transaksi" },
+        "kasir": { "type": "string", "maxLength": 100, "description": "Nama atau username kasir" },
+        "cabang": { "type": "string", "maxLength": 50, "description": "Cabang transaksi dibuat" },
+        "total": { "type": "number", "description": "Total nominal belanja" },
+        "metode": { "type": "string", "maxLength": 30, "description": "Metode pembayaran (Tunai/QRIS/Transfer)" },
+        "status": { "type": "string", "maxLength": 30, "description": "Status transaksi (Selesai/Batal)" },
+        "items": { "type": "string", "description": "Daftar item belanja dalam format serialized JSON" }
+      },
+      "required": ["id", "cabang", "total"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Data staf dan karyawan cabang Istana Bubur",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 50, "description": "ID Karyawan" },
+        "nama": { "type": "string", "maxLength": 100, "description": "Nama karyawan" },
+        "posisi": { "type": "string", "maxLength": 50, "description": "Posisi jabatan" },
+        "cabang": { "type": "string", "maxLength": 50, "description": "Cabang penempatan" },
+        "gajiPokok": { "type": "number", "description": "Besaran gaji pokok bulanan" },
+        "noWa": { "type": "string", "maxLength": 25, "description": "Nomor WhatsApp" },
+        "status": { "type": "string", "maxLength": 30, "description": "Status kepegawaian (Aktif/Cuti/Nonaktif)" }
+      },
+      "required": ["id", "nama", "posisi", "cabang", "gajiPokok"]
+    },
+    "Payroll": {
+      "title": "Payroll",
+      "description": "Rekap slip gaji karyawan bulanan",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 50, "description": "ID Slip Gaji" },
+        "tanggal": { "type": "string", "maxLength": 30, "description": "Tanggal penggajian" },
+        "bulan": { "type": "string", "maxLength": 30, "description": "Bulan periode gaji" },
+        "employeeId": { "type": "string", "maxLength": 50, "description": "ID Karyawan" },
+        "nama": { "type": "string", "maxLength": 100, "description": "Nama karyawan penerima" },
+        "cabang": { "type": "string", "maxLength": 50, "description": "Cabang" },
+        "gajiPokok": { "type": "number", "description": "Gaji pokok" },
+        "bonus": { "type": "number", "description": "Bonus insentif" },
+        "potongan": { "type": "number", "description": "Potongan keterlambatan/kasbon" },
+        "totalGaji": { "type": "number", "description": "Nominal total gaji yang diterima" }
+      },
+      "required": ["id", "bulan", "nama", "totalGaji"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Profil dan akun pengguna sistem"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Katalog menu makanan dan minuman"
+    },
+    "/transactions/{trxId}": {
+      "schema": "Transaction",
+      "description": "Pencatatan riwayat transaksi penjualan POS"
+    },
+    "/employees/{empId}": {
+      "schema": "Employee",
+      "description": "Master data kepegawaian dan gaji karyawan"
+    },
+    "/payroll/{slipId}": {
+      "schema": "Payroll",
+      "description": "Histori slip penggajian staf dan karyawan"
+    }
+  }
+}

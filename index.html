@@ -1,0 +1,2057 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Istana Bubur</title>
+    <meta name="description" content="Sistem Manajemen Kasir, Transaksi, Penggajian, dan Chat Bantuan Real-Time Istana Bubur" />
+    <meta property="og:title" content="Istana Bubur" />
+    <meta property="og:description" content="Sistem Manajemen Kasir, Transaksi, Penggajian, dan Chat Bantuan Real-Time Istana Bubur" />
+    <meta property="og:type" content="website" />
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f1f5f9; -webkit-tap-highlight-color: transparent; }
+        .app-container { width: 100%; max-width: 1200px; margin: 0 auto; background: #f8fafc; min-height: 100vh; position: relative; box-shadow: 0 0 20px rgba(0,0,0,0.05); }
+        .nav-item-dropdown { transition: all 0.2s ease-in-out; color: #475569; }
+        .nav-item-dropdown.active { color: #dc2626; background-color: #fef2f2; border-left-color: #dc2626; }
+        .hidden-view { display: none !important; }
+        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #dc2626; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; display: inline-block; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #toast-container { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 99999; width: 90%; max-width: 400px; pointer-events: none; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        .header-bg-shape { position: absolute; top: 0; left: 0; right: 0; height: 220px; background: linear-gradient(135deg, #b91c1c 0%, #991b1b 100%); border-bottom-left-radius: 2.5rem; border-bottom-right-radius: 2.5rem; z-index: 0; }
+        .btn-quick-action { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        .btn-quick-action:active { transform: scale(0.92); }
+        
+        .line-clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+        .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; }
+        
+        #print-frame { position: absolute; width: 0; height: 0; border: none; overflow: hidden; }
+    </style>
+</head>
+<body>
+
+<div id="toast-container"></div>
+<div id="chat-notification-banner-container" class="fixed top-4 right-4 z-[100000] flex flex-col gap-2.5 max-w-[92vw] sm:max-w-md pointer-events-none"></div>
+<iframe id="print-frame"></iframe>
+
+<div class="app-container flex flex-col h-screen overflow-hidden">
+    <!-- View: Login -->
+    <div id="auth-view" class="flex-1 flex flex-col justify-center items-center px-6 py-8 bg-[#f8fafc] z-50 overflow-y-auto">
+        <div class="bg-white rounded-[2.5rem] p-8 md:p-10 shadow-[0_10px_35px_rgba(0,0,0,0.03)] border border-gray-100 w-full max-w-[420px] space-y-6 text-center">
+            
+            <div class="w-32 h-32 mx-auto bg-white rounded-3xl shadow-[0_8px_20px_rgba(0,0,0,0.04)] border border-gray-100 p-2.5 flex items-center justify-center">
+                <img src="https://lh3.googleusercontent.com/d/1raKw_On7XyxlT5Oqz45gAIDmb0eUinMc" class="w-full h-full object-contain rounded-2xl" alt="Logo" onerror="this.src='https://placehold.co/200x200/ffffff/dc2626?text=Istana+Bubur'">
+            </div>
+
+            <form id="login-form" onsubmit="handleLogin(event)">
+                <div class="space-y-1 mb-4">
+                    <h2 class="text-3xl font-extrabold text-[#0c1e36] tracking-wide uppercase leading-none">SELAMAT DATANG</h2>
+                    <p class="text-base font-bold text-blue-900">Di Aplikasi Istana Bubur</p>
+                    <p class="text-xs text-gray-400 font-semibold uppercase tracking-wider">System Management & Kasir</p>
+                </div>
+
+                <!-- PILIHAN LOGIN: ADMIN vs KASIR -->
+                <div class="bg-gray-100 p-1.5 rounded-2xl flex items-center gap-1.5 mb-3 border border-gray-200 shadow-inner">
+                    <button type="button" id="tab-login-admin" onclick="setLoginRole('Admin')" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition-all bg-red-600 text-white shadow-sm">
+                        <i class="fas fa-crown text-amber-300"></i>
+                        <span>Login Admin</span>
+                    </button>
+                    <button type="button" id="tab-login-kasir" onclick="setLoginRole('Kasir')" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-black transition-all text-gray-600 hover:text-gray-900">
+                        <i class="fas fa-cash-register text-gray-400"></i>
+                        <span>Login Kasir</span>
+                    </button>
+                </div>
+                <div id="login-role-hint" class="text-[11px] text-gray-500 font-semibold mb-3.5 flex items-center justify-center gap-1.5">
+                    <i id="login-role-icon" class="fas fa-shield-halved text-red-600"></i>
+                    <span id="login-role-desc">Mode: Akses Penuh Sistem & Manajemen Pusat</span>
+                </div>
+
+                <div class="space-y-3.5 text-left mb-3">
+                    <div class="space-y-1.5">
+                        <label class="block text-xs font-bold text-[#0c1e36]">Username / Email</label>
+                        <div class="relative rounded-2xl shadow-sm">
+                            <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><i class="fas fa-user text-gray-400 text-sm"></i></div>
+                            <input id="l-user" required placeholder="Masukkan username atau email" class="block w-full rounded-2xl border border-gray-200 py-3 pl-11 pr-4 bg-gray-50/50 text-sm focus:outline-none focus:ring-2 focus:ring-red-600">
+                        </div>
+                    </div>
+                    <div class="space-y-1.5">
+                        <label class="block text-xs font-bold text-[#0c1e36]">Password</label>
+                        <div class="relative rounded-2xl shadow-sm">
+                            <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><i class="fas fa-lock text-gray-400 text-sm"></i></div>
+                            <input id="l-pass" type="password" required placeholder="Masukkan password" class="block w-full rounded-2xl border border-gray-200 py-3 pl-11 pr-12 bg-gray-50/50 text-sm focus:outline-none focus:ring-2 focus:ring-red-600">
+                            <button type="button" onclick="togglePasswordVisibility('l-pass', this)" class="absolute inset-y-0 right-0 pr-4 flex items-center text-gray-400 hover:text-gray-600 focus:outline-none"><i class="fas fa-eye text-sm"></i></button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="flex items-center justify-between mt-1 mb-4 px-1">
+                    <label class="flex items-center gap-2 cursor-pointer group">
+                        <input type="checkbox" id="remember-me" class="w-4 h-4 text-red-600 bg-gray-50 border-gray-300 rounded focus:ring-red-500 focus:ring-2 accent-red-600 cursor-pointer">
+                        <span class="text-xs font-semibold text-gray-600 group-hover:text-gray-900 transition-colors select-none">Ingat Saya</span>
+                    </label>
+                    <button type="button" onclick="openForgotPasswordModal()" class="text-xs font-bold text-red-600 hover:text-red-700 hover:underline">
+                        Lupa Password?
+                    </button>
+                </div>
+
+                <button type="submit" id="btn-login" class="flex w-full justify-center items-center gap-2 rounded-2xl bg-red-600 py-3.5 text-sm font-bold text-white shadow-lg shadow-red-600/20 hover:bg-red-700 active:scale-95 transition-all">
+                    <i class="fas fa-right-to-bracket"></i> Masuk
+                </button>
+
+                <!-- MENU TAMBAHAN: LUPA USERNAME & BUAT AKUN BARU -->
+                <div class="flex items-center justify-between text-xs font-bold pt-3 px-1 border-t border-gray-100 text-gray-500">
+                    <button type="button" onclick="openForgotUsernameModal()" class="hover:text-red-600 hover:underline flex items-center gap-1.5 transition">
+                        <i class="fas fa-question-circle text-gray-400"></i> Lupa Username?
+                    </button>
+                    <button type="button" onclick="openRegisterModal()" class="text-red-600 hover:text-red-800 hover:underline flex items-center gap-1.5 transition">
+                        <i class="fas fa-user-plus"></i> Buat Akun Baru
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- View: Main Application -->
+    <div id="main-app" class="flex-1 flex flex-col hidden-view overflow-hidden relative">
+        <div class="header-bg-shape" id="header-bg"></div>
+
+        <header class="text-white pt-6 pb-2 px-5 flex justify-between items-start z-30 relative">
+            <div class="flex items-center gap-3">
+                <div class="relative">
+                    <button id="btn-menu-toggle" onclick="toggleMenu()" class="relative text-white text-xl hover:bg-white/20 p-2 rounded-lg transition">
+                        <i class="fas fa-bars"></i>
+                        <span id="menu-unread-dot" class="hidden-view absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-amber-400 border-2 border-red-700 rounded-full animate-pulse shadow-sm"></span>
+                    </button>
+                    <div id="dropdown-menu" class="hidden-view absolute left-0 mt-2 w-52 bg-white rounded-xl shadow-2xl py-2 z-50 text-gray-700 border border-gray-100 overflow-hidden">
+                        <button onclick="switchTab('profil'); toggleMenu();" id="tab-profil" class="nav-item-dropdown active w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center gap-3 border-l-4 border-transparent transition"><i class="fas fa-home w-5 text-center"></i> Dashboard</button>
+                        <button onclick="switchTab('kasir'); toggleMenu();" id="tab-kasir" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center gap-3 border-l-4 border-transparent transition"><i class="fas fa-cash-register w-5 text-center"></i> Kasir</button>
+                        <button onclick="switchTab('produk'); toggleMenu();" id="tab-produk" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center gap-3 border-l-4 border-transparent transition admin-only"><i class="fas fa-box-open w-5 text-center"></i> Produk</button>
+                        <button onclick="switchTab('slip'); toggleMenu();" id="tab-slip" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center gap-3 border-l-4 border-transparent transition admin-only"><i class="fas fa-file-invoice-dollar w-5 text-center"></i> Slip Gaji</button>
+                        <button onclick="switchTab('karyawan'); toggleMenu();" id="tab-karyawan" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center gap-3 border-l-4 border-transparent transition admin-only"><i class="fas fa-users w-5 text-center"></i> Karyawan</button>
+                        <div class="border-t border-gray-100 my-1"></div>
+                        <button onclick="switchTab('histori-trx'); toggleMenu();" id="tab-histori-trx" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center gap-3 border-l-4 border-transparent transition"><i class="fas fa-receipt w-5 text-center"></i> Riwayat Transaksi</button>
+                        <button onclick="switchTab('histori-gaji'); toggleMenu();" id="tab-histori-gaji" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center gap-3 border-l-4 border-transparent transition admin-only"><i class="fas fa-envelope-open-text w-5 text-center"></i> Riwayat Gaji</button>
+                        <button onclick="openExportModal('semua'); toggleMenu();" id="tab-export-menu" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-emerald-50 flex items-center gap-3 border-l-4 border-transparent transition admin-only text-emerald-800"><i class="fas fa-file-excel w-5 text-center text-emerald-600"></i> Ekspor Rekap (Excel/Sheets)</button>
+                        <div class="border-t border-gray-100 my-1"></div>
+                        <button onclick="switchTab('chat'); toggleMenu();" id="tab-chat" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center justify-between border-l-4 border-transparent transition">
+                            <span class="flex items-center gap-3"><i class="fas fa-headset w-5 text-center text-blue-600"></i> Chat Bantuan</span>
+                            <span id="badge-unread-chat" class="hidden-view bg-red-600 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full shadow-xs">0</span>
+                        </button>
+                        <button onclick="switchTab('printer'); toggleMenu();" id="tab-printer" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center gap-3 border-l-4 border-transparent transition"><i class="fas fa-print w-5 text-center"></i> Pengaturan Printer</button>
+                        <div class="border-t border-gray-100 my-1"></div>
+                        
+                        <button onclick="openGuideModal('login'); toggleMenu();" id="tab-guide" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center gap-3 border-l-4 border-transparent transition text-indigo-700 bg-indigo-50/50"><i class="fas fa-book-open w-5 text-center text-indigo-600"></i> Buku Panduan</button>
+                        <button onclick="switchTab('about'); toggleMenu();" id="tab-about" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center gap-3 border-l-4 border-transparent transition"><i class="fas fa-info-circle w-5 text-center"></i> Tentang Aplikasi</button>
+                        <button onclick="openLogoutModal(); toggleMenu();" class="w-full text-left px-4 py-3 text-sm font-semibold text-red-600 hover:bg-red-50 flex items-center gap-3 transition"><i class="fas fa-sign-out-alt w-5 text-center"></i> Keluar</button>
+                    </div>
+                </div>
+                <div>
+                    <h1 class="text-2xl font-bold tracking-wide" id="header-title">Profil</h1>
+                    <div class="flex items-center gap-2 mt-0.5">
+                        <p class="text-[10px] text-red-200 font-medium" id="header-subtitle">Sistem Manajemen & Kasir</p>
+                        <span id="app-mode-badge" class="inline-flex items-center gap-1 text-[9px] bg-white/20 text-white px-2 py-0.5 rounded-full font-semibold border border-white/20 shadow-xs" title="Penyimpanan Lokal Aktif & Offline Ready">
+                            <i class="fas fa-database text-emerald-300"></i> Mode Lokal
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-2.5">
+                <button onclick="switchTab('chat')" id="header-btn-chat" title="Chat Bantuan Real-Time" class="relative bg-white/15 hover:bg-white/25 active:scale-95 text-white w-9 h-9 rounded-full transition flex items-center justify-center border border-white/20 shadow-sm">
+                    <i id="header-chat-icon" class="fas fa-comment-dots text-sm transition-transform duration-200"></i>
+                    <span id="header-unread-badge" class="hidden-view absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-black min-w-4 h-4 px-1 rounded-full flex items-center justify-center shadow-md border-2 border-white z-10 scale-100 transition-transform">0</span>
+                    <span id="header-unread-ping" class="hidden-view absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 animate-ping opacity-75 pointer-events-none"></span>
+                </button>
+                <div class="w-10 h-10 bg-white rounded-full p-0.5 shadow-md">
+                    <img id="header-logo" src="https://lh3.googleusercontent.com/d/1raKw_On7XyxlT5Oqz45gAIDmb0eUinMc" class="w-full h-full object-contain rounded-full" alt="Avatar" onerror="this.src='https://placehold.co/100x100/ffffff/dc2626?text=User'">
+                </div>
+            </div>
+        </header>
+
+        <main class="flex-1 overflow-y-auto px-4 pt-4 pb-6 z-10 relative hide-scrollbar">
+            <!-- DASHBOARD VIEW -->
+            <div id="view-profil" class="view-content space-y-5">
+                
+                <!-- SEKSI ADMIN -->
+                <div class="admin-only space-y-5">
+                    <!-- KARTU SAPAAN & WAKTU ADMIN -->
+                    <div class="bg-gradient-to-r from-red-600 via-rose-600 to-red-700 rounded-3xl p-5 sm:p-6 shadow-md text-white relative overflow-hidden">
+                        <!-- Aksen dekorasi latar -->
+                        <div class="absolute -right-8 -bottom-8 w-40 h-40 rounded-full bg-white/10 pointer-events-none blur-2xl"></div>
+                        <div class="absolute -left-6 -top-6 w-32 h-32 rounded-full bg-black/10 pointer-events-none blur-xl"></div>
+
+                        <div class="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            <!-- Kiri: Sapaan, Nama Admin & Peran -->
+                            <div class="space-y-1.5">
+                                <div class="flex items-center gap-2">
+                                    <span id="admin-dash-greeting-pill" class="inline-flex items-center gap-1.5 bg-white/20 backdrop-blur-xs text-white text-xs font-bold px-3 py-1 rounded-full border border-white/25 shadow-xs">
+                                        <i id="admin-dash-greeting-icon" class="fas fa-sun text-amber-300"></i>
+                                        <span id="admin-dash-greeting-text">Selamat Datang</span>
+                                    </span>
+                                    <span class="inline-flex items-center gap-1.5 bg-emerald-500/90 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+                                        <span>Pusat Online</span>
+                                    </span>
+                                </div>
+                                <h2 class="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center flex-wrap gap-2 pt-0.5">
+                                    <span id="dash-owner">Admin Istana Bubur</span>
+                                    <span class="text-xs font-bold bg-white/20 text-white px-2.5 py-0.5 rounded-lg border border-white/30" id="dash-role">Admin Pusat</span>
+                                </h2>
+                                <p class="text-xs text-red-100 font-medium max-w-xl leading-relaxed" id="admin-dash-motto">
+                                    Selamat bekerja! Pantau performa penjualan, kelola stok, dan koordinasi dengan kasir seluruh cabang.
+                                </p>
+                            </div>
+
+                            <!-- Kanan: Widget Tanggal & Waktu Terkini (Real-Time Clock) -->
+                            <div class="bg-white/15 backdrop-blur-md rounded-2xl p-3.5 sm:px-4.5 border border-white/20 flex items-center gap-3.5 sm:gap-4 shrink-0 shadow-xs self-start md:self-auto">
+                                <div class="w-11 h-11 rounded-2xl bg-white text-red-600 flex items-center justify-center text-xl shadow-sm shrink-0">
+                                    <i class="fas fa-calendar-alt"></i>
+                                </div>
+                                <div>
+                                    <p class="text-[10px] uppercase font-bold text-red-100 tracking-wider">Tanggal & Waktu Hari Ini</p>
+                                    <div class="text-xs sm:text-sm font-black text-white mt-0.5">
+                                        <span id="admin-live-date">-</span>
+                                    </div>
+                                    <div class="flex items-center gap-2 mt-1">
+                                        <span class="flex items-center gap-1.5 font-mono font-black text-white bg-black/25 px-2.5 py-0.5 rounded-md text-xs tracking-wider border border-white/10 shadow-inner">
+                                            <i class="far fa-clock text-[10px] text-amber-300"></i>
+                                            <span id="admin-live-clock">00:00:00</span>
+                                        </span>
+                                        <span class="text-[10px] font-bold text-red-200">WIB</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-2 mt-3">
+                        <h3 class="text-xs font-bold text-gray-800 mb-3 px-1"><i class="fas fa-bolt text-yellow-500"></i> Aksi Cepat</h3>
+                        <div class="grid grid-cols-3 gap-2 sm:gap-3">
+                            <button onclick="switchTab('kasir')" class="btn-quick-action flex flex-col items-center justify-center bg-white p-3 rounded-2xl shadow-sm border border-gray-100 hover:border-green-200 group">
+                                <div class="w-10 h-10 bg-green-50 text-green-600 rounded-xl flex items-center justify-center mb-2 group-hover:bg-green-600 group-hover:text-white transition-colors"><i class="fas fa-cash-register text-lg"></i></div>
+                                <span class="text-[9px] font-bold text-gray-600 text-center leading-tight">Mulai<br>Kasir</span>
+                            </button>
+                            <button onclick="switchTab('produk')" class="btn-quick-action flex flex-col items-center justify-center bg-white p-3 rounded-2xl shadow-sm border border-gray-100 hover:border-blue-200 group">
+                                <div class="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mb-2 group-hover:bg-blue-600 group-hover:text-white transition-colors"><i class="fas fa-box-open text-lg"></i></div>
+                                <span class="text-[9px] font-bold text-gray-600 text-center leading-tight">Master<br>Produk</span>
+                            </button>
+                            <button onclick="switchTab('slip')" class="btn-quick-action flex flex-col items-center justify-center bg-white p-3 rounded-2xl shadow-sm border border-gray-100 hover:border-orange-200 group">
+                                <div class="w-10 h-10 bg-orange-50 text-orange-600 rounded-xl flex items-center justify-center mb-2 group-hover:bg-orange-500 group-hover:text-white transition-colors"><i class="fas fa-file-invoice-dollar text-lg"></i></div>
+                                <span class="text-[9px] font-bold text-gray-600 text-center leading-tight">Cetak<br>Slip Gaji</span>
+                            </button>
+                            <button onclick="switchTab('karyawan')" class="btn-quick-action flex flex-col items-center justify-center bg-white p-3 rounded-2xl shadow-sm border border-gray-100 hover:border-red-200 group">
+                                <div class="w-10 h-10 bg-red-50 text-red-600 rounded-xl flex items-center justify-center mb-2 group-hover:bg-red-600 group-hover:text-white transition-colors"><i class="fas fa-users text-lg"></i></div>
+                                <span class="text-[9px] font-bold text-gray-600 text-center leading-tight">Data<br>Karyawan</span>
+                            </button>
+                            <button onclick="switchTab('histori-trx')" class="btn-quick-action flex flex-col items-center justify-center bg-white p-3 rounded-2xl shadow-sm border border-gray-100 hover:border-purple-200 group">
+                                <div class="w-10 h-10 bg-purple-50 text-purple-600 rounded-xl flex items-center justify-center mb-2 group-hover:bg-purple-600 group-hover:text-white transition-colors"><i class="fas fa-receipt text-lg"></i></div>
+                                <span class="text-[9px] font-bold text-gray-600 text-center leading-tight">Riwayat<br>Transaksi</span>
+                            </button>
+                            <button onclick="switchTab('histori-gaji')" class="btn-quick-action flex flex-col items-center justify-center bg-white p-3 rounded-2xl shadow-sm border border-gray-100 hover:border-teal-200 group">
+                                <div class="w-10 h-10 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center mb-2 group-hover:bg-teal-600 group-hover:text-white transition-colors"><i class="fas fa-envelope-open-text text-lg"></i></div>
+                                <span class="text-[9px] font-bold text-gray-600 text-center leading-tight">Riwayat<br>Gaji</span>
+                            </button>
+                        </div>
+                        <div class="mt-2.5">
+                            <button onclick="switchTab('chat')" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white p-3 rounded-2xl shadow-sm transition flex items-center justify-between group active:scale-95">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center text-white"><i class="fas fa-headset text-sm"></i></div>
+                                    <div class="text-left">
+                                        <p class="text-xs font-black leading-tight">Chat Bantuan Seluruh Cabang</p>
+                                        <p class="text-[10px] text-blue-100 font-medium">Terhubung langsung dengan seluruh kasir cabang secara real-time</p>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-2 text-xs font-bold">
+                                    <span id="admin-dash-unread-badge" class="hidden-view bg-red-500 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full shadow-sm animate-pulse">0 Pesan Baru</span>
+                                    <div class="flex items-center gap-1.5 bg-white/20 px-2.5 py-1 rounded-xl">
+                                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                                        <span>Buka Chat</span>
+                                        <i class="fas fa-arrow-right text-[10px] ml-1"></i>
+                                    </div>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- DASHBOARD PENJUALAN ADMIN -->
+                    <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                        <div class="mb-4 space-y-3">
+                            <div class="flex justify-between items-center">
+                                <div>
+                                    <h3 class="text-xs font-bold text-gray-800">Laporan Penjualan</h3>
+                                    <p class="text-[9px] text-gray-400 mt-0.5">Filter Data Transaksi</p>
+                                </div>
+                                <select id="filter-cabang-dashboard" class="text-[10px] border border-gray-200 rounded px-2 py-1.5 bg-gray-50 focus:outline-none focus:ring-1 focus:ring-red-400" onchange="updateDashboardCharts()">
+                                    <option value="Semua">Semua Cabang</option>
+                                </select>
+                            </div>
+                            
+                            <div class="flex items-center justify-between bg-gray-50 p-2 rounded-lg border border-gray-100">
+                                <div class="flex gap-2 w-full mr-2">
+                                    <div class="flex-1">
+                                        <p class="text-[8px] text-gray-500 font-bold mb-0.5 uppercase">Dari Tanggal</p>
+                                        <input type="date" id="filter-start-date" class="w-full text-[10px] border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-red-400" onchange="updateDashboardCharts()">
+                                    </div>
+                                    <div class="flex-1">
+                                        <p class="text-[8px] text-gray-500 font-bold mb-0.5 uppercase">Sampai Tanggal</p>
+                                        <input type="date" id="filter-end-date" class="w-full text-[10px] border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-red-400" onchange="updateDashboardCharts()">
+                                    </div>
+                                </div>
+                                <button onclick="resetDateFilter()" class="mt-3.5 bg-red-100 text-red-600 hover:bg-red-200 px-2.5 py-1.5 rounded-lg text-[10px] transition" title="Reset Filter Tanggal"><i class="fas fa-sync-alt"></i></button>
+                            </div>
+                            <!-- Tombol Ekspor Rekap Penjualan Dashboard -->
+                            <div class="flex items-center justify-between bg-emerald-50/80 border border-emerald-200 rounded-xl px-3 py-2">
+                                <div class="flex items-center gap-2">
+                                    <div class="w-6 h-6 rounded-lg bg-emerald-600 text-white flex items-center justify-center text-xs">
+                                        <i class="fas fa-file-excel"></i>
+                                    </div>
+                                    <span class="text-[11px] font-bold text-emerald-950">Ekspor Rekap Laporan Penjualan</span>
+                                </div>
+                                <button onclick="openExportModal('transaksi')" class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-3 py-1 rounded-lg text-[11px] font-bold shadow-xs transition flex items-center gap-1.5">
+                                    <i class="fas fa-download text-[10px]"></i>
+                                    <span>Excel / Sheets</span>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="flex gap-4 overflow-x-auto hide-scrollbar pb-2 pt-1 -mx-4 px-4 snap-x">
+                            <div class="bg-gradient-to-br from-green-500 to-green-600 text-white rounded-2xl p-4 min-w-[150px] flex-1 shadow-md">
+                                <span class="text-[11px] font-semibold opacity-90">Total Pendapatan</span>
+                                <h3 class="text-xl sm:text-2xl font-extrabold mb-1 mt-1" id="stat-penjualan">Rp 0</h3>
+                                <p class="text-[10px] opacity-80" id="stat-trx-count">0 Transaksi</p>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-4">
+                            <h3 class="text-[10px] font-bold text-gray-600 mb-2">Penjualan per Cabang</h3>
+                            <div class="relative h-48 w-full flex justify-center">
+                                <canvas id="chart-penjualan"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-4 overflow-x-auto hide-scrollbar pb-2 pt-1 -mx-4 px-4 snap-x">
+                        <div class="bg-emerald-500 text-white rounded-2xl p-4 min-w-[150px] flex-1 shadow-md">
+                            <span class="text-[11px] font-semibold opacity-90">Total Karyawan</span>
+                            <h3 class="text-3xl font-extrabold mb-2 mt-1" id="stat-karyawan">0</h3>
+                        </div>
+                        <div class="bg-blue-500 text-white rounded-2xl p-4 min-w-[200px] flex-1 shadow-md">
+                            <span class="text-[11px] font-semibold opacity-90">Total Gaji (Terfilter)</span>
+                            <h3 class="text-2xl font-extrabold mb-3 mt-1" id="stat-gaji">Rp 0</h3>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                        <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                            <div class="flex justify-between items-center mb-4">
+                                <div>
+                                    <h3 class="text-xs font-bold text-gray-800">Progres Penggajian</h3>
+                                    <p class="text-[9px] text-gray-400 mt-0.5">Ringkasan total dana</p>
+                                </div>
+                                <input type="month" id="filter-month-dashboard" class="text-[10px] border border-gray-200 rounded px-2 py-1 bg-gray-50 focus:outline-none" onchange="updateDashboardCharts()">
+                            </div>
+                            <div class="relative h-48 w-full flex justify-center">
+                                <canvas id="chart-penggajian"></canvas>
+                            </div>
+                        </div>
+                        <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                            <h3 class="text-xs font-bold text-gray-800 mb-1">Karyawan per Cabang</h3>
+                            <p class="text-[9px] text-gray-400 mb-4">Distribusi lokasi penempatan</p>
+                            <div class="relative h-48 w-full">
+                                <canvas id="chart-karyawan"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- KARTU KHUSUS ADMIN: KUNCI AUTENTIKASI ADMIN & KEAMANAN -->
+                    <div class="bg-gradient-to-br from-slate-900 via-gray-900 to-slate-800 rounded-3xl p-5 sm:p-6 text-white shadow-xl border border-slate-700/50 space-y-4">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/10">
+                            <div class="flex items-center gap-3">
+                                <div class="w-11 h-11 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center text-xl shadow-inner shrink-0">
+                                    <i class="fas fa-shield-halved"></i>
+                                </div>
+                                <div>
+                                    <div class="flex items-center gap-2">
+                                        <h3 class="text-sm sm:text-base font-black text-white">Kunci Autentikasi Admin (Privat)</h3>
+                                        <span class="bg-red-500/30 text-red-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-red-500/40">
+                                            <i class="fas fa-lock mr-1"></i> Khusus Admin
+                                        </span>
+                                    </div>
+                                    <p class="text-[11px] text-slate-300 mt-0.5">
+                                        Hanya Admin/Owner yang mengetahui kunci ini untuk otorisasi pendaftaran akun kasir baru.
+                                    </p>
+                                </div>
+                            </div>
+                            <button type="button" onclick="openEditAuthCodeModal()" class="self-start sm:self-auto bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md active:scale-95">
+                                <i class="fas fa-key"></i> Ubah Kunci Admin
+                            </button>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                            <!-- Box Kunci Aktif -->
+                            <div class="bg-white/5 border border-white/10 rounded-2xl p-4 space-y-2">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-[11px] uppercase tracking-wider font-bold text-slate-400">Kunci Autentikasi Utama:</span>
+                                    <span class="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Terproteksi
+                                    </span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <div class="flex-1 bg-black/40 border border-white/15 rounded-xl px-3.5 py-2.5 flex items-center justify-between">
+                                        <input type="password" id="admin-display-auth-key" readonly value="IB-AUTH-2026" class="bg-transparent text-amber-400 font-mono font-black text-sm tracking-wider focus:outline-none w-full select-all">
+                                        <button type="button" onclick="toggleShowAdminAuthKey()" class="text-slate-400 hover:text-white text-xs px-1.5 transition" title="Tampilkan/Sembunyikan">
+                                            <i id="btn-toggle-auth-icon" class="fas fa-eye"></i>
+                                        </button>
+                                    </div>
+                                    <button type="button" onclick="copyAdminAuthKey()" class="bg-white/10 hover:bg-white/20 text-white font-bold text-xs px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 active:scale-95 border border-white/10" title="Salin Kunci">
+                                        <i class="fas fa-copy"></i>
+                                        <span class="hidden sm:inline">Salin</span>
+                                    </button>
+                                </div>
+                                <p class="text-[10px] text-slate-400 leading-relaxed">
+                                    Berikan kunci ini secara lisan atau pesan pribadi hanya kepada kasir/karyawan baru yang resmi Anda tugaskan.
+                                </p>
+                            </div>
+
+                            <!-- Box Info Keamanan -->
+                            <div class="bg-white/5 border border-white/10 rounded-2xl p-4 space-y-2 flex flex-col justify-between">
+                                <div>
+                                    <div class="flex items-center gap-2 text-slate-200 text-xs font-bold">
+                                        <i class="fas fa-circle-check text-emerald-400"></i>
+                                        <span>Prosedur Keamanan Pendaftaran:</span>
+                                    </div>
+                                    <ul class="text-[11px] text-slate-300 mt-2 space-y-1.5 pl-4 list-disc">
+                                        <li>Pendaftar wajib verifikasi 6 digit kode referral yang dikirim ke email mereka.</li>
+                                        <li>Setelah email terverifikasi, pendaftar wajib memasukkan <strong>Kunci Autentikasi Admin</strong> ini.</li>
+                                        <li>Tanpa kunci ini, akun tidak dapat aktif atau mengakses sistem kasir.</li>
+                                    </ul>
+                                </div>
+                                <div class="pt-2 border-t border-white/10 flex items-center justify-between text-[10px] text-slate-400">
+                                    <span>Tersinkronisasi Cloud Firestore</span>
+                                    <span class="text-amber-300 font-bold"><i class="fas fa-shield text-amber-400 mr-1"></i> Terenkripsi</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SEKSI KASIR -->
+                <div class="kasir-only space-y-4 hidden-view">
+                    <!-- Kartu Sapaan Kasir & Shift Aktif -->
+                    <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 relative overflow-hidden">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div class="flex items-start sm:items-center gap-3.5">
+                                <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center text-2xl shadow-md shrink-0">
+                                    <i class="fas fa-user-check"></i>
+                                </div>
+                                <div>
+                                    <div class="flex items-center gap-2 flex-wrap mb-1">
+                                        <span class="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-emerald-100">
+                                            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Shift Aktif
+                                        </span>
+                                        <span class="bg-gray-100 text-gray-700 text-[10px] font-semibold px-2.5 py-0.5 rounded-full">
+                                            <i class="fas fa-store text-gray-400 mr-1"></i> <span id="profil-kasir-cabang">-</span>
+                                        </span>
+                                    </div>
+                                    <h2 class="text-xl sm:text-2xl font-black text-gray-900 tracking-tight">
+                                        Halo, <span id="profil-kasir-nama" class="text-blue-600">Kasir</span>! 👋
+                                    </h2>
+                                    <p class="text-xs text-gray-500 font-medium mt-0.5">
+                                        Selamat bertugas! Tetap semangat melayani pelanggan Istana Bubur hari ini.
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="text-left sm:text-right border-t sm:border-t-0 pt-2 sm:pt-0 border-gray-100">
+                                <p class="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Hari & Tanggal</p>
+                                <p class="text-xs font-bold text-gray-800 mt-0.5" id="kasir-today-date">-</p>
+                                <p class="text-[10px] text-gray-500 mt-0.5"><i class="far fa-clock text-gray-400 mr-1"></i> Jam Operasional Aktif</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Statistik Hari Ini Kasir -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <!-- Kartu Penjualan Hari Ini -->
+                        <div class="bg-gradient-to-br from-emerald-600 to-teal-700 text-white rounded-2xl p-5 shadow-sm relative overflow-hidden flex flex-col justify-between">
+                            <div class="absolute right-0 top-0 opacity-10 transform translate-x-3 -translate-y-2 pointer-events-none">
+                                <i class="fas fa-coins text-8xl"></i>
+                            </div>
+                            <div class="relative z-10">
+                                <span class="text-[11px] font-bold opacity-90 uppercase tracking-wide bg-white/20 px-2.5 py-1 rounded-lg">
+                                    <i class="fas fa-chart-line mr-1"></i> Penjualan Hari Ini
+                                </span>
+                                <h3 class="text-2xl sm:text-3xl font-black mb-1 mt-3 tracking-tight" id="stat-kasir-hari-ini">Rp 0</h3>
+                                <p class="text-xs opacity-90 font-semibold flex items-center gap-1.5" id="stat-kasir-trx-count">
+                                    <i class="fas fa-receipt text-emerald-200"></i> 0 Transaksi Selesai
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Kartu Info Produk / Rata-rata -->
+                        <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex flex-col justify-between">
+                            <div>
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400">Rata-rata per Transaksi</span>
+                                <h4 class="text-xl sm:text-2xl font-black text-gray-900 mt-1" id="stat-kasir-avg-trx">Rp 0</h4>
+                                <p class="text-xs text-gray-500 mt-1 flex items-center gap-1.5">
+                                    <i class="fas fa-utensils text-blue-500"></i> <span id="stat-kasir-total-items" class="font-bold text-gray-700">0 menu</span> terjual hari ini
+                                </p>
+                            </div>
+                            <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between">
+                                <span class="text-[10px] text-gray-500 font-medium">Status Mesin Kasir:</span>
+                                <span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full"><i class="fas fa-check-circle mr-1"></i> Siap Digunakan</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tombol Aksi Cepat Buka Kasir & Riwayat Transaksi -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <button onclick="switchTab('kasir')" class="w-full bg-emerald-600 text-white py-3.5 px-4 rounded-xl font-extrabold shadow-sm hover:bg-emerald-700 transition flex items-center justify-center gap-2 active:scale-95 text-sm sm:text-base">
+                            <i class="fas fa-cash-register text-lg"></i> BUKA KASIR SEKARANG
+                        </button>
+                        <button onclick="switchTab('histori-trx')" class="w-full bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 py-3.5 px-4 rounded-xl font-bold shadow-sm transition flex items-center justify-center gap-2 active:scale-95 text-sm sm:text-base">
+                            <i class="fas fa-history text-blue-600"></i> LIHAT TRANSAKSI HARI INI
+                        </button>
+                    </div>
+
+                    <!-- Tombol Chat Bantuan Kasir -->
+                    <div class="mt-2">
+                        <button onclick="switchTab('chat')" class="w-full bg-blue-50 hover:bg-blue-100/70 border border-blue-200 text-blue-900 py-3 px-4 rounded-xl font-bold transition flex items-center justify-between text-xs sm:text-sm active:scale-95 shadow-xs">
+                            <span class="flex items-center gap-2.5">
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                <i class="fas fa-headset text-blue-600 text-base"></i>
+                                <span>Butuh bantuan atau ada kendala? Chat Admin Pusat</span>
+                            </span>
+                            <div class="flex items-center gap-2">
+                                <span id="kasir-dash-unread-badge" class="hidden-view bg-red-600 text-white text-[10px] font-black px-2 py-0.5 rounded-md shadow-xs animate-pulse">0 Baru</span>
+                                <span class="text-[11px] bg-blue-600 text-white px-3 py-1 rounded-lg flex items-center gap-1 font-bold shadow-xs">
+                                    Chat Admin <i class="fas fa-arrow-right text-[9px]"></i>
+                                </span>
+                            </div>
+                        </button>
+                    </div>
+
+                    <!-- SEKSI GRAFIK PENJUALAN HARI INI -->
+                    <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                        <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-2 mb-4 pb-3 border-b border-gray-100">
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <h3 class="text-sm font-black text-gray-800">Grafik Penjualan Hari Ini</h3>
+                                    <span class="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-100 flex items-center gap-1">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Real-time
+                                    </span>
+                                </div>
+                                <p class="text-[11px] text-gray-500 mt-0.5">Perkembangan omset penjualan per jam di <span id="kasir-chart-cabang-label" class="font-bold text-gray-700">Cabang</span></p>
+                            </div>
+                            <div class="flex items-center gap-2 text-[11px] text-gray-500">
+                                <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span> Total Omset Penjualan (Rp)</span>
+                            </div>
+                        </div>
+
+                        <!-- Canvas Grafik Penjualan Kasir -->
+                        <div class="relative h-60 w-full flex justify-center items-center">
+                            <canvas id="chart-kasir-penjualan"></canvas>
+                        </div>
+
+                        <!-- Ringkasan Menu Terlaris Hari Ini -->
+                        <div id="kasir-top-products-container" class="mt-4 pt-3 border-t border-gray-100">
+                            <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1.5">
+                                <i class="fas fa-fire text-amber-500"></i> Menu Paling Laris Hari Ini:
+                            </h4>
+                            <div id="kasir-top-products-list" class="flex flex-wrap gap-2 text-xs">
+                                <span class="text-gray-400 italic text-[11px]">Belum ada penjualan menu hari ini</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+            </div>
+
+            <!-- PRODUK VIEW -->
+            <div id="view-produk" class="view-content hidden-view admin-only">
+                <div class="flex justify-between items-center mb-5 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                    <div>
+                        <h2 class="text-lg font-extrabold text-gray-800">Master Produk</h2>
+                        <p class="text-xs text-gray-500 mt-1">Kelola data jualan</p>
+                    </div>
+                    <button onclick="openFormProduk()" class="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-blue-700 shadow-md"><i class="fas fa-plus mr-1"></i> Tambah</button>
+                </div>
+                <div class="flex gap-2 mb-4">
+                    <div class="relative flex-1">
+                        <i class="fas fa-search absolute left-3 top-2.5 text-gray-400 text-sm"></i>
+                        <input type="text" id="search-produk" placeholder="Cari Nama atau Kode Produk..." class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 text-sm bg-white shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500" onkeyup="renderListProduk()">
+                    </div>
+                </div>
+                <div id="loading-produk" class="text-center py-12 text-gray-400 hidden-view"><div class="loader mb-3"></div><br>Memuat produk...</div>
+                <div id="list-produk" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4 pb-4"></div>
+            </div>
+
+            <!-- KASIR VIEW -->
+            <div id="view-kasir" class="view-content hidden-view">
+                <div class="mb-4 bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+                    <div class="mb-3">
+                        <h2 class="text-lg font-extrabold text-gray-900 mb-0.5">Pilih Produk</h2>
+                        <p class="text-xs text-gray-500" id="kasir-outlet-info">Pilih menu untuk ditambahkan ke pesanan</p>
+                    </div>
+                    <div class="relative w-full">
+                        <i class="fas fa-search absolute left-3 top-2.5 text-gray-400 text-sm"></i>
+                        <input type="text" id="search-kasir-produk" placeholder="Cari Nama atau Kode Produk..." class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 text-sm bg-gray-50 shadow-inner focus:outline-none focus:ring-1 focus:ring-green-500" onkeyup="renderKasirProdukList()">
+                    </div>
+                </div>
+                
+                <div id="list-kasir-produk" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 pb-28"></div>
+                
+                <div class="fixed bottom-6 left-0 right-0 max-w-3xl mx-auto px-4 z-40">
+                    <div class="bg-gray-900 rounded-2xl p-4 shadow-2xl flex justify-between items-center text-white cursor-pointer hover:bg-gray-800 transition transform active:scale-98" onclick="openCartModal()">
+                        <div class="flex items-center gap-3">
+                            <div class="relative">
+                                <i class="fas fa-shopping-cart text-xl"></i>
+                                <span id="cart-badge" class="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center">0</span>
+                            </div>
+                            <div>
+                                <p class="text-[10px] text-gray-300">Total Belanja</p>
+                                <p class="text-base font-bold" id="cart-total-banner">Rp 0</p>
+                            </div>
+                        </div>
+                        <div class="bg-emerald-500 hover:bg-emerald-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 shadow">Bayar <i class="fas fa-arrow-right text-xs"></i></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PRINTER VIEW -->
+            <div id="view-printer" class="view-content hidden-view">
+                <div class="flex justify-between items-center mb-5 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                    <div>
+                        <h2 class="text-lg font-extrabold text-gray-800">Pengaturan Printer</h2>
+                        <p class="text-xs text-gray-500 mt-1">Bluetooth Thermal Printer (Kasir)</p>
+                    </div>
+                </div>
+                
+                <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 mb-4 space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold mb-2 text-gray-700">Ukuran Kertas</label>
+                        <select id="printer-paper-size" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none" onchange="savePrinterSettings()">
+                            <option value="58">58mm (Lebar 32 Karakter)</option>
+                            <option value="80">80mm (Lebar 48 Karakter)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold mb-2 text-gray-700">Jumlah Salinan (Copy)</label>
+                        <select id="printer-copies" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none" onchange="savePrinterSettings()">
+                            <option value="1">1x Cetak (Standar)</option>
+                            <option value="2">2x Cetak (Dapur & Pelanggan)</option>
+                            <option value="3">3x Cetak</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-4">
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="font-bold text-gray-800 text-sm">Koneksi Bluetooth</h3>
+                        <span id="printer-status-badge" class="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-1 rounded">Tidak Terhubung</span>
+                    </div>
+                    
+                    <button id="btn-scan-printer" onclick="scanPrinters()" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-md hover:bg-blue-700 transition flex items-center justify-center gap-2 text-sm">
+                        <i class="fab fa-bluetooth-b"></i> Cari / Hubungkan Printer
+                    </button>
+                    
+                    <div id="printer-list-container" class="hidden-view mt-4">
+                        <p class="text-xs font-bold text-gray-600 mb-2">Pilih Perangkat untuk Disambungkan:</p>
+                        <div id="printer-list" class="space-y-2 max-h-48 overflow-y-auto"></div>
+                    </div>
+                    
+                    <div class="flex gap-2 mt-4 pt-4 border-t border-gray-100">
+                        <button onclick="disconnectPrinter()" class="flex-1 bg-gray-100 text-gray-700 py-2.5 rounded-xl font-bold shadow-sm hover:bg-gray-200 transition text-xs">
+                            Putuskan
+                        </button>
+                        <button onclick="testPrint()" class="flex-1 bg-green-600 text-white py-2.5 rounded-xl font-bold shadow-md hover:bg-green-700 transition text-xs">
+                            Tes Cetak
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- KARYAWAN VIEW -->
+            <div id="view-karyawan" class="view-content hidden-view admin-only">
+                <div class="flex justify-between items-center mb-5 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                    <div><h2 class="text-lg font-extrabold text-gray-800">Data Karyawan</h2></div>
+                    <button onclick="openFormKaryawan()" class="bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-red-700 shadow-md"><i class="fas fa-plus mr-1"></i> Tambah</button>
+                </div>
+                <div id="loading-karyawan" class="text-center py-8 text-gray-400 hidden-view"><div class="loader mb-3"></div><br>Memuat...</div>
+                <div id="list-karyawan" class="space-y-3 pb-4"></div>
+            </div>
+
+            <!-- SLIP GAJI VIEW -->
+            <div id="view-slip" class="view-content hidden-view admin-only">
+                <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+                    <h2 class="text-lg font-extrabold text-gray-800 mb-5 border-b pb-3">Buat Slip Gaji</h2>
+                    <form id="form-slip" onsubmit="generateSlip(event)" class="space-y-4">
+                        <select id="s-karyawan" required class="w-full rounded-xl border-gray-200 py-2.5 px-3 text-sm bg-gray-50 font-medium" onchange="autoFillSlipGaji()"></select>
+                        <div class="grid grid-cols-2 gap-4">
+                            <input type="month" id="s-bulan" required class="w-full rounded-xl border-gray-200 py-2.5 px-3 text-sm bg-gray-50">
+                            <input type="number" id="s-hari" placeholder="Hari Masuk" required min="0" max="31" class="w-full rounded-xl border-gray-200 py-2.5 px-3 text-sm bg-gray-50" oninput="hitungTotalGaji()">
+                        </div>
+                        <input type="text" id="s-keterangan" placeholder="Ket Libur (Opsional)" class="w-full rounded-xl border-gray-200 py-2.5 px-3 text-sm bg-gray-50">
+                        <input type="number" id="s-gaji" readonly placeholder="Gaji Pokok" class="w-full rounded-xl border-gray-200 py-2.5 px-3 text-sm bg-gray-100 cursor-not-allowed">
+                        <div class="grid grid-cols-2 gap-4 border-t pt-4">
+                            <input type="number" id="s-bonus" value="0" placeholder="Bonus" class="w-full rounded-xl border-gray-200 py-2.5 px-3 text-sm bg-gray-50 text-green-700 font-semibold" oninput="hitungTotalGaji()">
+                            <input type="number" id="s-potongan" value="0" placeholder="Potongan" class="w-full rounded-xl border-gray-200 py-2.5 px-3 text-sm bg-gray-50 text-red-600 font-semibold" oninput="hitungTotalGaji()">
+                        </div>
+                        <div class="bg-orange-50 p-4 rounded-xl text-center mt-4">
+                            <p class="text-xs font-bold mb-1 uppercase text-orange-800">Total Diterima</p>
+                            <p class="text-3xl font-extrabold text-red-600" id="s-total">Rp 0</p>
+                        </div>
+                        <button type="submit" id="btn-generate-slip" class="w-full bg-emerald-600 text-white py-3.5 rounded-xl font-bold shadow-md mt-2"><i class="fas fa-print"></i> Cetak PDF</button>
+                    </form>
+                    
+                    <div id="hasil-slip" class="mt-5 p-4 border border-emerald-200 bg-emerald-50 rounded-xl hidden-view text-center">
+                        <p class="text-sm text-emerald-800 font-bold mb-3">Berhasil Dibuat!</p>
+                        <div class="flex space-x-3 mb-3">
+                            <a id="link-pdf" href="#" target="_blank" class="flex-1 bg-gray-900 text-white text-xs font-semibold py-2.5 rounded-lg flex items-center justify-center gap-2">PDF</a>
+                            <a id="link-wa" href="#" target="_blank" class="flex-1 bg-emerald-500 text-white text-xs font-semibold py-2.5 rounded-lg flex items-center justify-center gap-2"><i class="fab fa-whatsapp text-sm"></i> WA</a>
+                        </div>
+                        <button type="button" onclick="resetFormSlip()" class="w-full bg-white border border-gray-300 text-gray-600 text-xs font-semibold py-2 rounded-lg hover:bg-gray-50 transition shadow-sm">Selesai & Buat Baru</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- HISTORI TRANSAKSI -->
+            <div id="view-histori-trx" class="view-content hidden-view">
+                <div class="flex justify-between items-center mb-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                    <div>
+                        <h2 class="text-lg font-extrabold text-gray-800">Riwayat Transaksi</h2>
+                        <p class="text-xs text-gray-500 mt-1" id="histori-trx-subtitle">Daftar penjualan kasir terbaru</p>
+                    </div>
+                    <button onclick="openExportModal('transaksi')" class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-3 sm:px-3.5 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 shrink-0" title="Ekspor Rekap ke Excel atau Google Sheets">
+                        <i class="fas fa-file-excel text-sm text-emerald-200"></i>
+                        <span class="hidden sm:inline">Ekspor Excel / Sheets</span>
+                        <span class="sm:hidden">Ekspor</span>
+                    </button>
+                </div>
+                <div class="flex gap-2 mb-4">
+                    <select id="filter-cabang-trx" class="text-sm border border-gray-200 rounded-xl px-2 py-2 bg-white shadow-sm focus:outline-none admin-only" onchange="renderHistoriTransaksi()">
+                        <option value="Semua">Semua Cabang</option>
+                    </select>
+                    <div class="relative flex-1">
+                        <i class="fas fa-search absolute left-3 top-2.5 text-gray-400 text-sm"></i>
+                        <input type="text" id="search-trx" placeholder="Cari Trx atau Nama..." class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 text-sm bg-white shadow-sm focus:outline-none focus:ring-1 focus:ring-red-500" onkeyup="renderHistoriTransaksi()">
+                    </div>
+                    <button onclick="refreshHistoriTransaksi()" class="bg-white border border-gray-200 text-gray-600 px-3 py-2 rounded-xl text-sm font-bold shadow-sm hover:bg-gray-50 transition" title="Refresh Riwayat"><i class="fas fa-sync-alt"></i></button>
+                </div>
+                
+                <div id="loading-histori-trx" class="text-center py-12 text-gray-400 hidden-view"><div class="loader mb-3"></div><br>Memuat riwayat...</div>
+                <div id="list-histori-transaksi" class="space-y-3 pb-4"></div>
+            </div>
+
+            <!-- HISTORI GAJI -->
+            <div id="view-histori-gaji" class="view-content hidden-view admin-only">
+                <div class="flex justify-between items-center mb-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                    <div>
+                        <h2 class="text-lg font-extrabold text-gray-800">Riwayat Gaji</h2>
+                        <p class="text-xs text-gray-500 mt-1">Daftar cetak slip gaji terbaru</p>
+                    </div>
+                    <button onclick="openExportModal('gaji')" class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-3 sm:px-3.5 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 shrink-0" title="Ekspor Rekap Gaji ke Excel atau Google Sheets">
+                        <i class="fas fa-file-excel text-sm text-emerald-200"></i>
+                        <span class="hidden sm:inline">Ekspor Rekap Gaji</span>
+                        <span class="sm:hidden">Ekspor</span>
+                    </button>
+                </div>
+                <div class="flex gap-2 mb-4">
+                    <div class="relative flex-1">
+                        <i class="fas fa-search absolute left-3 top-2.5 text-gray-400 text-sm"></i>
+                        <input type="text" id="search-gaji" placeholder="Cari Nama Karyawan atau Bulan..." class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 text-sm bg-white shadow-sm focus:outline-none focus:ring-1 focus:ring-red-500" onkeyup="renderHistoriGaji()">
+                    </div>
+                    <button onclick="refreshHistoriGaji()" class="bg-white border border-gray-200 text-gray-600 px-3 py-2 rounded-xl text-sm font-bold shadow-sm hover:bg-gray-50 transition"><i class="fas fa-sync-alt"></i></button>
+                </div>
+
+                <div id="loading-histori-gaji" class="text-center py-12 text-gray-400 hidden-view"><div class="loader mb-3"></div><br>Memuat riwayat...</div>
+                <div id="list-histori-gaji" class="space-y-3 pb-4"></div>
+            </div>
+
+            <!-- ABOUT VIEW -->
+            <div id="view-about" class="view-content hidden-view">
+                <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                    <div class="text-center mb-6">
+                        <div class="w-20 h-20 mx-auto bg-red-50 rounded-full flex items-center justify-center mb-3">
+                            <i class="fas fa-code text-3xl text-red-600"></i>
+                        </div>
+                        <h2 class="text-xl font-extrabold text-gray-800">Istana Bubur App</h2>
+                        <p class="text-xs text-gray-500 font-medium">Versi 2.0.1</p>
+                    </div>
+
+                    <div class="space-y-4">
+                        <button onclick="openGuideModal('login')" class="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-98">
+                            <i class="fas fa-book-open"></i> Buka Buku Panduan Penggunaan & Keamanan
+                        </button>
+
+                        <div class="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                            <p class="text-[10px] text-gray-500 uppercase font-bold mb-1">Pengembang</p>
+                            <p class="text-sm font-semibold text-gray-800"><i class="fas fa-user-circle mr-1 text-gray-400"></i> Aris Mawanto</p>
+                        </div>
+
+                        <div class="bg-blue-50 border border-blue-100 p-4 rounded-xl">
+                            <p class="text-[10px] text-blue-600 uppercase font-bold mb-2"><i class="fas fa-hands-helping mr-1"></i> Dukungan Pengembangan Aplikasi</p>
+                            <p class="text-[11px] text-blue-800 leading-relaxed mb-2">Aplikasi ini dikembangkan dan dipelihara secara berkelanjutan untuk memberikan pengalaman dan layanan yang lebih baik.</p>
+                            <p class="text-[11px] text-blue-800 leading-relaxed mb-2">Apabila Anda merasa aplikasi ini bermanfaat, Anda dapat memberikan dukungan melalui donasi. Setiap dukungan yang diberikan akan membantu proses pengembangan, pemeliharaan, serta peningkatan fitur aplikasi di masa mendatang.</p>
+                            <p class="text-[11px] text-blue-900 font-bold mb-4">Terima kasih atas kepercayaan dan dukungan Anda.</p>
+                            
+                            <div class="border-t border-blue-200 pt-3">
+                                <p class="text-[10px] text-blue-600 uppercase font-bold mb-2"><i class="fas fa-coffee mr-1"></i> Info Rekening Donasi Buat Ngopi</p>
+                                <p class="text-sm font-semibold text-blue-900">Bank BCA</p>
+                                <p class="text-sm font-semibold text-blue-900">Aris Mawanto</p>
+                                <div class="flex items-center justify-between gap-2 mt-2 bg-white px-3 py-2 rounded-lg border border-blue-200">
+                                    <code class="text-sm font-bold text-blue-800">1851171288</code>
+                                    <button onclick="copyToClipboard('1851171288')" class="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700 transition font-semibold shadow-sm"><i class="fas fa-copy mr-1"></i> Salin</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CHAT BANTUAN VIEW -->
+            <div id="view-chat" class="view-content hidden-view space-y-4">
+                <!-- Header Banner Chat -->
+                <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <div class="flex items-center gap-3">
+                        <div class="w-11 h-11 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl shadow-xs shrink-0">
+                            <i class="fas fa-headset"></i>
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <h2 class="text-base font-black text-gray-800">Chat Bantuan Real-Time</h2>
+                                <span id="chat-ws-status-badge" class="inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <span id="chat-ws-dot" class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                                    <span id="chat-ws-status-text">Online</span>
+                                </span>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-0.5" id="chat-header-desc">
+                                Komunikasi langsung antara Admin Pusat dan seluruh Kasir Cabang
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end flex-wrap">
+                        <div class="text-[11px] font-semibold text-gray-600 bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-200 flex items-center gap-1.5">
+                            <i class="fas fa-users text-blue-500"></i>
+                            <span id="chat-online-count">1 Online</span>
+                        </div>
+                        <button onclick="toggleChatSound()" id="btn-toggle-chat-sound" title="Aktifkan/Nonaktifkan Suara Notifikasi" class="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition text-xs flex items-center gap-1.5 bg-gray-50 border border-gray-200 px-3 py-1.5 font-bold active:scale-95">
+                            <i class="fas fa-volume-up text-xs text-blue-600" id="icon-chat-sound"></i>
+                            <span id="text-chat-sound">Suara: ON</span>
+                        </button>
+                        <button onclick="refreshChatHistory()" title="Muat Ulang Pesan" class="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition text-xs flex items-center gap-1.5 bg-gray-50 border border-gray-200 px-3 py-1.5 font-bold active:scale-95">
+                            <i class="fas fa-rotate-right text-xs"></i> <span>Segarkan</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Admin Channel Selector (HANYA MUNCUL UNTUK ADMIN) -->
+                <div id="admin-chat-cabang-tabs" class="admin-only bg-white rounded-2xl p-3 shadow-sm border border-gray-100">
+                    <div class="flex items-center justify-between mb-2 px-1">
+                        <span class="text-xs font-bold text-gray-800 uppercase tracking-wide flex items-center gap-1.5">
+                            <i class="fas fa-store text-red-500"></i> Pilih Cabang / Saluran:
+                        </span>
+                        <span class="text-[10px] text-gray-400 font-medium">Saring pesan atau kirim balasan spesifik</span>
+                    </div>
+                    <div class="flex items-center gap-2 overflow-x-auto pb-1 hide-scrollbar" id="admin-cabang-pill-container">
+                        <!-- Populated dynamically: "Semua Cabang (Broadcast)", "Cabang A", "Cabang B", dll. -->
+                    </div>
+                </div>
+
+                <!-- Kasir Info & Template Cepat (HANYA MUNCUL UNTUK KASIR) -->
+                <div id="kasir-chat-prompts" class="kasir-only bg-white rounded-2xl p-3.5 shadow-sm border border-gray-100 space-y-2">
+                    <div class="flex items-center justify-between px-1">
+                        <span class="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                            <i class="fas fa-bolt text-amber-500"></i> Template Pesan Cepat:
+                        </span>
+                        <span class="text-[10px] text-blue-700 font-bold bg-blue-50 border border-blue-100 px-2.5 py-0.5 rounded-full" id="kasir-chat-cabang-label">Cabang A</span>
+                    </div>
+                    <div class="flex items-center gap-2 overflow-x-auto pb-1 hide-scrollbar">
+                        <button onclick="sendQuickPrompt('Halo Admin, printer bluetooth di kasir bermasalah tidak bisa cetak.')" class="shrink-0 text-xs bg-gray-50 hover:bg-blue-50 hover:text-blue-700 text-gray-700 border border-gray-200 px-3 py-1.5 rounded-xl font-medium transition active:scale-95">
+                            🖨️ Printer Bermasalah
+                        </button>
+                        <button onclick="sendQuickPrompt('Mohon konfirmasi, stok bubur untuk cabang kami tinggal sedikit.')" class="shrink-0 text-xs bg-gray-50 hover:bg-blue-50 hover:text-blue-700 text-gray-700 border border-gray-200 px-3 py-1.5 rounded-xl font-medium transition active:scale-95">
+                            🍚 Stok Bubur Menipis
+                        </button>
+                        <button onclick="sendQuickPrompt('Halo Admin, ada kendala transaksi pembayaran QRIS belum masuk.')" class="shrink-0 text-xs bg-gray-50 hover:bg-blue-50 hover:text-blue-700 text-gray-700 border border-gray-200 px-3 py-1.5 rounded-xl font-medium transition active:scale-95">
+                            💳 Kendala QRIS
+                        </button>
+                        <button onclick="sendQuickPrompt('Laporan shift kasir hari ini sudah selesai kami rekap.')" class="shrink-0 text-xs bg-gray-50 hover:bg-blue-50 hover:text-blue-700 text-gray-700 border border-gray-200 px-3 py-1.5 rounded-xl font-medium transition active:scale-95">
+                            📋 Rekap Shift Selesai
+                        </button>
+                    </div>
+                </div>
+
+                <!-- MAIN CHAT CONTAINER -->
+                <div class="bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col overflow-hidden h-[540px]">
+                    <!-- Chat Subheader -->
+                    <div class="bg-gray-50 px-4 py-2.5 border-b border-gray-100 flex items-center justify-between text-xs text-gray-600 font-semibold">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                            <span id="chat-active-channel-title">Ruang Chat: Cabang A</span>
+                        </div>
+                        <span id="chat-message-count" class="text-[10px] text-gray-400 font-medium">0 pesan</span>
+                    </div>
+
+                    <!-- Chat Messages List -->
+                    <div class="flex-1 relative overflow-hidden flex flex-col">
+                        <div id="chat-messages-box" class="flex-1 p-4 overflow-y-auto space-y-3 bg-[#fafafa]" onscroll="handleChatScroll()">
+                            <!-- Messages rendered here -->
+                        </div>
+                        <button id="btn-scroll-bottom-chat" onclick="scrollChatToBottom(true)" class="hidden-view absolute bottom-3 right-4 bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5 transition active:scale-95 z-10 animate-bounce">
+                            <i class="fas fa-arrow-down text-[10px]"></i>
+                            <span id="btn-scroll-bottom-text">Pesan Baru ↓</span>
+                        </button>
+                    </div>
+
+                    <!-- Typing Indicator -->
+                    <div id="chat-typing-indicator" class="hidden-view px-4 py-1.5 text-[11px] text-gray-500 italic flex items-center gap-2 bg-white border-t border-gray-50">
+                        <span class="flex gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce"></span>
+                            <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce [animation-delay:0.2s]"></span>
+                            <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce [animation-delay:0.4s]"></span>
+                        </span>
+                        <span id="chat-typing-text">Sedang mengetik...</span>
+                    </div>
+
+                    <!-- Chat Composer Form -->
+                    <form id="form-chat-send" onsubmit="handleSendChatMessage(event)" class="p-3 border-t border-gray-100 bg-white flex items-center gap-2">
+                        <input type="text" id="chat-input-text" placeholder="Tulis pesan bantuan..." autocomplete="off" class="flex-1 rounded-xl border border-gray-200 py-3 px-4 text-xs sm:text-sm bg-gray-50/70 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition" oninput="handleChatTyping(event)">
+                        
+                        <button type="submit" id="btn-chat-send" class="bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold px-4 sm:px-6 py-3 rounded-xl transition shadow-md shadow-red-600/20 flex items-center gap-2 text-xs sm:text-sm shrink-0">
+                            <span>Kirim</span>
+                            <i class="fas fa-paper-plane text-xs"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <div id="modal-cart" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden-view flex items-end sm:items-center justify-center sm:p-4">
+        <div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col h-[90vh] sm:h-auto max-h-[95vh]">
+            <div class="bg-gray-50 px-5 py-4 flex justify-between items-center border-b shrink-0 rounded-t-3xl sm:rounded-2xl">
+                <h3 class="font-extrabold text-gray-800"><i class="fas fa-shopping-cart text-gray-400 mr-2"></i> Keranjang</h3>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="clearCart()" class="text-[10px] font-bold text-red-500 bg-red-50 border border-red-100 px-3 py-1.5 rounded-lg hover:bg-red-100 transition"><i class="fas fa-trash-alt mr-1"></i> Kosongkan</button>
+                    <button onclick="closeModal('modal-cart')" class="text-gray-400 hover:text-red-600 bg-gray-100 w-8 h-8 rounded-full flex items-center justify-center"><i class="fas fa-times"></i></button>
+                </div>
+            </div>
+            
+            <div class="p-4 flex-1 overflow-y-auto bg-gray-50/30 hide-scrollbar" id="cart-items-container"></div>
+            
+            <div class="p-5 border-t bg-white shrink-0">
+                <div class="flex justify-between items-center mb-3 border-b pb-2">
+                    <span class="font-bold text-gray-600 text-xs">Total Tagihan</span>
+                    <span class="text-xl font-black text-gray-900" id="cart-modal-total">Rp 0</span>
+                </div>
+                
+                <form id="form-checkout" onsubmit="processCheckout(event); return false;" class="space-y-3">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-[10px] font-bold text-gray-500 uppercase">Nama Pelanggan (Ops)</label>
+                            <input type="text" id="co-nama" placeholder="Cth: Bapak Budi" class="w-full border-b-2 border-gray-200 py-1.5 text-sm focus:outline-none focus:border-green-500 bg-transparent">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-gray-500 uppercase">No. WA (Opsional)</label>
+                            <input type="number" id="co-wa" placeholder="08..." class="w-full border-b-2 border-gray-200 py-1.5 text-sm focus:outline-none focus:border-green-500 bg-transparent">
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-3 mt-1">
+                        <div>
+                            <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">Jenis Pesanan</label>
+                            <select id="co-jenis" class="w-full rounded-xl border border-gray-300 py-2 px-3 text-xs bg-gray-50 font-medium focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500">
+                                <option value="Dine In">Dine In (Makan Sini)</option>
+                                <option value="Takeaway">Takeaway (Bungkus)</option>
+                                <option value="GoFood">GoFood</option>
+                                <option value="GrabFood">GrabFood</option>
+                                <option value="ShopeeFood">ShopeeFood</option>
+                                <option value="Lainnya">Lainnya</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">Catatan</label>
+                            <input type="text" id="co-keterangan" placeholder="Cth: Pedas, dipisah" class="w-full rounded-xl border border-gray-300 py-2 px-3 text-xs bg-gray-50 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 mt-1">Metode Pembayaran</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="border rounded-xl p-2.5 flex items-center gap-2 cursor-pointer bg-green-50/50 border-green-200 hover:bg-green-50 transition">
+                                <input type="radio" name="metode-bayar" value="Cash" checked onclick="togglePaymentMethod('Cash')" class="text-green-600 focus:ring-green-500">
+                                <span class="text-xs font-bold text-gray-800"><i class="fas fa-money-bill-wave text-green-600 mr-1"></i> Cash</span>
+                            </label>
+                            <label class="border rounded-xl p-2.5 flex items-center gap-2 cursor-pointer bg-blue-50/50 border-blue-200 hover:bg-blue-50 transition">
+                                <input type="radio" name="metode-bayar" value="Transfer" onclick="togglePaymentMethod('Transfer')" class="text-blue-600 focus:ring-blue-500">
+                                <span class="text-xs font-bold text-gray-800"><i class="fas fa-university text-blue-600 mr-1"></i> Transfer</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div id="section-cash" class="space-y-1">
+                        <label class="block text-[10px] font-bold text-gray-500 uppercase">Tunai / Dibayar (Rp)</label>
+                        <input type="number" id="co-bayar" min="0" placeholder="0" class="w-full rounded-xl border border-gray-300 py-2.5 px-3 text-sm font-bold text-green-700 bg-green-50 focus:ring-2 focus:ring-green-500 focus:outline-none" oninput="hitungKembalian()">
+                        <div class="flex justify-between text-xs font-bold text-gray-500 px-1 pt-1">
+                            <span>Kembalian:</span>
+                            <span id="co-kembali" class="text-red-500">Rp 0</span>
+                        </div>
+                    </div>
+
+                    <div id="section-transfer" class="hidden-view space-y-2">
+                        <div>
+                            <label class="block text-[10px] font-bold text-gray-500 uppercase">Bank / E-Wallet Tujuan</label>
+                            <select id="co-bank" class="w-full rounded-xl border border-gray-300 py-2.5 px-3 text-xs bg-gray-50 font-medium focus:outline-none">
+                                <option value="BCA - Istana Bubur">BCA (Istana Bubur)</option>
+                                <option value="Mandiri - Istana Bubur">Mandiri (Istana Bubur)</option>
+                                <option value="QRIS - Istana Bubur">QRIS Nasional</option>
+                                <option value="Dana / OVO">DANA / OVO</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-gray-500 uppercase">Catatan / Ref. Transfer (Opsional)</label>
+                            <input type="text" id="co-ref" placeholder="No. Referensi / Nama Pengirim" class="w-full rounded-xl border border-gray-300 py-2 px-3 text-xs bg-gray-50 focus:outline-none">
+                        </div>
+                    </div>
+
+                    <button type="submit" id="btn-checkout" class="w-full bg-green-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-green-600/30 hover:bg-green-700 flex items-center justify-center gap-2 text-sm mt-2">
+                        <i class="fas fa-check-circle"></i> Selesaikan Transaksi
+                    </button>
+                </form>
+                
+                <!-- HALAMAN SETELAH PROSES BERHASIL -->
+                <div id="checkout-result" class="hidden-view mt-4 p-4 bg-green-50 border border-green-200 rounded-xl text-center">
+                    <p class="text-sm font-bold text-green-800 mb-3"><i class="fas fa-check-circle"></i> Transaksi Berhasil!</p>
+                    
+                    <button onclick="cetakStrukThermal()" class="w-full mb-3 bg-gray-900 text-white py-3 rounded-lg font-bold shadow-md hover:bg-gray-800 transition flex items-center justify-center gap-2">
+                        <i class="fas fa-print"></i> Cetak Struk Thermal (Bluetooth)
+                    </button>
+
+                    <!-- Tombol PDF dan WhatsApp yang sudah diperbaiki -->
+                    <div class="flex gap-2 mb-3">
+                        <button onclick="cetakNotaPDF()" class="flex-1 bg-red-600 text-white py-3 rounded-lg font-bold shadow-md hover:bg-red-700 transition flex items-center justify-center gap-2 text-sm">
+                            <i class="fas fa-file-pdf"></i> PDF
+                        </button>
+                        <button onclick="kirimWhatsApp()" class="flex-1 bg-emerald-500 text-white py-3 rounded-lg font-bold shadow-md hover:bg-emerald-600 transition flex items-center justify-center gap-2 text-sm">
+                            <i class="fab fa-whatsapp"></i> WhatsApp
+                        </button>
+                    </div>
+
+                    <button onclick="resetCart()" class="w-full mt-3 text-xs font-bold text-gray-500 py-2.5 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 transition">
+                        Selesai & Transaksi Baru
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL PRODUK (TAMBAH/EDIT) -->
+    <div id="modal-produk" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden-view flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+            <div class="bg-gray-50 px-5 py-4 flex justify-between items-center border-b shrink-0">
+                <h3 class="font-extrabold text-gray-800" id="mp-title">Tambah Produk</h3>
+                <button onclick="closeModal('modal-produk')" class="text-gray-400 hover:text-red-600 bg-gray-100 w-8 h-8 rounded-full flex items-center justify-center"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-5 flex-1 overflow-y-auto">
+                <form id="form-produk" onsubmit="saveProdukData(event)" class="space-y-4">
+                    <input type="hidden" id="pr-rowIndex">
+                    <div><label class="block text-xs font-semibold mb-1">Nama Produk</label><input type="text" id="pr-nama" required class="w-full rounded-xl border border-gray-200 py-2.5 px-3 text-sm bg-gray-50"></div>
+                    <div><label class="block text-xs font-semibold mb-1">Harga (Rp)</label><input type="number" id="pr-harga" required min="0" class="w-full rounded-xl border border-gray-200 py-2.5 px-3 text-sm bg-gray-50 font-bold text-blue-600"></div>
+                    <div>
+                        <label class="block text-xs font-semibold mb-1">Upload Gambar (Opsional)</label>
+                        <input type="file" id="pr-file" accept="image/*" class="w-full text-xs" onchange="previewImage(event)">
+                        <input type="hidden" id="pr-base64">
+                        <div class="mt-2 w-full aspect-square bg-gray-100 rounded-xl border border-gray-200 flex items-center justify-center overflow-hidden">
+                            <img id="pr-preview" src="" class="hidden-view w-full h-full object-cover" alt="Preview">
+                            <span id="pr-placeholder" class="text-gray-400 text-xs flex flex-col items-center"><i class="fas fa-image text-3xl mb-1 block"></i> Preview 1:1</span>
+                        </div>
+                    </div>
+                    <button type="submit" id="btn-save-produk" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold text-sm shadow-md">Simpan Produk</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL KARYAWAN -->
+    <div id="modal-karyawan" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden-view flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-sm rounded-2xl overflow-hidden p-5 flex flex-col max-h-[90vh]">
+            <h3 class="font-extrabold mb-4 flex justify-between text-gray-800" id="modal-title">Tambah Karyawan <button type="button" onclick="closeModal('modal-karyawan')"><i class="fas fa-times text-gray-400"></i></button></h3>
+            <form id="form-karyawan" onsubmit="saveKaryawanData(event)" class="space-y-3 overflow-y-auto hide-scrollbar">
+                <input type="hidden" id="k-rowIndex">
+                <input type="text" id="k-nama" required placeholder="Nama Lengkap" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
+                <select id="k-gender" required class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none"><option value="Laki-laki">Laki-laki</option><option value="Perempuan">Perempuan</option></select>
+                <select id="k-jabatan" required class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none"><option value="Driver">Driver</option><option value="Jaga Outlet">Jaga Outlet</option><option value="Dapur Bubur">Dapur Bubur</option><option value="Dapur Kue">Dapur Kue</option></select> 
+                <input type="text" id="k-cabang" required placeholder="Cabang" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
+                <input type="number" id="k-wa" required placeholder="No WA" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
+                <input type="number" id="k-gaji" required placeholder="Gaji Harian" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
+                <input type="email" id="k-email" placeholder="Email (Ops)" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
+                <button type="submit" id="btn-save-karyawan" class="w-full bg-red-600 text-white py-3.5 rounded-xl font-bold shadow mt-2">Simpan</button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- MODAL CONFIRM DELETE -->
+    <div id="modal-confirm" class="fixed inset-0 bg-black/60 z-[10000] hidden-view flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl p-5 w-64 text-center">
+            <h3 class="font-bold mb-2 text-gray-800" id="confirm-title">Hapus Data?</h3>
+            <p class="text-xs mb-4 text-gray-500" id="confirm-message">Tindakan ini tidak dapat dibatalkan.</p>
+            <div class="flex gap-2">
+                <button onclick="closeModal('modal-confirm')" class="flex-1 bg-gray-100 py-2 rounded-lg text-sm font-bold text-gray-700">Batal</button>
+                <button id="btn-confirm-action" class="flex-1 bg-red-600 text-white py-2 rounded-lg text-sm font-bold shadow">Hapus</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- MODAL LOGOUT -->
+    <div id="modal-logout" class="fixed inset-0 bg-black/60 z-[10000] hidden-view flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-2xl p-6 w-72 text-center shadow-xl">
+            <div class="w-14 h-14 rounded-full bg-red-50 flex items-center justify-center mx-auto mb-4">
+                <i class="fas fa-sign-out-alt text-red-500 text-2xl"></i>
+            </div>
+            <h3 class="font-extrabold mb-1 text-gray-900 text-lg">Keluar Aplikasi?</h3>
+            <p class="text-xs mb-6 text-gray-500">Apakah Anda yakin ingin keluar dan kembali ke halaman Login?</p>
+            <div class="flex gap-3">
+                <button onclick="closeModal('modal-logout')" class="flex-1 bg-gray-100 hover:bg-gray-200 py-2.5 rounded-xl text-sm font-bold text-gray-700 transition">Batal</button>
+                <button onclick="processLogout()" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-sm font-bold shadow-md transition">Ya, Keluar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL PENDAFTARAN AKUN BARU (MULTI-STEP) -->
+    <div id="modal-register" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden-view flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-gray-100 flex flex-col max-h-[92vh]">
+            <!-- Header Modal -->
+            <div class="bg-gradient-to-r from-red-600 to-red-700 px-6 py-4 text-white flex items-center justify-between shrink-0">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center"><i class="fas fa-user-plus text-sm"></i></div>
+                    <div>
+                        <h3 class="font-black text-sm text-white leading-tight">Buat Akun Baru</h3>
+                        <p class="text-[10px] text-red-100 font-medium">Sistem Registrasi & Verifikasi Istana Bubur</p>
+                    </div>
+                </div>
+                <button type="button" onclick="closeModal('modal-register')" class="w-8 h-8 rounded-xl bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition"><i class="fas fa-times text-sm"></i></button>
+            </div>
+
+            <!-- Stepper Progress Bar -->
+            <div class="bg-gray-50 px-6 py-3 border-b border-gray-100 flex items-center justify-between shrink-0">
+                <div class="flex items-center gap-2">
+                    <span id="step-badge-1" class="w-6 h-6 rounded-full bg-red-600 text-white font-bold text-xs flex items-center justify-center">1</span>
+                    <span id="step-label-1" class="text-xs font-bold text-gray-800">Data Diri</span>
+                </div>
+                <div class="flex-1 h-0.5 bg-gray-200 mx-2" id="step-line-1"></div>
+                <div class="flex items-center gap-2">
+                    <span id="step-badge-2" class="w-6 h-6 rounded-full bg-gray-200 text-gray-500 font-bold text-xs flex items-center justify-center">2</span>
+                    <span id="step-label-2" class="text-xs font-bold text-gray-400">Kode Referral</span>
+                </div>
+                <div class="flex-1 h-0.5 bg-gray-200 mx-2" id="step-line-2"></div>
+                <div class="flex items-center gap-2">
+                    <span id="step-badge-3" class="w-6 h-6 rounded-full bg-gray-200 text-gray-500 font-bold text-xs flex items-center justify-center">3</span>
+                    <span id="step-label-3" class="text-xs font-bold text-gray-400">Kode Auth</span>
+                </div>
+            </div>
+
+            <!-- Body Steps -->
+            <div class="p-6 overflow-y-auto hide-scrollbar flex-1 space-y-4">
+                <!-- STEP 1: FORM DATA DIRI -->
+                <div id="register-step-1" class="space-y-3.5">
+                    <div class="text-left">
+                        <p class="text-xs text-gray-500 font-medium">Lengkapi formulir di bawah ini. Pastikan email dan nomor WhatsApp aktif untuk menerima kode verifikasi.</p>
+                    </div>
+
+                    <div class="space-y-1 text-left">
+                        <label class="block text-xs font-bold text-gray-700">Nama Lengkap <span class="text-red-500">*</span></label>
+                        <input type="text" id="reg-nama" required placeholder="Contoh: Budi Santoso" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2.5 text-left">
+                        <div class="space-y-1">
+                            <label class="block text-xs font-bold text-gray-700">Username <span class="text-red-500">*</span></label>
+                            <input type="text" id="reg-user" required placeholder="budi_kasir" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                        </div>
+                        <div class="space-y-1">
+                            <label class="block text-xs font-bold text-gray-700">Role Akun <span class="text-red-500">*</span></label>
+                            <select id="reg-role" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600 font-bold">
+                                <option value="Kasir">🏪 Kasir Cabang</option>
+                                <option value="Admin">👑 Admin Pusat</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="space-y-1 text-left">
+                        <label class="block text-xs font-bold text-gray-700">Email Aktif (Menerima Kode Referral) <span class="text-red-500">*</span></label>
+                        <div class="relative">
+                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><i class="fas fa-envelope text-gray-400 text-xs"></i></div>
+                            <input type="email" id="reg-email" required placeholder="budi@example.com" class="w-full border border-gray-200 rounded-xl py-3 pl-9 pr-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2.5 text-left">
+                        <div class="space-y-1">
+                            <label class="block text-xs font-bold text-gray-700">No. WhatsApp <span class="text-red-500">*</span></label>
+                            <input type="tel" id="reg-wa" required placeholder="081234567890" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                        </div>
+                        <div class="space-y-1">
+                            <label class="block text-xs font-bold text-gray-700">Penempatan Cabang <span class="text-red-500">*</span></label>
+                            <select id="reg-cabang" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                                <option value="Cabang A">Cabang A (Pusat Kota)</option>
+                                <option value="Cabang B">Cabang B (Pasar Baru)</option>
+                                <option value="Cabang C">Cabang C (Stasiun)</option>
+                                <option value="Pusat">Kantor Pusat</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2.5 text-left">
+                        <div class="space-y-1">
+                            <label class="block text-xs font-bold text-gray-700">Password <span class="text-red-500">*</span></label>
+                            <input type="password" id="reg-pass" required placeholder="Min 6 karakter" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                        </div>
+                        <div class="space-y-1">
+                            <label class="block text-xs font-bold text-gray-700">Ulangi Password <span class="text-red-500">*</span></label>
+                            <input type="password" id="reg-pass-conf" required placeholder="Ketik ulang password" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                        </div>
+                    </div>
+
+                    <button type="button" onclick="submitRegisterStep1()" id="btn-submit-step1" class="w-full bg-red-600 hover:bg-red-700 text-white py-3.5 rounded-2xl font-black text-xs shadow-md shadow-red-600/20 active:scale-95 transition flex items-center justify-center gap-2 mt-2">
+                        <span>Lanjut & Kirim Kode Referral ke Email</span>
+                        <i class="fas fa-arrow-right"></i>
+                    </button>
+                </div>
+
+                <!-- STEP 2: VERIFIKASI KODE REFERRAL EMAIL -->
+                <div id="register-step-2" class="hidden-view space-y-4 text-center">
+                    <div class="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center text-2xl shadow-inner">
+                        <i class="fas fa-envelope-circle-check"></i>
+                    </div>
+                    <div class="space-y-1 text-center">
+                        <h4 class="text-sm font-extrabold text-gray-900">Verifikasi Kode Referral Email</h4>
+                        <p class="text-xs text-gray-500 max-w-xs mx-auto">
+                            Kode referral 6-digit telah dikirimkan ke alamat email terdaftar:
+                        </p>
+                    </div>
+
+                    <!-- Notifikasi Status Pengiriman Email Asli -->
+                    <div class="bg-emerald-50/90 border border-emerald-200 rounded-2xl p-4 text-left text-xs space-y-2.5 shadow-xs">
+                        <div class="flex items-center justify-between text-emerald-900 font-bold">
+                            <span class="flex items-center gap-2 text-xs sm:text-sm">
+                                <i class="fas fa-paper-plane text-emerald-600"></i> Email Verifikasi Terkirim
+                            </span>
+                            <span class="text-[10px] bg-emerald-200/80 text-emerald-900 px-2 py-0.5 rounded-full font-extrabold">Aktif</span>
+                        </div>
+                        <div class="bg-white p-3 rounded-xl border border-emerald-100 shadow-xs">
+                            <p class="text-[11px] text-gray-500 font-medium">Alamat Email Penerima:</p>
+                            <p id="reg-display-email" class="text-sm font-extrabold text-emerald-800 font-mono break-all mt-0.5">email@anda.com</p>
+                        </div>
+                        <p class="text-[11px] text-emerald-800 leading-relaxed">
+                            <i class="fas fa-info-circle mr-1 text-emerald-600"></i> Silakan periksa <strong>Kotak Masuk (Inbox)</strong> atau folder <strong>Spam</strong> email Anda, lalu ketik 6 digit kode referral di bawah ini.
+                        </p>
+                    </div>
+
+                    <div class="space-y-2 text-left">
+                        <label class="block text-xs font-bold text-gray-700 text-center">Masukkan 6 Digit Kode Referral dari Email</label>
+                        <input type="text" id="reg-input-referral" maxlength="6" placeholder="000000" class="w-full text-center tracking-[0.4em] font-mono text-xl font-black border-2 border-emerald-200 rounded-2xl p-3.5 bg-gray-50 focus:outline-none focus:border-emerald-600 focus:bg-white uppercase">
+                        <div class="flex items-center justify-between text-xs pt-1 px-1">
+                            <span class="text-gray-500 font-medium">Masa berlaku: <span id="reg-timer" class="font-bold text-red-600">10:00</span></span>
+                            <button type="button" onclick="resendReferralCode()" id="btn-resend-referral" class="text-blue-600 hover:text-blue-800 font-bold hover:underline flex items-center gap-1">
+                                <i class="fas fa-rotate"></i> Kirim Ulang Kode
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-2 pt-2">
+                        <button type="button" onclick="backToRegisterStep1()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-2xl font-bold text-xs transition">Kembali</button>
+                        <button type="button" onclick="verifyReferralStep2()" id="btn-verify-referral" class="flex-2 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-2xl font-bold text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition flex items-center justify-center gap-2">
+                            <span>Verifikasi Kode</span>
+                            <i class="fas fa-arrow-right text-[10px]"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- STEP 3: INPUT KODE AUTENTIKASI ADMIN -->
+                <div id="register-step-3" class="hidden-view space-y-4 text-center">
+                    <div class="w-14 h-14 rounded-full bg-amber-50 text-amber-600 mx-auto flex items-center justify-center text-2xl shadow-inner">
+                        <i class="fas fa-shield-halved"></i>
+                    </div>
+                    <div class="space-y-1 text-center">
+                        <h4 class="text-sm font-extrabold text-gray-900">Masukkan Kode Autentikasi Admin</h4>
+                        <p class="text-xs text-gray-500 max-w-xs mx-auto">
+                            Kode referral email terverifikasi. Masukkan <strong>Kode Autentikasi Resmi</strong> yang hanya diketahui oleh Admin/Owner Pusat.
+                        </p>
+                    </div>
+
+                    <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-left text-xs space-y-2">
+                        <div class="flex items-center gap-2 text-amber-900 font-extrabold">
+                            <i class="fas fa-lock text-amber-600 text-sm"></i>
+                            <span>Otorisasi Khusus Admin Pusat</span>
+                        </div>
+                        <p class="text-[11px] text-amber-800 leading-relaxed">
+                            Kode autentikasi ini bersifat rahasia dan hanya dimiliki oleh <strong>Admin / Owner Pusat Istana Bubur</strong> demi mencegah pendaftaran tidak sah.
+                        </p>
+                        <p class="text-[11px] text-gray-600 font-medium">
+                            <i class="fas fa-comment-dots text-amber-600 mr-1"></i> Hubungi Admin Pusat untuk mendapatkan kode autentikasi resmi Anda.
+                        </p>
+                    </div>
+
+                    <div class="space-y-1.5 text-left">
+                        <label class="block text-xs font-bold text-gray-700">Kode Autentikasi Admin <span class="text-red-500">*</span></label>
+                        <div class="relative">
+                            <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none"><i class="fas fa-key text-gray-400 text-xs"></i></div>
+                            <input type="text" id="reg-auth-code" required placeholder="Masukkan kode dari Admin Pusat" class="w-full border-2 border-gray-200 rounded-2xl py-3.5 pl-10 pr-4 text-xs font-mono font-bold bg-gray-50 focus:outline-none focus:border-amber-600 uppercase">
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-2 pt-2">
+                        <button type="button" onclick="backToRegisterStep2()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-2xl font-bold text-xs transition">Kembali</button>
+                        <button type="button" onclick="activateAccountStep3()" id="btn-activate-account" class="flex-2 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-2xl font-bold text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition flex items-center justify-center gap-1.5">
+                            <i class="fas fa-check-circle"></i>
+                            <span>Aktivasi Akun Sekarang</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL LUPA USERNAME -->
+    <div id="modal-forgot-username" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden-view flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl border border-gray-100 p-6 space-y-4 text-center">
+            <div class="w-12 h-12 rounded-2xl bg-red-50 text-red-600 mx-auto flex items-center justify-center text-xl">
+                <i class="fas fa-id-badge"></i>
+            </div>
+            <div class="space-y-1">
+                <h3 class="font-extrabold text-gray-900 text-base">Bantuan Lupa Username</h3>
+                <p class="text-xs text-gray-500">Masukkan email dan nomor WhatsApp yang terdaftar untuk menemukan akun Anda.</p>
+            </div>
+
+            <form onsubmit="handleFindUsername(event)" class="space-y-3 text-left">
+                <div class="space-y-1">
+                    <label class="block text-xs font-bold text-gray-700">Email Terdaftar</label>
+                    <input type="email" id="fu-email" required placeholder="email@anda.com" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                </div>
+                <div class="space-y-1">
+                    <label class="block text-xs font-bold text-gray-700">Nomor WhatsApp Terdaftar</label>
+                    <input type="tel" id="fu-wa" required placeholder="081234567890" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                </div>
+
+                <div id="fu-result-box" class="hidden-view p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-left space-y-2">
+                    <div class="flex items-center gap-2 text-emerald-800 font-bold text-xs">
+                        <i class="fas fa-check-circle text-emerald-600"></i>
+                        <span>Akun Ditemukan!</span>
+                    </div>
+                    <p class="text-xs text-gray-600">Username Anda: <strong id="fu-found-username" class="text-emerald-700 font-mono text-sm font-black">username</strong></p>
+                    <button type="button" onclick="useFoundUsername()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-xl text-xs font-bold transition">Gunakan untuk Login</button>
+                </div>
+
+                <div class="flex gap-2 pt-2">
+                    <button type="button" onclick="closeModal('modal-forgot-username')" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-bold text-xs transition">Tutup</button>
+                    <button type="submit" id="btn-fu-submit" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-xs shadow transition">Cari Username</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL LUPA PASSWORD (RESET PASSWORD) -->
+    <div id="modal-forgot-password" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden-view flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl border border-gray-100 p-6 space-y-4 text-center">
+            <div class="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 mx-auto flex items-center justify-center text-xl">
+                <i class="fas fa-key"></i>
+            </div>
+            <div class="space-y-1">
+                <h3 class="font-extrabold text-gray-900 text-base">Atur Ulang Password</h3>
+                <p class="text-xs text-gray-500">Reset password dengan verifikasi email terdaftar.</p>
+            </div>
+
+            <!-- TAHAP 1: KIRIM KODE OTP RESET -->
+            <div id="fp-step-1" class="space-y-3 text-left">
+                <div class="space-y-1">
+                    <label class="block text-xs font-bold text-gray-700">Username Akun</label>
+                    <input type="text" id="fp-user" required placeholder="Username Anda" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                </div>
+                <div class="space-y-1">
+                    <label class="block text-xs font-bold text-gray-700">Email Terdaftar</label>
+                    <input type="email" id="fp-email" required placeholder="email@anda.com" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                </div>
+
+                <div class="flex gap-2 pt-2">
+                    <button type="button" onclick="closeModal('modal-forgot-password')" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-bold text-xs transition">Batal</button>
+                    <button type="button" onclick="submitForgotPasswordStep1()" id="btn-fp-send" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-xs shadow transition">Kirim Kode OTP</button>
+                </div>
+            </div>
+
+            <!-- TAHAP 2: MASUKKAN KODE OTP & PASSWORD BARU -->
+            <div id="fp-step-2" class="hidden-view space-y-3 text-left">
+                <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900 space-y-1">
+                    <div class="flex items-center gap-1.5 font-bold">
+                        <i class="fas fa-paper-plane text-emerald-600"></i>
+                        <span>Kode OTP Telah Dikirim ke Email!</span>
+                    </div>
+                    <p class="text-[11px] text-emerald-800 leading-tight">
+                        Silakan periksa kotak masuk atau spam email Anda untuk melihat 6 digit kode OTP verifikasi.
+                    </p>
+                </div>
+
+                <div class="space-y-1">
+                    <label class="block text-xs font-bold text-gray-700">Kode OTP 6-Digit dari Email</label>
+                    <input type="text" id="fp-otp" required maxlength="6" placeholder="000000" class="w-full border border-gray-200 rounded-xl p-3 text-center tracking-widest font-mono text-lg font-bold bg-gray-50 focus:outline-none focus:ring-2 focus:ring-emerald-600 uppercase">
+                </div>
+                <div class="space-y-1">
+                    <label class="block text-xs font-bold text-gray-700">Password Baru</label>
+                    <input type="password" id="fp-new-pass" required placeholder="Minimal 6 karakter" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                </div>
+                <div class="space-y-1">
+                    <label class="block text-xs font-bold text-gray-700">Konfirmasi Password Baru</label>
+                    <input type="password" id="fp-new-pass-conf" required placeholder="Ketik ulang password baru" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                </div>
+
+                <div class="flex gap-2 pt-2">
+                    <button type="button" onclick="backToFpStep1()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-bold text-xs transition">Kembali</button>
+                    <button type="button" onclick="submitForgotPasswordStep2()" id="btn-fp-save" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-bold text-xs shadow transition">Simpan Password</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL UBAH KUNCI AUTENTIKASI ADMIN (KHUSUS ADMIN) -->
+<div id="modal-edit-auth-code" class="modal fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs hidden-view">
+    <div class="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-gray-100 overflow-hidden text-left">
+        <div class="p-4 sm:p-5 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-slate-900 via-gray-900 to-slate-800 text-white">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center text-lg">
+                    <i class="fas fa-shield-halved"></i>
+                </div>
+                <div>
+                    <h3 class="font-extrabold text-sm sm:text-base leading-tight">Ubah Kunci Autentikasi Admin</h3>
+                    <p class="text-[11px] text-slate-300">Hanya Admin Pusat yang mengetahui kunci ini</p>
+                </div>
+            </div>
+            <button type="button" onclick="closeModal('modal-edit-auth-code')" class="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition">
+                <i class="fas fa-times text-xs"></i>
+            </button>
+        </div>
+
+        <form onsubmit="saveNewAdminAuthCode(event)" class="p-5 space-y-4">
+            <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-900 space-y-1">
+                <p class="font-bold flex items-center gap-1.5"><i class="fas fa-exclamation-triangle text-amber-600"></i> Penting:</p>
+                <p class="text-[11px] leading-relaxed text-amber-800">
+                    Kunci ini akan diminta kepada kasir baru pada Langkah 3 Pendaftaran Akun. Pastikan kunci ini tidak disebarkan sembarangan.
+                </p>
+            </div>
+
+            <div class="space-y-1.5">
+                <label class="block text-xs font-bold text-gray-700">Kunci Autentikasi Saat Ini</label>
+                <input type="text" id="input-current-auth-code" readonly class="w-full border border-gray-200 rounded-xl p-3 text-xs font-mono font-bold bg-gray-100 text-gray-500 select-all">
+            </div>
+
+            <div class="space-y-1.5">
+                <label class="block text-xs font-bold text-gray-700">Kunci Autentikasi Baru <span class="text-red-500">*</span></label>
+                <div class="relative">
+                    <input type="text" id="input-new-auth-code" required minlength="4" placeholder="Misal: IB-PUSAT-2026 atau KUNCI-RAHASIA" class="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-mono font-bold bg-gray-50 focus:outline-none focus:border-amber-600 uppercase">
+                </div>
+                <p class="text-[10px] text-gray-400">Minimal 4 karakter (huruf, angka, atau tanda strip).</p>
+            </div>
+
+            <div class="flex items-center gap-2 pt-3 border-t border-gray-100">
+                <button type="button" onclick="closeModal('modal-edit-auth-code')" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-bold text-xs transition">Batal</button>
+                <button type="submit" id="btn-save-auth-code" class="flex-2 bg-slate-900 hover:bg-black text-amber-400 py-3 rounded-xl font-bold text-xs shadow-md active:scale-95 transition flex items-center justify-center gap-1.5">
+                    <i class="fas fa-check-circle"></i>
+                    <span>Simpan Kunci Baru</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- MODAL EKSPOR REKAP LAPORAN (EXCEL & GOOGLE SHEETS) -->
+<div id="modal-export" class="modal fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs hidden-view">
+    <div class="bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-gray-100 overflow-hidden">
+        <!-- Header Modal -->
+        <div class="p-4 sm:p-5 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white shrink-0">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-xs text-white flex items-center justify-center shadow-md text-lg shrink-0">
+                    <i class="fas fa-file-excel"></i>
+                </div>
+                <div>
+                    <h3 class="font-extrabold text-sm sm:text-base leading-tight">Ekspor Rekap Laporan & Spreadsheet</h3>
+                    <p class="text-[11px] text-emerald-100 font-medium">Download Excel (.xlsx), CSV, atau sinkronkan ke Google Sheets</p>
+                </div>
+            </div>
+            <button type="button" onclick="closeModal('modal-export')" class="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition" title="Tutup">
+                <i class="fas fa-times text-sm"></i>
+            </button>
+        </div>
+
+        <!-- Tab Switcher Modal -->
+        <div class="flex items-center gap-1.5 p-2.5 sm:px-4 bg-gray-50 border-b border-gray-200 overflow-x-auto shrink-0 hide-scrollbar">
+            <button id="btn-export-tab-download" onclick="switchExportTab('download')" class="export-tab-btn px-3.5 py-2 rounded-xl font-bold text-xs flex items-center gap-2 bg-emerald-600 text-white shadow-sm transition whitespace-nowrap">
+                <i class="fas fa-file-export"></i> 1. Unduh Excel & CSV
+            </button>
+            <button id="btn-export-tab-sheets" onclick="switchExportTab('sheets')" class="export-tab-btn px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center gap-2 bg-gray-100 text-gray-600 hover:bg-gray-200 transition whitespace-nowrap">
+                <i class="fab fa-google-drive text-emerald-600"></i> 2. Buka di Google Sheets
+            </button>
+            <button id="btn-export-tab-sync" onclick="switchExportTab('sync')" class="export-tab-btn px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center gap-2 bg-gray-100 text-gray-600 hover:bg-gray-200 transition whitespace-nowrap">
+                <i class="fas fa-bolt text-amber-500"></i> 3. Sinkron Otomatis (Apps Script)
+            </button>
+        </div>
+
+        <!-- Scrollable Body Content -->
+        <div class="p-4 sm:p-5 overflow-y-auto space-y-4 text-gray-700 flex-1 hide-scrollbar">
+            <!-- PANEL 1: UNDUH FILE EXCEL / CSV -->
+            <div id="export-pane-download" class="space-y-4">
+                <!-- Konfigurasi Jenis Rekap -->
+                <div>
+                    <label class="block text-xs font-bold text-gray-700 mb-1.5">Pilih Data yang Ingin Diekspor</label>
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <button type="button" onclick="setExportType('transaksi')" id="btn-extype-transaksi" class="export-type-btn p-2.5 rounded-xl border-2 border-emerald-600 bg-emerald-50/70 text-emerald-900 font-bold text-xs flex flex-col items-center justify-center gap-1 transition">
+                            <i class="fas fa-receipt text-emerald-600 text-base"></i>
+                            <span>Penjualan POS</span>
+                        </button>
+                        <button type="button" onclick="setExportType('gaji')" id="btn-extype-gaji" class="export-type-btn p-2.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 font-semibold text-xs flex flex-col items-center justify-center gap-1 transition">
+                            <i class="fas fa-envelope-open-text text-teal-600 text-base"></i>
+                            <span>Rekap Gaji</span>
+                        </button>
+                        <button type="button" onclick="setExportType('produk')" id="btn-extype-produk" class="export-type-btn p-2.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 font-semibold text-xs flex flex-col items-center justify-center gap-1 transition">
+                            <i class="fas fa-box-open text-blue-600 text-base"></i>
+                            <span>Master Menu</span>
+                        </button>
+                        <button type="button" onclick="setExportType('semua')" id="btn-extype-semua" class="export-type-btn p-2.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 font-semibold text-xs flex flex-col items-center justify-center gap-1 transition">
+                            <i class="fas fa-layer-group text-purple-600 text-base"></i>
+                            <span>Semua Data</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Filter Cabang & Periode -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-gray-50 p-3.5 rounded-2xl border border-gray-200">
+                    <div>
+                        <label class="block text-[11px] font-bold text-gray-600 mb-1">Filter Cabang</label>
+                        <select id="export-filter-cabang" onchange="updateExportPreview()" class="w-full text-xs border border-gray-200 rounded-xl px-3 py-2 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-medium">
+                            <option value="Semua">Semua Cabang (Pusat & Cabang)</option>
+                            <option value="Pusat">Pusat</option>
+                            <option value="Cabang A">Cabang A</option>
+                            <option value="Cabang B">Cabang B</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-gray-600 mb-1">Pilihan Cepat Periode</label>
+                        <div class="grid grid-cols-4 gap-1">
+                            <button type="button" onclick="setExportQuickPeriod('hari-ini')" id="btn-period-hari-ini" class="period-btn px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-[10px] font-semibold hover:bg-gray-100 text-gray-700 transition text-center">Hari Ini</button>
+                            <button type="button" onclick="setExportQuickPeriod('bulan-ini')" id="btn-period-bulan-ini" class="period-btn px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-[10px] font-semibold hover:bg-gray-100 text-gray-700 transition text-center">Bulan Ini</button>
+                            <button type="button" onclick="setExportQuickPeriod('tahun-ini')" id="btn-period-tahun-ini" class="period-btn px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-[10px] font-semibold hover:bg-gray-100 text-gray-700 transition text-center">Tahun Ini</button>
+                            <button type="button" onclick="setExportQuickPeriod('semua')" id="btn-period-semua" class="period-btn px-2 py-1.5 rounded-lg border border-emerald-500 bg-emerald-50 text-[10px] font-bold text-emerald-800 transition text-center">Semua</button>
+                        </div>
+                    </div>
+                    <div class="sm:col-span-2 grid grid-cols-2 gap-2 pt-1 border-t border-gray-200">
+                        <div>
+                            <span class="block text-[10px] font-bold text-gray-500 uppercase mb-0.5">Dari Tanggal</span>
+                            <input type="date" id="export-start-date" onchange="updateExportPreview()" class="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500">
+                        </div>
+                        <div>
+                            <span class="block text-[10px] font-bold text-gray-500 uppercase mb-0.5">Sampai Tanggal</span>
+                            <input type="date" id="export-end-date" onchange="updateExportPreview()" class="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Summary Preview Box -->
+                <div id="export-preview-box" class="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                            <i class="fas fa-check text-sm"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-bold text-emerald-950" id="export-preview-title">Memuat data...</p>
+                            <p class="text-[11px] text-emerald-700" id="export-preview-subtitle">Siap diekspor ke format Excel atau CSV</p>
+                        </div>
+                    </div>
+                    <span id="export-preview-badge" class="bg-emerald-600 text-white font-extrabold text-xs px-2.5 py-1 rounded-xl shadow-xs">0 Baris</span>
+                </div>
+
+                <!-- Tombol Download File -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                    <button type="button" onclick="executeExportExcel()" class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-95 text-white py-3 px-4 rounded-xl font-bold text-xs sm:text-sm shadow-md transition flex items-center justify-center gap-2">
+                        <i class="fas fa-file-excel text-lg text-emerald-200"></i>
+                        <span>Unduh File Excel (.xlsx)</span>
+                    </button>
+                    <button type="button" onclick="executeExportCSV()" class="bg-white border-2 border-emerald-600 text-emerald-800 hover:bg-emerald-50 active:scale-95 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2 shadow-xs">
+                        <i class="fas fa-file-csv text-lg text-emerald-600"></i>
+                        <span>Unduh File CSV (.csv)</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- PANEL 2: BUKA LANGSUNG DI GOOGLE SHEETS -->
+            <div id="export-pane-sheets" class="space-y-4 hidden-view">
+                <div class="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex items-start gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 mt-0.5">
+                        <i class="fab fa-google-drive text-lg"></i>
+                    </div>
+                    <div class="text-xs text-blue-950 space-y-1">
+                        <p class="font-bold text-sm">Cara Cepat Buka di Google Sheets (Hanya 2 Langkah):</p>
+                        <p class="leading-relaxed">1. Klik tombol hijau <b>"Salin Tabel Data"</b> di bawah.</p>
+                        <p class="leading-relaxed">2. Klik tombol <b>"Buka Google Sheets Baru"</b>, lalu tekan <kbd class="px-1.5 py-0.5 bg-white border border-blue-300 rounded font-mono font-bold text-blue-700">Ctrl + V</kbd> (atau klik kanan <i>Tempel / Paste</i>). Semua tabel dan angka langsung rapi tertata!</p>
+                    </div>
+                </div>
+
+                <!-- Tombol Aksi Google Sheets -->
+                <div class="space-y-2.5">
+                    <button type="button" onclick="executeCopyForGoogleSheets()" id="btn-copy-sheets" class="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white py-3 px-4 rounded-xl font-bold text-xs sm:text-sm shadow-md transition flex items-center justify-center gap-2">
+                        <i class="fas fa-copy text-emerald-200"></i>
+                        <span id="label-copy-sheets">Langkah 1: Salin Tabel Data ke Clipboard</span>
+                    </button>
+
+                    <button type="button" onclick="openGoogleSheetsNew()" class="w-full bg-white border border-gray-300 hover:bg-gray-50 active:scale-95 text-gray-800 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm shadow-sm transition flex items-center justify-center gap-2">
+                        <img src="https://www.gstatic.com/images/branding/product/2x/sheets_2020q4_48dp.png" class="w-5 h-5 object-contain" alt="Google Sheets">
+                        <span>Langkah 2: Buka Spreadsheet Baru (sheets.new)</span>
+                        <i class="fas fa-external-link-alt text-xs text-gray-400 ml-1"></i>
+                    </button>
+                </div>
+
+                <!-- Notifikasi status salin -->
+                <div id="copy-status-message" class="hidden-view bg-emerald-50 text-emerald-800 text-xs font-bold p-3 rounded-xl border border-emerald-200 text-center flex items-center justify-center gap-2">
+                    <i class="fas fa-check-circle text-emerald-600 text-base"></i>
+                    <span>Data berhasil disalin! Buka Google Sheets sekarang dan tekan Ctrl + V.</span>
+                </div>
+
+                <div class="border-t border-gray-200 pt-3">
+                    <p class="text-[11px] font-bold text-gray-600 mb-1">Alternatif Melalui Google Drive:</p>
+                    <p class="text-[11px] text-gray-500 leading-relaxed">Anda juga bisa mengunduh file <b>.xlsx</b> pada Tab 1, lalu seret (*drag and drop*) file tersebut ke Google Drive Anda untuk langsung dibuka sebagai Google Sheets.</p>
+                </div>
+            </div>
+
+            <!-- PANEL 3: SINKRONISASI OTOMATIS APPS SCRIPT -->
+            <div id="export-pane-sync" class="space-y-3.5 hidden-view">
+                <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5">
+                        <i class="fas fa-bolt text-lg"></i>
+                    </div>
+                    <div class="text-xs text-amber-950 space-y-1">
+                        <p class="font-bold text-sm">Otomatisasi Firebase &rarr; Google Spreadsheet</p>
+                        <p class="leading-relaxed">Ingin Google Spreadsheet Anda memperbarui data transaksi setiap malam atau secara otomatis tanpa perlu ekspor manual? Gunakan skrip <b>Google Apps Script</b> berikut.</p>
+                    </div>
+                </div>
+
+                <div class="bg-gray-900 rounded-2xl p-4 text-white space-y-2">
+                    <div class="flex items-center justify-between border-b border-gray-800 pb-2">
+                        <span class="text-[11px] font-mono text-emerald-400 font-bold">Kode Google Apps Script (Code.gs)</span>
+                        <button type="button" onclick="copyAppsScriptCode()" class="text-xs bg-gray-800 hover:bg-gray-700 text-emerald-300 font-bold px-3 py-1 rounded-lg transition flex items-center gap-1.5">
+                            <i class="fas fa-copy"></i>
+                            <span id="label-copy-script">Salin Kode</span>
+                        </button>
+                    </div>
+                    <pre id="code-apps-script" class="text-[10px] sm:text-[11px] font-mono text-gray-300 overflow-x-auto max-h-48 p-2 hide-scrollbar leading-relaxed">
+// Skrip Penarik Transaksi Istana Bubur ke Google Sheets
+function sinkronkanTransaksiIstanaBubur() {
+  const projectId = "gen-lang-client-0004446574";
+  const databaseId = "ai-studio-istanabubur-4840979b-eb04-419d-b020-ec08e9c46b4c";
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(["ID Transaksi", "Tanggal & Waktu", "Cabang", "Kasir", "Pelanggan", "Metode", "Total Belanja (Rp)"]);
+  }
+  
+  Logger.log("Koneksi ke Firebase siap. Data tersinkron.");
+}
+                    </pre>
+                </div>
+
+                <div class="bg-gray-50 border border-gray-200 rounded-xl p-3 text-xs text-gray-600 space-y-1">
+                    <p class="font-bold text-gray-800">Cara Pasang di Google Spreadsheet:</p>
+                    <ol class="list-decimal list-inside space-y-0.5 text-[11px]">
+                        <li>Buka Google Spreadsheet baru di browser Anda.</li>
+                        <li>Klik menu <b>Ekstensi (Extensions)</b> &rarr; <b>Apps Script</b>.</li>
+                        <li>Tempelkan kode di atas lalu klik tombol <b>Simpan</b>.</li>
+                        <li>Atur Pemicu (Triggers) agar skrip berjalan otomatis setiap hari.</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer Modal -->
+        <div class="p-3.5 sm:p-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between shrink-0">
+            <div class="flex items-center gap-2 text-[11px] text-gray-500">
+                <i class="fas fa-shield-alt text-emerald-600"></i>
+                <span>Tersinkron dengan Database Firebase Firestore</span>
+            </div>
+            <button type="button" onclick="closeModal('modal-export')" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold px-4 py-2 rounded-xl text-xs transition">
+                Tutup
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL BUKU PANDUAN PENGGUNAAN & KEAMANAN SISTEM -->
+<div id="modal-guide" class="modal fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs hidden-view">
+    <div class="bg-white rounded-3xl max-w-3xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-gray-100 overflow-hidden">
+        <!-- Header Modal -->
+        <div class="p-4 sm:p-5 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-red-50 to-orange-50/40 shrink-0">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-2xl bg-red-600 text-white flex items-center justify-center shadow-md shadow-red-600/20 text-lg shrink-0">
+                    <i class="fas fa-book-bookmark"></i>
+                </div>
+                <div>
+                    <h3 class="font-extrabold text-gray-900 text-sm sm:text-base leading-tight">Buku Panduan & Prosedur Keamanan</h3>
+                    <p class="text-[11px] text-gray-500 font-medium">Istana Bubur POS & Manajemen Sistem</p>
+                </div>
+            </div>
+            <button onclick="closeModal('modal-guide')" class="w-8 h-8 rounded-full bg-white hover:bg-gray-200 text-gray-400 hover:text-gray-700 flex items-center justify-center transition border border-gray-200 shadow-xs">
+                <i class="fas fa-times text-xs"></i>
+            </button>
+        </div>
+
+        <!-- Tab Navigation Bar -->
+        <div class="flex items-center gap-1.5 p-2.5 sm:px-4 bg-gray-50 border-b border-gray-200 overflow-x-auto shrink-0 hide-scrollbar">
+            <button id="btn-gtab-login" onclick="switchGuideTab('login')" class="guide-tab-btn px-3.5 py-2 rounded-xl font-bold text-xs flex items-center gap-2 bg-red-600 text-white shadow-sm transition whitespace-nowrap">
+                <i class="fas fa-user-shield"></i> 1. Akun & Hak Akses
+            </button>
+            <button id="btn-gtab-kasir" onclick="switchGuideTab('kasir')" class="guide-tab-btn px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center gap-2 bg-gray-100 text-gray-600 hover:bg-gray-200 transition whitespace-nowrap">
+                <i class="fas fa-cash-register"></i> 2. Kasir (POS) & Struk
+            </button>
+            <button id="btn-gtab-admin" onclick="switchGuideTab('admin')" class="guide-tab-btn px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center gap-2 bg-gray-100 text-gray-600 hover:bg-gray-200 transition whitespace-nowrap">
+                <i class="fas fa-sliders-h"></i> 3. Admin & Gaji
+            </button>
+            <button id="btn-gtab-keamanan" onclick="switchGuideTab('keamanan')" class="guide-tab-btn px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center gap-2 bg-gray-100 text-gray-600 hover:bg-gray-200 transition whitespace-nowrap">
+                <i class="fas fa-shield-alt text-amber-500"></i> 4. Keamanan & Data
+            </button>
+            <button id="btn-gtab-firebase" onclick="switchGuideTab('firebase')" class="guide-tab-btn px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center gap-2 bg-gray-100 text-gray-600 hover:bg-gray-200 transition whitespace-nowrap">
+                <i class="fas fa-fire text-amber-500"></i> 5. Database Firebase
+            </button>
+        </div>
+
+        <!-- Scrollable Body Content -->
+        <div class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 text-gray-700 text-xs sm:text-sm leading-relaxed hide-scrollbar">
+            
+            <!-- PANEL 1: AKUN & HAK AKSES -->
+            <div id="gpanel-login" class="guide-content-panel space-y-4">
+                <div class="bg-red-50/60 border border-red-100 rounded-2xl p-4">
+                    <h4 class="font-extrabold text-red-900 text-sm flex items-center gap-2 mb-1">
+                        <i class="fas fa-id-badge text-red-600"></i> 1. Pembagian Peran (Role Access Control)
+                    </h4>
+                    <p class="text-xs text-red-800 leading-relaxed">
+                        Sistem membedakan hak akses secara ketat antara pengelola utama (Admin Pusat) dan petugas penjualan (Kasir Outlet).
+                    </p>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                        <div class="bg-white p-3 rounded-xl border border-red-200 shadow-xs">
+                            <span class="inline-block bg-red-100 text-red-700 font-bold text-[10px] px-2 py-0.5 rounded-md mb-1.5">👑 Role: Admin Pusat</span>
+                            <ul class="text-[11px] text-gray-600 space-y-1 list-disc list-inside">
+                                <li>Akses penuh ke semua menu & analitik</li>
+                                <li>Kelola master produk, harga, dan foto</li>
+                                <li>Manajemen karyawan & penempatan cabang</li>
+                                <li>Hitung gaji otomatis & cetak slip gaji</li>
+                                <li>Pantau laporan transaksi seluruh cabang</li>
+                            </ul>
+                        </div>
+                        <div class="bg-white p-3 rounded-xl border border-blue-200 shadow-xs">
+                            <span class="inline-block bg-blue-100 text-blue-700 font-bold text-[10px] px-2 py-0.5 rounded-md mb-1.5">🏪 Role: Kasir Cabang</span>
+                            <ul class="text-[11px] text-gray-600 space-y-1 list-disc list-inside">
+                                <li>Hanya beroperasi pada cabang yang ditugaskan</li>
+                                <li>Input pesanan pelanggan (POS Kasir)</li>
+                                <li>Proses pembayaran Cash / QRIS / Transfer</li>
+                                <li>Cetak struk (Thermal Bluetooth / PDF) & WhatsApp</li>
+                                <li>Melihat transaksi cabang sendiri pada hari berjalan</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-gray-50 border border-gray-200 rounded-2xl p-4 space-y-3">
+                    <h4 class="font-extrabold text-gray-900 text-sm flex items-center gap-2">
+                        <i class="fas fa-user-plus text-emerald-600"></i> 2. Pendaftaran Akun Baru (3 Tahap Verifikasi)
+                    </h4>
+                    <ol class="space-y-2 text-xs text-gray-600 list-decimal list-inside pl-1">
+                        <li><strong class="text-gray-800">Isi Formulir Identitas:</strong> Masukkan nama lengkap, username unik, email aktif, nomor WhatsApp, peran (Admin/Kasir), dan penempatan cabang.</li>
+                        <li><strong class="text-gray-800">Verifikasi Kode Referral Email:</strong> Sistem akan mengirimkan 6 digit kode referral resmi ke alamat email yang didaftarkan.</li>
+                        <li><strong class="text-gray-800">Verifikasi Kode Autentikasi Admin:</strong> Akun baru <em>tidak dapat diaktifkan</em> tanpa kode autentikasi resmi yang hanya diketahui oleh Admin / Owner Pusat Istana Bubur.</li>
+                    </ol>
+
+                    <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900">
+                        <p class="font-bold flex items-center gap-1.5 mb-1 text-amber-800">
+                            <i class="fas fa-shield-halved"></i> Keamanan Otorisasi Admin:
+                        </p>
+                        <p class="text-[11px] text-amber-800 leading-relaxed">
+                            Kode Autentikasi bersifat privat dan terjaga kerahasiaannya. Hanya Admin Pusat yang dapat melihat, menyalin, atau mengubah kode otorisasi ini melalui kartu keamanan pada <strong>Menu Profil Admin</strong>.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="bg-gray-50 border border-gray-200 rounded-2xl p-4 space-y-2">
+                    <h4 class="font-extrabold text-gray-900 text-sm flex items-center gap-2">
+                        <i class="fas fa-unlock-alt text-blue-600"></i> 3. Fitur "Ingat Saya" & Pemulihan Akun
+                    </h4>
+                    <p class="text-xs text-gray-600">
+                        Centang opsi <strong>"Ingat Saya"</strong> pada form login agar username dan password tersimpan di perangkat kerja kasir, sehingga tidak perlu mengetik ulang setiap pergantian sesi aplikasi.
+                    </p>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                        <div class="bg-white p-2.5 rounded-xl border border-gray-200">
+                            <p class="font-bold text-xs text-gray-800 mb-0.5"><i class="fas fa-question-circle text-gray-400 mr-1"></i> Lupa Username?</p>
+                            <p class="text-[11px] text-gray-500">Ketikkan email atau nomor WhatsApp yang didaftarkan untuk menampilkan username akun Anda.</p>
+                        </div>
+                        <div class="bg-white p-2.5 rounded-xl border border-gray-200">
+                            <p class="font-bold text-xs text-gray-800 mb-0.5"><i class="fas fa-key text-amber-500 mr-1"></i> Lupa Password?</p>
+                            <p class="text-[11px] text-gray-500">Ketikkan username dan email terdaftar untuk menerima kode OTP 6-digit verifikasi penggantian password.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PANEL 2: OPERASIONAL KASIR & CETAK STRUK -->
+            <div id="gpanel-kasir" class="guide-content-panel hidden-view space-y-4">
+                <div class="bg-blue-50/60 border border-blue-100 rounded-2xl p-4">
+                    <h4 class="font-extrabold text-blue-900 text-sm flex items-center gap-2 mb-1">
+                        <i class="fas fa-shopping-cart text-blue-600"></i> 1. Langkah Transaksi Penjualan Kasir
+                    </h4>
+                    <ol class="space-y-2 text-xs text-blue-950 list-decimal list-inside pl-1 mt-2">
+                        <li><strong>Pilih Menu Bubur / Minuman:</strong> Klik tombol tambah (<code class="bg-white px-1.5 py-0.5 rounded border border-blue-200 font-bold">+</code>) pada katalog produk untuk memasukkannya ke dalam keranjang.</li>
+                        <li><strong>Buka Keranjang & Identitas Pemesan:</strong> Masukkan nama pembeli serta tipe pesanan (contoh: <em>Makan di Tempat [Dine In]</em>, <em>Bungkus [Takeaway]</em>, atau pesanan <em>Ojek Online</em>).</li>
+                        <li><strong>Pilih Metode Pembayaran:</strong>
+                            <ul class="list-disc list-inside pl-4 mt-1 text-[11px] text-gray-700 space-y-1">
+                                <li><strong>Tunai (Cash):</strong> Masukkan nominal uang yang diserahkan pelanggan. Sistem menghitung uang kembalian secara otomatis.</li>
+                                <li><strong>Transfer / QRIS:</strong> Menampilkan kode QRIS resmi Istana Bubur dan nomor rekening untuk diverifikasi sebelum menyelesaikan checkout.</li>
+                            </ul>
+                        </li>
+                    </ol>
+                </div>
+
+                <div class="bg-gray-50 border border-gray-200 rounded-2xl p-4 space-y-3">
+                    <h4 class="font-extrabold text-gray-900 text-sm flex items-center gap-2">
+                        <i class="fas fa-print text-gray-800"></i> 2. Panduan Cetak Struk (Thermal, PDF & WhatsApp)
+                    </h4>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div class="bg-white p-3 rounded-xl border border-gray-200 flex flex-col justify-between">
+                            <div>
+                                <span class="font-bold text-xs text-blue-600 flex items-center gap-1 mb-1">
+                                    <i class="fab fa-bluetooth-b"></i> Printer Thermal
+                                </span>
+                                <p class="text-[11px] text-gray-600">Mendukung printer thermal mini Bluetooth (ESC/POS) ukuran kertas 58mm atau 80mm. Hubungkan lewat menu <em>Pengaturan Printer</em>.</p>
+                            </div>
+                            <span class="text-[10px] text-emerald-600 font-semibold mt-2">Koneksi Cepat ESC/POS</span>
+                        </div>
+                        <div class="bg-white p-3 rounded-xl border border-gray-200 flex flex-col justify-between">
+                            <div>
+                                <span class="font-bold text-xs text-red-600 flex items-center gap-1 mb-1">
+                                    <i class="fas fa-file-pdf"></i> Cetak PDF
+                                </span>
+                                <p class="text-[11px] text-gray-600">Menghasilkan nota digital siap cetak format printer kasir (80mm) yang dapat dicetak melalui driver printer Windows/Mac/Android.</p>
+                            </div>
+                            <span class="text-[10px] text-gray-500 font-semibold mt-2">Bisa Unduh & Cetak</span>
+                        </div>
+                        <div class="bg-white p-3 rounded-xl border border-gray-200 flex flex-col justify-between">
+                            <div>
+                                <span class="font-bold text-xs text-emerald-600 flex items-center gap-1 mb-1">
+                                    <i class="fab fa-whatsapp"></i> Kirim WhatsApp
+                                </span>
+                                <p class="text-[11px] text-gray-600">Kirimkan rincian struk belanja dan nota rapi langsung ke nomor WhatsApp pelanggan dalam satu klik tombol.</p>
+                            </div>
+                            <span class="text-[10px] text-emerald-600 font-semibold mt-2">Hemat Kertas Struk</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-900">
+                    <p class="font-bold mb-1 flex items-center gap-1.5"><i class="fas fa-check-circle text-emerald-600"></i> Riwayat & Cetak Ulang (Reprint)</p>
+                    <p class="text-[11px] text-emerald-800 leading-relaxed">
+                        Jika pelanggan membutuhkan salinan struk kedua, kasir dapat membuka tab <strong>Riwayat Transaksi</strong> hari ini, lalu klik tombol <em>Cetak Nota PDF</em> atau <em>Cetak Struk Thermal</em> pada transaksi terkait.
+                    </p>
+                </div>
+            </div>
+
+            <!-- PANEL 3: ADMIN & MANAJEMEN GAJI -->
+            <div id="gpanel-admin" class="guide-content-panel hidden-view space-y-4">
+                <div class="bg-gray-50 border border-gray-200 rounded-2xl p-4 space-y-3">
+                    <h4 class="font-extrabold text-gray-900 text-sm flex items-center gap-2">
+                        <i class="fas fa-box-open text-red-600"></i> 1. Pengelolaan Master Menu & Harga
+                    </h4>
+                    <p class="text-xs text-gray-600 leading-relaxed">
+                        Admin dapat menambah jenis bubur atau minuman baru, memperbarui harga jual, serta mengunggah foto menu langsung dari kamera atau galeri HP. Seluruh perubahan harga langsung tersimpan ke sistem kasir.
+                    </p>
+                </div>
+
+                <div class="bg-gray-50 border border-gray-200 rounded-2xl p-4 space-y-3">
+                    <h4 class="font-extrabold text-gray-900 text-sm flex items-center gap-2">
+                        <i class="fas fa-users text-blue-600"></i> 2. Master Karyawan & Penempatan Cabang
+                    </h4>
+                    <p class="text-xs text-gray-600 leading-relaxed">
+                        Catat data seluruh karyawan meliputi nama lengkap, jenis kelamin, jabatan (Kasir, Koki Dapur Bubur, Driver), penempatan cabang operasional, nomor kontak WhatsApp, dan tarif gaji harian.
+                    </p>
+                </div>
+
+                <div class="bg-red-50/60 border border-red-100 rounded-2xl p-4 space-y-3">
+                    <h4 class="font-extrabold text-red-950 text-sm flex items-center gap-2">
+                        <i class="fas fa-file-invoice-dollar text-red-600"></i> 3. Perhitungan Gaji & Slip Gaji Otomatis
+                    </h4>
+                    <p class="text-xs text-red-900 leading-relaxed">
+                        Proses penggajian dilakukan dengan formula otomatis transparan:
+                    </p>
+                    <div class="bg-white p-3 rounded-xl border border-red-200 font-mono text-xs font-bold text-center text-red-700 shadow-xs">
+                        Total Gaji = (Hari Masuk Kerja &times; Upah Harian) + Bonus Kinerja - Potongan Kasbon
+                    </div>
+                    <ul class="text-[11px] text-gray-600 space-y-1 list-disc list-inside">
+                        <li><strong>Cetak Slip PDF:</strong> Format slip gaji standar perusahaan siap cetak atau dikirim via email.</li>
+                        <li><strong>Kirim Slip Gaji ke WhatsApp Karyawan:</strong> Rincian komponen gaji dan tautan slip langsung terkirim ke nomor HP pribadi karyawan bersangkutan.</li>
+                        <li><strong>Riwayat Gaji:</strong> Seluruh slip yang telah dibuat tersimpan rapi pada tab <em>Riwayat Gaji</em> untuk audit pembukuan bulanan.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- PANEL 4: ARSITEKTUR KEAMANAN & PENYIMPANAN DATA -->
+            <div id="gpanel-keamanan" class="guide-content-panel hidden-view space-y-4">
+                <div class="bg-amber-50/70 border border-amber-200 rounded-2xl p-4 space-y-2">
+                    <div class="flex items-center gap-2">
+                        <span class="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center font-bold text-sm">
+                            <i class="fas fa-shield-halved"></i>
+                        </span>
+                        <div>
+                            <h4 class="font-extrabold text-amber-950 text-sm">Keamanan & Penyimpanan Data Lokal</h4>
+                            <p class="text-[11px] text-amber-800">Perlindungan Data Mandiri & Berkelanjutan</p>
+                        </div>
+                    </div>
+                    <p class="text-xs text-amber-900 leading-relaxed pt-1">
+                        Aplikasi Istana Bubur beroperasi secara mandiri dengan sistem penyimpanan data lokal yang terisolasi, cepat, dan aman tanpa ketergantungan server eksternal:
+                    </p>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px]">
+                        <div class="bg-white p-3 rounded-xl border border-amber-200 text-gray-700">
+                            <strong class="text-amber-900 block mb-1">🔒 Akses Akun Berjenjang</strong>
+                            Kasir hanya memiliki izin melakukan transaksi kasir. Menu pengaturan dan penggajian hanya dapat diakses dengan akun Admin.
+                        </div>
+                        <div class="bg-white p-3 rounded-xl border border-amber-200 text-gray-700">
+                            <strong class="text-amber-900 block mb-1">🛡️ Validasi Transaksi Kasir</strong>
+                            Sistem secara otomatis memverifikasi total belanja, kalkulasi kembalian, dan format struk cetak sebelum transaksi dicatat.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-gray-50 border border-gray-200 rounded-2xl p-4 space-y-3">
+                    <h4 class="font-extrabold text-gray-900 text-sm flex items-center gap-2">
+                        <i class="fas fa-clipboard-check text-emerald-600"></i> Prosedur Operasional Standar (SOP) Keamanan
+                    </h4>
+                    <div class="space-y-2.5 text-xs text-gray-700">
+                        <div class="flex items-start gap-2.5">
+                            <i class="fas fa-lock text-red-500 mt-1 shrink-0"></i>
+                            <div>
+                                <strong class="text-gray-900">1. Jaga Kerahasiaan Kode Autentikasi Admin:</strong>
+                                <p class="text-[11px] text-gray-500 mt-0.5">Kode autentikasi cabang hanya boleh dipegang oleh supervisor atau admin restoran. Jangan tulis kode di tempat yang mudah terlihat pelanggan.</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-2.5">
+                            <i class="fas fa-user-clock text-blue-500 mt-1 shrink-0"></i>
+                            <div>
+                                <strong class="text-gray-900">2. Wajib Logout Saat Pergantian Shift:</strong>
+                                <p class="text-[11px] text-gray-500 mt-0.5">Jika perangkat kasir digunakan secara bergantian oleh kasir lain, selalu klik menu <em>Keluar</em> agar nama kasir pada struk transaksi tercatat dengan akurat.</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-2.5">
+                            <i class="fas fa-wifi text-emerald-500 mt-1 shrink-0"></i>
+                            <div>
+                                <strong class="text-gray-900">3. Ketahanan Operasional (Offline-Ready):</strong>
+                                <p class="text-[11px] text-gray-500 mt-0.5">Aplikasi beroperasi secara offline-ready. Transaksi kasir dan cetak struk tetap dapat berjalan lancar tanpa memerlukan koneksi internet aktif.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-blue-50 border border-blue-200 rounded-2xl p-3.5 flex items-center justify-between text-xs text-blue-900">
+                    <div class="flex items-center gap-2.5">
+                        <i class="fas fa-headset text-xl text-blue-600"></i>
+                        <div>
+                            <span class="font-bold block">Pusat Komunikasi & Chat Bantuan:</span>
+                            <span class="text-[11px] text-blue-700">Jika mengalami kendala operasional, kasir dapat menghubungi Admin Pusat langsung lewat menu <strong>Chat Bantuan</strong> di aplikasi.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PANEL 5: PANDUAN PENGGUNAAN DATABASE FIREBASE -->
+            <div id="gpanel-firebase" class="guide-content-panel hidden-view space-y-4">
+                <div class="bg-amber-50/80 border border-amber-200 rounded-2xl p-4 space-y-2">
+                    <div class="flex items-center gap-2">
+                        <span class="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                            <i class="fas fa-fire"></i>
+                        </span>
+                        <div>
+                            <h4 class="font-extrabold text-amber-950 text-sm">Petunjuk Penggunaan Database Firebase Firestore</h4>
+                            <p class="text-[11px] text-amber-800">Sinkronisasi Cloud Real-Time Antar-Cabang & Perangkat</p>
+                        </div>
+                    </div>
+                    <p class="text-xs text-amber-900 leading-relaxed pt-1">
+                        Aplikasi Istana Bubur kini terhubung langsung ke <strong>Google Firebase Firestore</strong>. Semua data transaksi kasir, produk bubur, karyawan, dan slip gaji tersimpan aman di cloud serta tersinkronisasi otomatis secara real-time.
+                    </p>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div class="bg-white p-3.5 rounded-2xl border border-gray-200 shadow-xs space-y-1.5">
+                        <div class="flex items-center gap-2 text-red-600 font-bold">
+                            <i class="fas fa-bolt"></i> 1. Sinkronisasi Otomatis Real-Time
+                        </div>
+                        <p class="text-[11px] text-gray-600 leading-relaxed">
+                            Ketika kasir menyelesaikan pesanan di satu perangkat kasir, transaksi langsung masuk ke Cloud Firestore dan seketika muncul di dashboard laporan Admin tanpa perlu refresh halaman.
+                        </p>
+                    </div>
+
+                    <div class="bg-white p-3.5 rounded-2xl border border-gray-200 shadow-xs space-y-1.5">
+                        <div class="flex items-center gap-2 text-emerald-600 font-bold">
+                            <i class="fas fa-wifi"></i> 2. Dukungan Offline Persistence
+                        </div>
+                        <p class="text-[11px] text-gray-600 leading-relaxed">
+                            Jika koneksi internet tiba-tiba terputus, transaksi kasir tetap bisa berjalan tanpa henti. Data disimpan di cache lokal dan otomatis diunggah ke Firebase begitu koneksi kembali aktif.
+                        </p>
+                    </div>
+
+                    <div class="bg-white p-3.5 rounded-2xl border border-gray-200 shadow-xs space-y-1.5">
+                        <div class="flex items-center gap-2 text-blue-600 font-bold">
+                            <i class="fas fa-database"></i> 3. Struktur Koleksi Database
+                        </div>
+                        <p class="text-[11px] text-gray-600 leading-relaxed">
+                            Data terkelola dalam 5 koleksi terpisah: <code>users</code> (akun), <code>products</code> (menu & harga), <code>transactions</code> (kasir POS), <code>employees</code> (data staf), dan <code>payroll</code> (riwayat slip gaji).
+                        </p>
+                    </div>
+
+                    <div class="bg-white p-3.5 rounded-2xl border border-gray-200 shadow-xs space-y-1.5">
+                        <div class="flex items-center gap-2 text-purple-600 font-bold">
+                            <i class="fas fa-shield-alt"></i> 4. Keamanan Firestore Rules
+                        </div>
+                        <p class="text-[11px] text-gray-600 leading-relaxed">
+                            Aturan keamanan Cloud Firestore (<code>firestore.rules</code>) telah dipasang dan dideploy aktif untuk melindungi integritas data operasional restoran.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="bg-gray-50 border border-gray-200 rounded-2xl p-4 space-y-2">
+                    <h5 class="font-bold text-gray-900 text-xs flex items-center gap-1.5">
+                        <i class="fas fa-list-ol text-red-600"></i> Cara Pengoperasian Sehari-hari:
+                    </h5>
+                    <ol class="text-[11px] text-gray-700 space-y-1.5 list-decimal list-inside leading-relaxed">
+                        <li><strong>Login Kasir/Admin:</strong> Masuk dengan username/password yang terdaftar di Firestore. Akun default <em>admin</em> dan <em>kasir1</em> sudah aktif.</li>
+                        <li><strong>Kelola Menu:</strong> Masuk sebagai Admin ke menu <em>Kelola Produk</em>. Menambah, mengedit, atau menghapus produk akan langsung tersimpan di Firestore.</li>
+                        <li><strong>Transaksi Kasir:</strong> Pilih menu, masukkan bayaran, klik <em>Selesaikan & Cetak Struk</em>. Transaksi seketika tersimpan di cloud dengan ID transaksi unik.</li>
+                        <li><strong>Penggajian Karyawan:</strong> Hitung slip gaji di menu <em>Penggajian Karyawan</em>, hasil perhitungan langsung tersimpan ke riwayat cloud dan siap kirim ke WhatsApp.</li>
+                    </ol>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Footer Modal -->
+        <div class="p-3 sm:p-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between shrink-0">
+            <span class="text-[11px] text-gray-500 font-medium hidden sm:inline"><i class="fas fa-shield-alt text-emerald-600 mr-1"></i> Data tersimpan aman di penyimpanan perangkat</span>
+            <button onclick="closeModal('modal-guide')" class="w-full sm:w-auto bg-gray-900 hover:bg-gray-800 text-white font-bold px-5 py-2.5 rounded-xl text-xs shadow transition active:scale-95">Tutup Panduan</button>
+        </div>
+    </div>
+</div>
+
+<script type="module" src="/src/app.js"></script>
+</body>
+</html>
