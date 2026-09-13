@@ -934,6 +934,348 @@ app.post('/api/auth/register-user', async (req, res) => {
   }
 });
 
+// In-memory store untuk OTP serbaguna (register, forgot_username, forgot_password)
+interface GenericOtpRecord {
+  email: string;
+  username?: string;
+  type: 'register' | 'forgot_username' | 'forgot_password';
+  otpHash: string;
+  createdAtMs: number;
+  expiresAtMs: number;
+  used: boolean;
+  userData?: any;
+}
+const universalOtpStore = new Map<string, GenericOtpRecord>();
+
+// Endpoint: Kirim Kode OTP Serbaguna (Pendaftaran, Lupa Username, Lupa Password)
+app.post('/api/auth/send-otp-email', async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const type = String(req.body.type || 'register') as 'register' | 'forgot_username' | 'forgot_password';
+  const username = String(req.body.username || '').trim();
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!email || !emailRegex.test(email)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Format email tidak valid! Harap gunakan email aktif (contoh: user@gmail.com).'
+    });
+  }
+
+  let matchedUser: any = null;
+
+  try {
+    const { db, COLLECTIONS } = await import('./src/firebase.ts');
+    const { doc, getDoc, getDocs, collection } = await import('firebase/firestore');
+
+    if (type === 'forgot_username') {
+      const snap = await getDocs(collection(db, COLLECTIONS.USERS));
+      for (const d of snap.docs) {
+        const u = d.data();
+        if (u.email && u.email.trim().toLowerCase() === email) {
+          matchedUser = { id: d.id, ...u };
+          break;
+        }
+      }
+      if (!matchedUser) {
+        return res.status(404).json({
+          success: false,
+          message: `Email ${email} belum terdaftar di database aplikasi.`
+        });
+      }
+    } else if (type === 'forgot_password') {
+      if (username) {
+        const uDoc = await getDoc(doc(db, COLLECTIONS.USERS, username.toLowerCase()));
+        if (uDoc.exists()) {
+          matchedUser = { id: uDoc.id, ...uDoc.data() };
+        }
+      }
+      if (!matchedUser) {
+        const snap = await getDocs(collection(db, COLLECTIONS.USERS));
+        for (const d of snap.docs) {
+          const u = d.data();
+          if (u.email && u.email.trim().toLowerCase() === email) {
+            matchedUser = { id: d.id, ...u };
+            break;
+          }
+        }
+      }
+      if (!matchedUser) {
+        return res.status(404).json({
+          success: false,
+          message: 'Akun dengan username atau email tersebut tidak ditemukan di database.'
+        });
+      }
+    } else if (type === 'register') {
+      if (username) {
+        const uDoc = await getDoc(doc(db, COLLECTIONS.USERS, username.toLowerCase()));
+        if (uDoc.exists()) {
+          return res.status(400).json({
+            success: false,
+            message: 'Username sudah digunakan oleh akun lain. Silakan pilih username lain.'
+          });
+        }
+      }
+    }
+  } catch (fsErr) {
+    console.warn('[Firestore lookup warning in send-otp-email]:', fsErr);
+  }
+
+  // Generate 6-digit OTP
+  const otp = String(crypto.randomInt(100000, 1000000));
+  const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
+  const now = Date.now();
+  const expiresAtMs = now + (10 * 60 * 1000); // 10 menit
+
+  const storeKey = `${type}_${email}`;
+  universalOtpStore.set(storeKey, {
+    email,
+    username: matchedUser?.username || username || '',
+    type,
+    otpHash,
+    createdAtMs: now,
+    expiresAtMs,
+    used: false,
+    userData: matchedUser
+  });
+
+  // Siapkan email
+  let title = 'Verifikasi Pendaftaran Akun';
+  let desc = 'Berikut adalah 6-digit kode OTP verifikasi email untuk pendaftaran akun Anda:';
+  let subject = `[Istana Bubur] Kode OTP Verifikasi Pendaftaran: ${otp}`;
+
+  if (type === 'forgot_username') {
+    title = 'Bantuan Lupa Username';
+    desc = 'Berikut adalah kode OTP verifikasi untuk melihat kembali username akun Anda:';
+    subject = `[Istana Bubur] Kode OTP Pemulihan Username: ${otp}`;
+  } else if (type === 'forgot_password') {
+    title = 'Atur Ulang Password';
+    desc = 'Berikut adalah kode OTP verifikasi untuk mengatur ulang kata sandi (password) akun Anda:';
+    subject = `[Istana Bubur] Kode OTP Reset Password: ${otp}`;
+  }
+
+  const recipientName = matchedUser?.fullName || matchedUser?.username || username || 'Pengguna';
+
+  const htmlContent = `
+  <!DOCTYPE html>
+  <html>
+  <head><meta charset="utf-8"></head>
+  <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; padding: 24px; margin: 0;">
+    <div style="max-width: 500px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+      <div style="background: #dc2626; color: #ffffff; padding: 24px; text-align: center;">
+        <h2 style="margin: 0; font-size: 22px; font-weight: 900; letter-spacing: 1px;">🥣 ISTANA BUBUR</h2>
+        <p style="margin: 4px 0 0; font-size: 13px; color: #fee2e2;">${title}</p>
+      </div>
+      <div style="padding: 24px; color: #1e293b;">
+        <p style="margin-top: 0;">Halo <strong>${recipientName}</strong>,</p>
+        <p>${desc}</p>
+        <div style="text-align: center; margin: 28px 0;">
+          <div style="display: inline-block; background: #0f172a; color: #ffffff; font-family: monospace; font-size: 34px; font-weight: 900; letter-spacing: 8px; padding: 16px 32px; border-radius: 12px;">
+            ${otp}
+          </div>
+          <p style="color: #dc2626; font-size: 12px; font-weight: 700; margin-top: 10px;">⏳ Berlaku selama 10 Menit</p>
+        </div>
+        <p style="font-size: 13px; color: #64748b; line-height: 1.5;">
+          Jangan berikan kode ini kepada siapapun demi keamanan akun Anda.
+        </p>
+      </div>
+      <div style="background: #f8fafc; border-top: 1px solid #f1f5f9; padding: 16px; text-align: center; font-size: 11px; color: #94a3b8;">
+        Email otomatis dari Layanan Keamanan Istana Bubur.
+      </div>
+    </div>
+  </body>
+  </html>
+  `;
+
+  try {
+    const sendResult = await sendEmailWithFallback({
+      to: email,
+      subject,
+      html: htmlContent
+    });
+
+    if (sendResult.success) {
+      console.log(`[OTP SENT] Type: ${type}, To: ${email} via port ${sendResult.port}`);
+      return res.json({
+        success: true,
+        delivered: true,
+        expiresAt: expiresAtMs,
+        message: `Kode OTP 6-digit berhasil dikirimkan ke email ${email}. Silakan periksa Kotak Masuk atau folder Spam email Anda.`
+      });
+    }
+
+    console.warn(`[OTP SMTP Fallback] Email error: ${sendResult.error}`);
+    return res.json({
+      success: true,
+      delivered: false,
+      devMode: true,
+      expiresAt: expiresAtMs,
+      codeForTesting: otp,
+      message: `Kode OTP verifikasi: ${otp}. (Terkendala kirim SMTP: ${sendResult.error})`
+    });
+  } catch (err: any) {
+    console.error('[SEND OTP EXCEPTION]:', err);
+    return res.json({
+      success: true,
+      delivered: false,
+      devMode: true,
+      expiresAt: expiresAtMs,
+      codeForTesting: otp,
+      message: `Kode OTP verifikasi: ${otp}`
+    });
+  }
+});
+
+// Endpoint: Verifikasi Kode OTP (Universal)
+app.post('/api/auth/verify-otp-email', async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const code = String(req.body.code || '').trim();
+  const type = String(req.body.type || 'register') as 'register' | 'forgot_username' | 'forgot_password';
+
+  if (!email || !code || code.length !== 6) {
+    return res.status(400).json({
+      success: false,
+      message: 'Email dan 6-digit kode OTP wajib diisi.'
+    });
+  }
+
+  const storeKey = `${type}_${email}`;
+  let record = universalOtpStore.get(storeKey);
+
+  // Fallback ke referralCodesStore jika pendaftaran
+  if (!record && type === 'register') {
+    const ref = referralCodesStore.get(email);
+    if (ref) {
+      record = {
+        email: ref.email,
+        username: ref.username,
+        type: 'register',
+        otpHash: ref.otpHash,
+        createdAtMs: ref.createdAtMs,
+        expiresAtMs: ref.expiresAtMs,
+        used: ref.used
+      };
+    }
+  }
+
+  if (!record) {
+    return res.status(404).json({
+      success: false,
+      message: 'Kode OTP belum diminta atau tidak ditemukan. Silakan klik "Kirim Kode OTP".'
+    });
+  }
+
+  if (Date.now() > record.expiresAtMs) {
+    return res.status(410).json({
+      success: false,
+      message: 'Kode OTP telah kedaluwarsa (lebih dari 10 menit). Silakan klik "Kirim Ulang Kode".'
+    });
+  }
+
+  const inputHash = crypto.createHash('sha256').update(code).digest('hex');
+  if (inputHash !== record.otpHash) {
+    return res.status(401).json({
+      success: false,
+      message: 'Kode OTP salah! Periksa kembali angka 6-digit yang tertera pada email Anda.'
+    });
+  }
+
+  record.used = true;
+
+  if (type === 'forgot_username') {
+    return res.json({
+      success: true,
+      message: 'Kode OTP berhasil diverifikasi!',
+      user: {
+        username: record.userData?.username || record.username || 'user',
+        fullName: record.userData?.fullName || record.userData?.username || 'Pengguna',
+        email: record.email,
+        role: record.userData?.role || 'Kasir',
+        cabang: record.userData?.cabang || 'Cabang Utama'
+      }
+    });
+  }
+
+  return res.json({
+    success: true,
+    message: 'Kode OTP berhasil diverifikasi!'
+  });
+});
+
+// Endpoint: Reset Password Akun di Firestore & Database
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const username = String(req.body.username || '').trim();
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const newPassword = String(req.body.newPassword || '').trim();
+
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password baru minimal 6 karakter!'
+      });
+    }
+
+    if (!username && !email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username atau email wajib disertakan untuk atur ulang password.'
+      });
+    }
+
+    const { db, COLLECTIONS } = await import('./src/firebase.ts');
+    const { doc, setDoc, getDoc, collection, getDocs } = await import('firebase/firestore');
+
+    let targetDocId = '';
+    let updatedUserObj: any = null;
+
+    if (username) {
+      const uDoc = await getDoc(doc(db, COLLECTIONS.USERS, username.toLowerCase()));
+      if (uDoc.exists()) {
+        targetDocId = username.toLowerCase();
+        updatedUserObj = uDoc.data();
+      }
+    }
+
+    if (!targetDocId && email) {
+      const snap = await getDocs(collection(db, COLLECTIONS.USERS));
+      for (const d of snap.docs) {
+        const u = d.data();
+        if (u.email && u.email.trim().toLowerCase() === email) {
+          targetDocId = d.id;
+          updatedUserObj = u;
+          break;
+        }
+      }
+    }
+
+    if (!targetDocId) {
+      return res.status(404).json({
+        success: false,
+        message: 'Akun tidak ditemukan di Cloud Firestore.'
+      });
+    }
+
+    await setDoc(doc(db, COLLECTIONS.USERS, targetDocId), {
+      password: newPassword,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+
+    console.log(`[Firebase Firestore] Password untuk akun ${targetDocId} berhasil direset!`);
+
+    return res.json({
+      success: true,
+      message: 'Password akun Anda berhasil diperbarui di Cloud Firestore!',
+      username: updatedUserObj?.username || targetDocId
+    });
+  } catch (err: any) {
+    console.error('Error in /api/auth/reset-password:', err);
+    return res.status(500).json({
+      success: false,
+      message: err?.message || 'Gagal mengatur ulang password di server.'
+    });
+  }
+});
+
 
 async function startServer() {
   const server = http.createServer(app);

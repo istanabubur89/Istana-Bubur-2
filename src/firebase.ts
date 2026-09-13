@@ -289,6 +289,74 @@ export async function firestoreResetPassword(usernameOrEmail: string, newPass: s
   return { success: false, message: 'Akun tidak ditemukan di database.' };
 }
 
+export async function firestoreFindUserByEmail(email: string) {
+  const normEmail = String(email || '').trim().toLowerCase();
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.USERS));
+    for (const d of snap.docs) {
+      const u = d.data();
+      if (u.email && u.email.trim().toLowerCase() === normEmail) {
+        return {
+          success: true,
+          user: {
+            username: u.username,
+            fullName: u.fullName || u.username,
+            email: u.email,
+            phone: u.phone || '',
+            role: u.role || 'Kasir',
+            cabang: u.cabang || 'Cabang Utama'
+          }
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[firestoreFindUserByEmail Warning]:', err);
+  }
+  return { success: false, message: 'Email tidak ditemukan di database Cloud Firestore.' };
+}
+
+export async function firestoreFindUserByIdentity(identity: string) {
+  const norm = String(identity || '').trim().toLowerCase();
+  try {
+    const userDoc = await getDoc(doc(db, COLLECTIONS.USERS, norm));
+    if (userDoc.exists()) {
+      const u = userDoc.data();
+      return {
+        success: true,
+        user: {
+          username: u.username,
+          fullName: u.fullName || u.username,
+          email: u.email || '',
+          phone: u.phone || '',
+          role: u.role || 'Kasir',
+          cabang: u.cabang || 'Cabang Utama'
+        }
+      };
+    }
+
+    const snap = await getDocs(collection(db, COLLECTIONS.USERS));
+    for (const d of snap.docs) {
+      const u = d.data();
+      if ((u.email && u.email.trim().toLowerCase() === norm) || (u.username && u.username.trim().toLowerCase() === norm)) {
+        return {
+          success: true,
+          user: {
+            username: u.username,
+            fullName: u.fullName || u.username,
+            email: u.email || '',
+            phone: u.phone || '',
+            role: u.role || 'Kasir',
+            cabang: u.cabang || 'Cabang Utama'
+          }
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[firestoreFindUserByIdentity Warning]:', err);
+  }
+  return { success: false, message: 'Akun tidak ditemukan di database Cloud Firestore.' };
+}
+
 // -------------------------------------------------------------
 // PRODUCT FUNCTIONS
 // -------------------------------------------------------------

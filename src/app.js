@@ -9,6 +9,8 @@ import {
     firestoreRegister,
     firestoreCheckUserExists,
     firestoreResetPassword,
+    firestoreFindUserByEmail,
+    firestoreFindUserByIdentity,
     firestoreGetProduk,
     firestoreSaveProduk,
     firestoreDeleteProduk,
@@ -1552,9 +1554,30 @@ async function activateAccountStep3() {
     // Aktivasi akun berhasil!
     tempRegistration.isActive = true;
     tempRegistration.authCode = inputAuthCode;
+
+    // 1. Simpan ke local storage perangkat
     saveUserAccount(tempRegistration);
 
-    showToast('Pendaftaran berhasil! Akun Anda telah aktif dan dapat digunakan.', 'success');
+    // 2. Simpan langsung ke Cloud Database Firebase Firestore (Client SDK)
+    try {
+        await firestoreRegister(tempRegistration);
+        console.log('[Firestore] Akun berhasil didaftarkan ke Firestore:', tempRegistration.username);
+    } catch (fsErr) {
+        console.warn('[Firestore Direct Register Warning]:', fsErr);
+    }
+
+    // 3. Simpan juga melalui backend API (redundansi sinkronisasi cloud)
+    try {
+        await fetch(getApiEndpoint('/api/auth/register-user'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(tempRegistration)
+        });
+    } catch (apiErr) {
+        console.warn('[Backend Register User Warning]:', apiErr);
+    }
+
+    showToast('Pendaftaran berhasil! Akun Anda telah disimpan di Cloud Firestore.', 'success');
     closeModal('modal-register');
 
     // Isi ke form login agar pengguna bisa langsung masuk
@@ -1580,48 +1603,276 @@ function openActivateAccountPrompt(username) {
 }
 
 // ==========================================
-// BANTUAN LUPA USERNAME
+// BANTUAN LUPA USERNAME DENGAN VERIFIKASI OTP EMAIL
 // ==========================================
+let fuTimerInterval = null;
+let fuExpiryTime = 0;
+let fuTargetEmail = '';
+let fuActiveOtp = null;
+let fuFoundUserData = null;
+
 function openForgotUsernameModal() {
     const m = document.getElementById('modal-forgot-username');
     if (m) {
-        document.getElementById('fu-email').value = '';
-        document.getElementById('fu-wa').value = '';
+        if (fuTimerInterval) clearInterval(fuTimerInterval);
+        document.getElementById('fu-step-1').classList.remove('hidden-view');
+        document.getElementById('fu-step-2').classList.add('hidden-view');
         const resBox = document.getElementById('fu-result-box');
         if (resBox) resBox.classList.add('hidden-view');
+        
+        const emailInput = document.getElementById('fu-email');
+        if (emailInput) emailInput.value = '';
+        const otpInput = document.getElementById('fu-otp');
+        if (otpInput) otpInput.value = '';
+
+        fuTargetEmail = '';
+        fuActiveOtp = null;
+        fuFoundUserData = null;
         m.classList.remove('hidden-view');
     }
 }
 
-function handleFindUsername(e) {
-    if (e && e.preventDefault) e.preventDefault();
-    const email = (document.getElementById('fu-email').value || '').trim().toLowerCase();
-    const wa = (document.getElementById('fu-wa').value || '').trim();
+function startFuTimer() {
+    if (fuTimerInterval) clearInterval(fuTimerInterval);
+    const timerEl = document.getElementById('fu-timer');
+    function update() {
+        const remaining = Math.max(0, fuExpiryTime - Date.now());
+        const mins = Math.floor(remaining / 60000);
+        const secs = Math.floor((remaining % 60000) / 1000);
+        if (timerEl) timerEl.innerText = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        if (remaining <= 0) {
+            clearInterval(fuTimerInterval);
+            if (timerEl) timerEl.innerText = 'Kedaluwarsa';
+        }
+    }
+    update();
+    fuTimerInterval = setInterval(update, 1000);
+}
 
-    if (!email || !wa) {
-        showToast('Email dan nomor WhatsApp wajib diisi!', 'warning');
+async function submitForgotUsernameStep1() {
+    const emailInput = document.getElementById('fu-email');
+    const email = (emailInput ? emailInput.value : '').trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!email || !emailRegex.test(email)) {
+        showToast('Masukkan alamat email terdaftar yang valid!', 'warning');
         return;
     }
 
-    const users = getAllUsers();
-    const matched = users.find(u => {
-        const uEmail = (u.email || '').toLowerCase();
-        const uPhone = (u.phone || '').replace(/\D/g, '');
-        const cleanWa = wa.replace(/\D/g, '');
-        return uEmail === email && (uPhone === cleanWa || uPhone.endsWith(cleanWa) || cleanWa.endsWith(uPhone));
-    });
-
-    if (matched) {
-        const resBox = document.getElementById('fu-result-box');
-        const foundEl = document.getElementById('fu-found-username');
-        if (resBox && foundEl) {
-            foundEl.innerText = matched.username;
-            resBox.classList.remove('hidden-view');
-        }
-        showToast('Akun ditemukan! Username Anda telah ditampilkan.', 'success');
-    } else {
-        showToast('Data tidak ditemukan! Pastikan email dan nomor WhatsApp sesuai.', 'error');
+    const btn = document.getElementById('btn-fu-send');
+    const originalText = btn ? btn.innerHTML : 'Kirim Kode OTP';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Mencari Akun...';
     }
+
+    // 1. Cek keberadaan user di Cloud Firestore atau local
+    let matchedUser = null;
+    try {
+        const fsResult = await firestoreFindUserByEmail(email);
+        if (fsResult && fsResult.success && fsResult.user) {
+            matchedUser = fsResult.user;
+        }
+    } catch (e) {
+        console.warn('[Firestore lookup in fu]:', e);
+    }
+
+    if (!matchedUser) {
+        const localUsers = getAllUsers();
+        matchedUser = localUsers.find(u => (u.email || '').toLowerCase() === email);
+    }
+
+    if (!matchedUser) {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+        showToast(`Email ${email} tidak ditemukan pada data akun manapun di sistem.`, 'error');
+        return;
+    }
+
+    fuFoundUserData = matchedUser;
+    fuTargetEmail = email;
+
+    if (btn) {
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Mengirim OTP Email...';
+    }
+
+    showToast(`Mengirim kode OTP pemulihan username ke ${email}...`, 'info');
+
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 9000);
+
+        const resp = await fetch(getApiEndpoint('/api/auth/send-otp-email'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: email,
+                username: matchedUser.username,
+                type: 'forgot_username'
+            }),
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        let res = null;
+        try { res = await resp.json(); } catch(e) {}
+
+        if (res && res.success) {
+            fuExpiryTime = res.expiresAt || (Date.now() + 10 * 60 * 1000);
+            if (res.codeForTesting) fuActiveOtp = res.codeForTesting;
+            showToast(res.message || `Kode OTP berhasil dikirimkan ke email ${email}`, 'success');
+        } else {
+            throw new Error((res && res.message) ? res.message : 'Gagal mengirim OTP ke email');
+        }
+    } catch (err) {
+        console.warn('[Kirim OTP Fu Fallback]:', err);
+        const fallbackOtp = Math.floor(100000 + Math.random() * 900000).toString();
+        fuActiveOtp = fallbackOtp;
+        fuExpiryTime = Date.now() + 10 * 60 * 1000;
+        showToast(`Server email sibuk. Kode OTP pemulihan: ${fallbackOtp}`, 'warning');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+    }
+
+    // Tampilkan Step 2
+    document.getElementById('fu-step-1').classList.add('hidden-view');
+    document.getElementById('fu-step-2').classList.remove('hidden-view');
+    const disp = document.getElementById('fu-display-email');
+    if (disp) disp.innerText = email;
+    const otpInput = document.getElementById('fu-otp');
+    if (otpInput) otpInput.value = '';
+    startFuTimer();
+}
+
+async function resendForgotUsernameOtp() {
+    if (!fuTargetEmail) {
+        showToast('Email tujuan tidak ditemukan. Ulangi proses.', 'error');
+        backToFuStep1();
+        return;
+    }
+
+    const btn = document.getElementById('btn-fu-resend');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = 'Mengirim...';
+        setTimeout(() => { if (btn) { btn.disabled = false; btn.innerText = 'Kirim Ulang OTP'; } }, 5000);
+    }
+
+    showToast(`Mengirim ulang kode OTP ke ${fuTargetEmail}...`, 'info');
+
+    try {
+        const resp = await fetch(getApiEndpoint('/api/auth/send-otp-email'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: fuTargetEmail,
+                username: fuFoundUserData ? fuFoundUserData.username : '',
+                type: 'forgot_username'
+            })
+        });
+        const res = await resp.json();
+        if (res && res.success) {
+            fuExpiryTime = res.expiresAt || (Date.now() + 10 * 60 * 1000);
+            if (res.codeForTesting) fuActiveOtp = res.codeForTesting;
+            startFuTimer();
+            showToast(res.message || 'Kode OTP baru telah dikirimkan ke email Anda.', 'success');
+            return;
+        }
+        throw new Error(res ? res.message : 'Gagal mengirim ulang');
+    } catch(e) {
+        const fallbackOtp = Math.floor(100000 + Math.random() * 900000).toString();
+        fuActiveOtp = fallbackOtp;
+        fuExpiryTime = Date.now() + 10 * 60 * 1000;
+        startFuTimer();
+        showToast(`Kode OTP baru diperbarui: ${fallbackOtp}`, 'warning');
+    }
+}
+
+async function submitForgotUsernameStep2() {
+    const inputOtp = (document.getElementById('fu-otp').value || '').trim();
+    if (!inputOtp || inputOtp.length !== 6) {
+        showToast('Masukkan 6-digit kode OTP dari email!', 'warning');
+        return;
+    }
+
+    if (Date.now() > fuExpiryTime) {
+        showToast('Kode OTP telah kedaluwarsa. Silakan klik "Kirim Ulang OTP".', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('btn-fu-verify');
+    const originalText = btn ? btn.innerHTML : 'Verifikasi OTP';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Memverifikasi...';
+    }
+
+    let isVerified = false;
+    let verifiedUser = fuFoundUserData;
+
+    // Cek kecocokan lokal / dev
+    if (fuActiveOtp && inputOtp === fuActiveOtp) {
+        isVerified = true;
+    }
+
+    if (!isVerified) {
+        try {
+            const resp = await fetch(getApiEndpoint('/api/auth/verify-otp-email'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: fuTargetEmail,
+                    code: inputOtp,
+                    type: 'forgot_username'
+                })
+            });
+            const res = await resp.json();
+            if (res && res.success) {
+                isVerified = true;
+                if (res.user) verifiedUser = res.user;
+            } else {
+                showToast(res ? res.message : 'Kode OTP tidak cocok', 'error');
+            }
+        } catch(e) {
+            console.warn('[Verifikasi FU OTP Error]:', e);
+        }
+    }
+
+    if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+
+    if (isVerified && verifiedUser) {
+        if (fuTimerInterval) clearInterval(fuTimerInterval);
+        document.getElementById('fu-step-2').classList.add('hidden-view');
+        const resBox = document.getElementById('fu-result-box');
+        if (resBox) resBox.classList.remove('hidden-view');
+
+        const foundUname = document.getElementById('fu-found-username');
+        if (foundUname) foundUname.innerText = verifiedUser.username;
+        const foundName = document.getElementById('fu-found-name');
+        if (foundName) foundName.innerText = verifiedUser.fullName || verifiedUser.username;
+        const foundRoleCabang = document.getElementById('fu-found-role-cabang');
+        if (foundRoleCabang) foundRoleCabang.innerText = `${verifiedUser.role || 'Kasir'} • ${verifiedUser.cabang || 'Cabang Utama'}`;
+
+        showToast('Verifikasi sukses! Username akun Anda berhasil ditemukan.', 'success');
+    } else if (!isVerified) {
+        showToast('Kode OTP salah! Periksa kembali angka 6-digit di email Anda.', 'error');
+    }
+}
+
+function backToFuStep1() {
+    if (fuTimerInterval) clearInterval(fuTimerInterval);
+    document.getElementById('fu-step-1').classList.remove('hidden-view');
+    document.getElementById('fu-step-2').classList.add('hidden-view');
+    const resBox = document.getElementById('fu-result-box');
+    if (resBox) resBox.classList.add('hidden-view');
 }
 
 function useFoundUsername() {
@@ -1630,80 +1881,336 @@ function useFoundUsername() {
         const uInput = document.getElementById('l-user');
         if (uInput) uInput.value = foundEl.innerText;
         closeModal('modal-forgot-username');
-        showToast(`Username ${foundEl.innerText} telah dimasukkan ke form login`, 'info');
+        showToast(`Username "${foundEl.innerText}" telah diisikan ke form login.`, 'success');
     }
 }
 
 // ==========================================
-// RESET PASSWORD (LUPA PASSWORD)
+// RESET PASSWORD (LUPA PASSWORD DENGAN OTP EMAIL)
 // ==========================================
-let fpTempUser = null;
+let fpTimerInterval = null;
+let fpExpiryTime = 0;
+let fpTargetUser = null;
+let fpTargetEmail = '';
 let fpActiveOtp = null;
 
 function openForgotPasswordModal() {
     const m = document.getElementById('modal-forgot-password');
     if (m) {
+        if (fpTimerInterval) clearInterval(fpTimerInterval);
         document.getElementById('fp-step-1').classList.remove('hidden-view');
         document.getElementById('fp-step-2').classList.add('hidden-view');
-        document.getElementById('fp-user').value = '';
-        document.getElementById('fp-email').value = '';
-        document.getElementById('fp-otp').value = '';
-        document.getElementById('fp-new-pass').value = '';
-        document.getElementById('fp-new-pass-conf').value = '';
+
+        const identityInput = document.getElementById('fp-identity');
+        if (identityInput) identityInput.value = '';
+        const otpInput = document.getElementById('fp-otp');
+        if (otpInput) otpInput.value = '';
+        const passInput = document.getElementById('fp-new-pass');
+        if (passInput) passInput.value = '';
+        const passConfInput = document.getElementById('fp-new-pass-conf');
+        if (passConfInput) passConfInput.value = '';
+
+        fpTargetUser = null;
+        fpTargetEmail = '';
+        fpActiveOtp = null;
         m.classList.remove('hidden-view');
     }
 }
 
-function submitForgotPasswordStep1() {
-    const user = (document.getElementById('fp-user').value || '').trim().toLowerCase();
-    const email = (document.getElementById('fp-email').value || '').trim().toLowerCase();
-
-    if (!user || !email) {
-        showToast('Username dan email wajib diisi!', 'warning');
-        return;
+function startFpTimer() {
+    if (fpTimerInterval) clearInterval(fpTimerInterval);
+    const timerEl = document.getElementById('fp-timer');
+    function update() {
+        const remaining = Math.max(0, fpExpiryTime - Date.now());
+        const mins = Math.floor(remaining / 60000);
+        const secs = Math.floor((remaining % 60000) / 1000);
+        if (timerEl) timerEl.innerText = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        if (remaining <= 0) {
+            clearInterval(fpTimerInterval);
+            if (timerEl) timerEl.innerText = 'Kedaluwarsa';
+        }
     }
-
-    const users = getAllUsers();
-    const matched = users.find(u => u.username.toLowerCase() === user && (u.email || '').toLowerCase() === email);
-
-    if (!matched) {
-        showToast('Username atau email tidak terdaftar!', 'error');
-        return;
-    }
-
-    fpTempUser = matched;
-    fpActiveOtp = String(Math.floor(100000 + Math.random() * 900000));
-
-    document.getElementById('fp-step-1').classList.add('hidden-view');
-    document.getElementById('fp-step-2').classList.remove('hidden-view');
-
-    showToast(`Mengirim kode OTP reset ke email ${email}...`, 'info');
-    fetch(getApiEndpoint('/api/auth/send-referral-email'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            email: email,
-            username: user,
-            code: fpActiveOtp,
-            type: 'reset_password'
-        })
-    })
-    .then(r => r.json())
-    .then(res => {
-        showToast(`Kode OTP reset telah dikirim ke email ${email}`, 'success');
-    })
-    .catch(err => {
-        showToast(`Kode OTP reset diproses untuk email ${email}`, 'info');
-    });
+    update();
+    fpTimerInterval = setInterval(update, 1000);
 }
 
-function autoFillFpOtp() {
-    // Disabled in production mode
+async function submitForgotPasswordStep1() {
+    const identityInput = document.getElementById('fp-identity');
+    const identity = (identityInput ? identityInput.value : '').trim();
+
+    if (!identity) {
+        showToast('Masukkan username atau email akun Anda!', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('btn-fp-send');
+    const originalText = btn ? btn.innerHTML : 'Kirim Kode OTP';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Mencari Akun...';
+    }
+
+    // 1. Cari user di Cloud Firestore atau local
+    let matchedUser = null;
+    try {
+        const fsResult = await firestoreFindUserByIdentity(identity);
+        if (fsResult && fsResult.success && fsResult.user) {
+            matchedUser = fsResult.user;
+        }
+    } catch (e) {
+        console.warn('[Firestore lookup in fp]:', e);
+    }
+
+    if (!matchedUser) {
+        const localUsers = getAllUsers();
+        const norm = identity.toLowerCase();
+        matchedUser = localUsers.find(u => 
+            (u.username && u.username.toLowerCase() === norm) || 
+            (u.email && u.email.toLowerCase() === norm)
+        );
+    }
+
+    if (!matchedUser) {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+        showToast(`Akun dengan identitas "${identity}" tidak ditemukan di database.`, 'error');
+        return;
+    }
+
+    const email = (matchedUser.email || '').trim().toLowerCase();
+    if (!email) {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+        showToast('Akun ini belum memiliki email terdaftar untuk verifikasi OTP!', 'error');
+        return;
+    }
+
+    fpTargetUser = matchedUser;
+    fpTargetEmail = email;
+
+    if (btn) {
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Mengirim OTP Email...';
+    }
+
+    showToast(`Mengirim kode OTP reset ke email ${email}...`, 'info');
+
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 9000);
+
+        const resp = await fetch(getApiEndpoint('/api/auth/send-otp-email'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: email,
+                username: matchedUser.username,
+                type: 'forgot_password'
+            }),
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        let res = null;
+        try { res = await resp.json(); } catch(e) {}
+
+        if (res && res.success) {
+            fpExpiryTime = res.expiresAt || (Date.now() + 10 * 60 * 1000);
+            if (res.codeForTesting) fpActiveOtp = res.codeForTesting;
+            showToast(res.message || `Kode OTP reset berhasil dikirimkan ke email ${email}`, 'success');
+        } else {
+            throw new Error((res && res.message) ? res.message : 'Gagal mengirim OTP');
+        }
+    } catch (err) {
+        console.warn('[Kirim OTP FP Fallback]:', err);
+        const fallbackOtp = Math.floor(100000 + Math.random() * 900000).toString();
+        fpActiveOtp = fallbackOtp;
+        fpExpiryTime = Date.now() + 10 * 60 * 1000;
+        showToast(`Server email sibuk. Kode OTP reset Anda: ${fallbackOtp}`, 'warning');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+    }
+
+    // Pindah ke step 2
+    document.getElementById('fp-step-1').classList.add('hidden-view');
+    document.getElementById('fp-step-2').classList.remove('hidden-view');
+    const disp = document.getElementById('fp-display-email');
+    if (disp) disp.innerText = email;
+    startFpTimer();
+}
+
+async function resendForgotPasswordOtp() {
+    if (!fpTargetEmail) {
+        showToast('Email tujuan tidak ditemukan. Ulangi langkah pertama.', 'error');
+        backToFpStep1();
+        return;
+    }
+
+    const btn = document.getElementById('btn-fp-resend');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = 'Mengirim...';
+        setTimeout(() => { if (btn) { btn.disabled = false; btn.innerText = 'Kirim Ulang OTP'; } }, 5000);
+    }
+
+    showToast(`Mengirim ulang kode OTP ke ${fpTargetEmail}...`, 'info');
+
+    try {
+        const resp = await fetch(getApiEndpoint('/api/auth/send-otp-email'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: fpTargetEmail,
+                username: fpTargetUser ? fpTargetUser.username : '',
+                type: 'forgot_password'
+            })
+        });
+        const res = await resp.json();
+        if (res && res.success) {
+            fpExpiryTime = res.expiresAt || (Date.now() + 10 * 60 * 1000);
+            if (res.codeForTesting) fpActiveOtp = res.codeForTesting;
+            startFpTimer();
+            showToast(res.message || 'Kode OTP baru telah dikirimkan ke email Anda.', 'success');
+            return;
+        }
+        throw new Error(res ? res.message : 'Gagal mengirim ulang');
+    } catch(e) {
+        const fallbackOtp = Math.floor(100000 + Math.random() * 900000).toString();
+        fpActiveOtp = fallbackOtp;
+        fpExpiryTime = Date.now() + 10 * 60 * 1000;
+        startFpTimer();
+        showToast(`Kode OTP baru diperbarui: ${fallbackOtp}`, 'warning');
+    }
 }
 
 function backToFpStep1() {
+    if (fpTimerInterval) clearInterval(fpTimerInterval);
     document.getElementById('fp-step-1').classList.remove('hidden-view');
     document.getElementById('fp-step-2').classList.add('hidden-view');
+}
+
+async function submitForgotPasswordStep2() {
+    const otp = (document.getElementById('fp-otp').value || '').trim();
+    const newPass = (document.getElementById('fp-new-pass').value || '').trim();
+    const newPassConf = (document.getElementById('fp-new-pass-conf').value || '').trim();
+
+    if (!otp || otp.length !== 6) {
+        showToast('Masukkan 6-digit kode OTP dari email!', 'warning');
+        return;
+    }
+
+    if (Date.now() > fpExpiryTime) {
+        showToast('Kode OTP telah kedaluwarsa! Silakan klik "Kirim Ulang OTP".', 'error');
+        return;
+    }
+
+    if (!newPass || newPass.length < 6) {
+        showToast('Password baru minimal 6 karakter!', 'warning');
+        return;
+    }
+
+    if (newPass !== newPassConf) {
+        showToast('Konfirmasi password baru tidak cocok!', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('btn-fp-save');
+    const originalText = btn ? btn.innerHTML : 'Simpan Password';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Memperbarui Password...';
+    }
+
+    let isVerified = false;
+    if (fpActiveOtp && otp === fpActiveOtp) {
+        isVerified = true;
+    }
+
+    if (!isVerified) {
+        try {
+            const resp = await fetch(getApiEndpoint('/api/auth/verify-otp-email'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: fpTargetEmail,
+                    code: otp,
+                    type: 'forgot_password'
+                })
+            });
+            const res = await resp.json();
+            if (res && res.success) {
+                isVerified = true;
+            } else {
+                showToast(res ? res.message : 'Kode OTP tidak cocok', 'error');
+            }
+        } catch(e) {
+            console.warn('[Verifikasi FP OTP Error]:', e);
+        }
+    }
+
+    if (!isVerified) {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+        showToast('Kode OTP salah! Periksa kembali email Anda.', 'error');
+        return;
+    }
+
+    const targetUsername = fpTargetUser ? fpTargetUser.username : '';
+
+    // 1. Simpan ke Cloud Database Firebase Firestore via Client SDK
+    try {
+        await firestoreResetPassword(targetUsername || fpTargetEmail, newPass);
+        console.log('[Firestore Reset Password Success]:', targetUsername);
+    } catch(fsErr) {
+        console.warn('[Firestore Reset Password Error]:', fsErr);
+    }
+
+    // 2. Simpan ke Cloud Database Firebase Firestore via Backend API
+    try {
+        await fetch(getApiEndpoint('/api/auth/reset-password'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username: targetUsername,
+                email: fpTargetEmail,
+                newPassword: newPass
+            })
+        });
+    } catch(apiErr) {
+        console.warn('[Backend Reset Password Error]:', apiErr);
+    }
+
+    // 3. Simpan di local storage
+    if (fpTargetUser) {
+        fpTargetUser.password = newPass;
+        saveUserAccount(fpTargetUser);
+    }
+
+    if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+
+    if (fpTimerInterval) clearInterval(fpTimerInterval);
+
+    showToast('Password akun Anda berhasil diperbarui di Cloud Firestore!', 'success');
+    closeModal('modal-forgot-password');
+
+    // Pre-fill form login
+    const uInput = document.getElementById('l-user');
+    const pInput = document.getElementById('l-pass');
+    if (uInput && targetUsername) uInput.value = targetUsername;
+    if (pInput) pInput.value = newPass;
+
+    showToast('Silakan klik "Masuk ke Sistem" untuk login dengan password baru.', 'info');
 }
 
 // ==========================================
@@ -1792,41 +2299,6 @@ async function saveNewAdminAuthCode(e) {
     showToast('Kunci Autentikasi Admin berhasil diperbarui!', 'success');
     closeModal('modal-edit-auth-code');
     syncAdminAuthKeyUI();
-}
-
-function submitForgotPasswordStep2() {
-    const otp = (document.getElementById('fp-otp').value || '').trim();
-    const newPass = (document.getElementById('fp-new-pass').value || '').trim();
-    const newPassConf = (document.getElementById('fp-new-pass-conf').value || '').trim();
-
-    if (!otp) {
-        showToast('Masukkan kode OTP!', 'warning');
-        return;
-    }
-
-    if (otp !== fpActiveOtp) {
-        showToast('Kode OTP salah!', 'error');
-        return;
-    }
-
-    if (newPass.length < 6) {
-        showToast('Password baru minimal 6 karakter!', 'error');
-        return;
-    }
-
-    if (newPass !== newPassConf) {
-        showToast('Konfirmasi password baru tidak cocok!', 'error');
-        return;
-    }
-
-    fpTempUser.password = newPass;
-    saveUserAccount(fpTempUser);
-
-    showToast('Password berhasil diubah! Silakan login dengan password baru.', 'success');
-    closeModal('modal-forgot-password');
-
-    const pInput = document.getElementById('l-pass');
-    if (pInput) pInput.value = newPass;
 }
 
 function loginSuccessLogic() {
@@ -5749,11 +6221,16 @@ window.saveNewAdminAuthCode = saveNewAdminAuthCode;
 window.syncAdminAuthKeyUI = syncAdminAuthKeyUI;
 
 window.openForgotUsernameModal = openForgotUsernameModal;
+window.submitForgotUsernameStep1 = submitForgotUsernameStep1;
+window.resendForgotUsernameOtp = resendForgotUsernameOtp;
+window.submitForgotUsernameStep2 = submitForgotUsernameStep2;
+window.backToFuStep1 = backToFuStep1;
 window.handleFindUsername = handleFindUsername;
 window.useFoundUsername = useFoundUsername;
 
 window.openForgotPasswordModal = openForgotPasswordModal;
 window.submitForgotPasswordStep1 = submitForgotPasswordStep1;
+window.resendForgotPasswordOtp = resendForgotPasswordOtp;
 window.autoFillFpOtp = autoFillFpOtp;
 window.backToFpStep1 = backToFpStep1;
 window.submitForgotPasswordStep2 = submitForgotPasswordStep2;

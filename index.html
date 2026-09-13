@@ -1404,87 +1404,160 @@
     <!-- MODAL LUPA USERNAME -->
     <div id="modal-forgot-username" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden-view flex items-center justify-center p-4">
         <div class="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl border border-gray-100 p-6 space-y-4 text-center">
-            <div class="w-12 h-12 rounded-2xl bg-red-50 text-red-600 mx-auto flex items-center justify-center text-xl">
+            <div class="w-12 h-12 rounded-2xl bg-red-50 text-red-600 mx-auto flex items-center justify-center text-xl shadow-inner">
                 <i class="fas fa-id-badge"></i>
             </div>
             <div class="space-y-1">
                 <h3 class="font-extrabold text-gray-900 text-base">Bantuan Lupa Username</h3>
-                <p class="text-xs text-gray-500">Masukkan email dan nomor WhatsApp yang terdaftar untuk menemukan akun Anda.</p>
+                <p class="text-xs text-gray-500">Verifikasi OTP melalui email untuk memulihkan username Anda.</p>
             </div>
 
-            <form onsubmit="handleFindUsername(event)" class="space-y-3 text-left">
+            <!-- TAHAP 1: INPUT EMAIL TERDAFTAR -->
+            <div id="fu-step-1" class="space-y-3 text-left">
                 <div class="space-y-1">
-                    <label class="block text-xs font-bold text-gray-700">Email Terdaftar</label>
-                    <input type="email" id="fu-email" required placeholder="email@anda.com" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
-                </div>
-                <div class="space-y-1">
-                    <label class="block text-xs font-bold text-gray-700">Nomor WhatsApp Terdaftar</label>
-                    <input type="tel" id="fu-wa" required placeholder="081234567890" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
-                </div>
-
-                <div id="fu-result-box" class="hidden-view p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-left space-y-2">
-                    <div class="flex items-center gap-2 text-emerald-800 font-bold text-xs">
-                        <i class="fas fa-check-circle text-emerald-600"></i>
-                        <span>Akun Ditemukan!</span>
+                    <label class="block text-xs font-bold text-gray-700">Email Terdaftar <span class="text-red-500">*</span></label>
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400 text-xs">
+                            <i class="fas fa-envelope"></i>
+                        </div>
+                        <input type="email" id="fu-email" required placeholder="nama@gmail.com" class="w-full border border-gray-200 rounded-xl py-3 pl-10 pr-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
                     </div>
-                    <p class="text-xs text-gray-600">Username Anda: <strong id="fu-found-username" class="text-emerald-700 font-mono text-sm font-black">username</strong></p>
-                    <button type="button" onclick="useFoundUsername()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-xl text-xs font-bold transition">Gunakan untuk Login</button>
+                    <p class="text-[10px] text-gray-400">Kode OTP 6-digit akan dikirimkan ke email ini.</p>
                 </div>
 
                 <div class="flex gap-2 pt-2">
-                    <button type="button" onclick="closeModal('modal-forgot-username')" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-bold text-xs transition">Tutup</button>
-                    <button type="submit" id="btn-fu-submit" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-xs shadow transition">Cari Username</button>
+                    <button type="button" onclick="closeModal('modal-forgot-username')" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-bold text-xs transition">Batal</button>
+                    <button type="button" onclick="submitForgotUsernameStep1()" id="btn-fu-send" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-xs shadow transition flex items-center justify-center gap-1.5">
+                        <i class="fas fa-paper-plane text-xs"></i>
+                        <span>Kirim Kode OTP</span>
+                    </button>
                 </div>
-            </form>
+            </div>
+
+            <!-- TAHAP 2: MASUKKAN KODE OTP DARI EMAIL -->
+            <div id="fu-step-2" class="hidden-view space-y-3 text-left">
+                <div class="bg-red-50 border border-red-200 rounded-2xl p-3 text-xs text-red-900 space-y-1">
+                    <div class="flex items-center justify-between">
+                        <span class="font-bold flex items-center gap-1.5"><i class="fas fa-envelope text-red-600"></i> OTP Dikirim</span>
+                        <span id="fu-timer" class="font-mono font-bold text-red-600 text-[11px]">10:00</span>
+                    </div>
+                    <p class="text-[11px] text-gray-600 leading-tight">
+                        Kode verifikasi telah dikirim ke: <br>
+                        <strong id="fu-display-email" class="text-gray-900 font-mono text-[11px]">email@anda.com</strong>
+                    </p>
+                </div>
+
+                <div class="space-y-1">
+                    <label class="block text-xs font-bold text-gray-700">Kode OTP 6-Digit</label>
+                    <input type="text" id="fu-otp" maxlength="6" placeholder="000000" class="w-full border-2 border-gray-200 rounded-xl p-3 text-center tracking-widest font-mono text-xl font-black bg-gray-50 focus:outline-none focus:border-red-600 uppercase">
+                </div>
+
+                <div class="flex items-center justify-between text-xs pt-1">
+                    <span class="text-[11px] text-gray-500">Belum terima kode?</span>
+                    <button type="button" id="btn-fu-resend" onclick="resendForgotUsernameOtp()" class="text-[11px] text-red-600 hover:text-red-700 font-bold hover:underline">
+                        Kirim Ulang OTP
+                    </button>
+                </div>
+
+                <div class="flex gap-2 pt-2">
+                    <button type="button" onclick="backToFuStep1()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-bold text-xs transition">Kembali</button>
+                    <button type="button" onclick="submitForgotUsernameStep2()" id="btn-fu-verify" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-xs shadow transition flex items-center justify-center gap-1.5">
+                        <i class="fas fa-check-circle text-xs"></i>
+                        <span>Verifikasi OTP</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- HASIL AKUN DITEMUKAN -->
+            <div id="fu-result-box" class="hidden-view p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-left space-y-3">
+                <div class="flex items-center gap-2 text-emerald-800 font-bold text-xs">
+                    <i class="fas fa-check-circle text-emerald-600 text-base"></i>
+                    <span>Verifikasi Berhasil! Akun Ditemukan</span>
+                </div>
+                <div class="bg-white rounded-xl p-3 border border-emerald-100 space-y-1.5 text-xs">
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-500">Username:</span>
+                        <strong id="fu-found-username" class="text-emerald-700 font-mono text-base font-black select-all">username</strong>
+                    </div>
+                    <div class="flex justify-between items-center text-[11px]">
+                        <span class="text-gray-500">Nama:</span>
+                        <span id="fu-found-name" class="font-bold text-gray-800">Nama Lengkap</span>
+                    </div>
+                    <div class="flex justify-between items-center text-[11px]">
+                        <span class="text-gray-500">Role / Cabang:</span>
+                        <span id="fu-found-role-cabang" class="text-gray-700">Kasir / Pusat</span>
+                    </div>
+                </div>
+                <div class="space-y-2 pt-1">
+                    <button type="button" onclick="useFoundUsername()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow-sm">
+                        <i class="fas fa-right-to-bracket"></i>
+                        <span>Gunakan untuk Login Sekarang</span>
+                    </button>
+                    <button type="button" onclick="closeModal('modal-forgot-username')" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-xl text-xs font-bold transition">Tutup</button>
+                </div>
+            </div>
         </div>
     </div>
 
     <!-- MODAL LUPA PASSWORD (RESET PASSWORD) -->
     <div id="modal-forgot-password" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden-view flex items-center justify-center p-4">
         <div class="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl border border-gray-100 p-6 space-y-4 text-center">
-            <div class="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 mx-auto flex items-center justify-center text-xl">
+            <div class="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 mx-auto flex items-center justify-center text-xl shadow-inner">
                 <i class="fas fa-key"></i>
             </div>
             <div class="space-y-1">
                 <h3 class="font-extrabold text-gray-900 text-base">Atur Ulang Password</h3>
-                <p class="text-xs text-gray-500">Reset password dengan verifikasi email terdaftar.</p>
+                <p class="text-xs text-gray-500">Verifikasi kode OTP melalui email untuk membuat kata sandi baru.</p>
             </div>
 
-            <!-- TAHAP 1: KIRIM KODE OTP RESET -->
+            <!-- TAHAP 1: MASUKKAN USERNAME ATAU EMAIL -->
             <div id="fp-step-1" class="space-y-3 text-left">
                 <div class="space-y-1">
-                    <label class="block text-xs font-bold text-gray-700">Username Akun</label>
-                    <input type="text" id="fp-user" required placeholder="Username Anda" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
-                </div>
-                <div class="space-y-1">
-                    <label class="block text-xs font-bold text-gray-700">Email Terdaftar</label>
-                    <input type="email" id="fp-email" required placeholder="email@anda.com" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                    <label class="block text-xs font-bold text-gray-700">Username atau Email Terdaftar <span class="text-red-500">*</span></label>
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400 text-xs">
+                            <i class="fas fa-user-shield"></i>
+                        </div>
+                        <input type="text" id="fp-identity" required placeholder="Username atau email@anda.com" class="w-full border border-gray-200 rounded-xl py-3 pl-10 pr-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                    </div>
+                    <p class="text-[10px] text-gray-400">Sistem akan mencocokkan data dan mengirim kode OTP ke email akun Anda.</p>
                 </div>
 
                 <div class="flex gap-2 pt-2">
                     <button type="button" onclick="closeModal('modal-forgot-password')" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-bold text-xs transition">Batal</button>
-                    <button type="button" onclick="submitForgotPasswordStep1()" id="btn-fp-send" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-xs shadow transition">Kirim Kode OTP</button>
+                    <button type="button" onclick="submitForgotPasswordStep1()" id="btn-fp-send" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-xs shadow transition flex items-center justify-center gap-1.5">
+                        <i class="fas fa-paper-plane text-xs"></i>
+                        <span>Kirim Kode OTP</span>
+                    </button>
                 </div>
             </div>
 
             <!-- TAHAP 2: MASUKKAN KODE OTP & PASSWORD BARU -->
             <div id="fp-step-2" class="hidden-view space-y-3 text-left">
-                <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900 space-y-1">
-                    <div class="flex items-center gap-1.5 font-bold">
-                        <i class="fas fa-paper-plane text-emerald-600"></i>
-                        <span>Kode OTP Telah Dikirim ke Email!</span>
+                <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs text-amber-900 space-y-1">
+                    <div class="flex items-center justify-between">
+                        <span class="font-bold flex items-center gap-1.5"><i class="fas fa-envelope text-amber-600"></i> OTP Reset Terkirim</span>
+                        <span id="fp-timer" class="font-mono font-bold text-amber-700 text-[11px]">10:00</span>
                     </div>
-                    <p class="text-[11px] text-emerald-800 leading-tight">
-                        Silakan periksa kotak masuk atau spam email Anda untuk melihat 6 digit kode OTP verifikasi.
+                    <p class="text-[11px] text-gray-600 leading-tight">
+                        Email tujuan: <strong id="fp-display-email" class="text-gray-900 font-mono text-[11px]">email@anda.com</strong>
                     </p>
                 </div>
 
                 <div class="space-y-1">
-                    <label class="block text-xs font-bold text-gray-700">Kode OTP 6-Digit dari Email</label>
-                    <input type="text" id="fp-otp" required maxlength="6" placeholder="000000" class="w-full border border-gray-200 rounded-xl p-3 text-center tracking-widest font-mono text-lg font-bold bg-gray-50 focus:outline-none focus:ring-2 focus:ring-emerald-600 uppercase">
+                    <label class="block text-xs font-bold text-gray-700">Kode OTP 6-Digit</label>
+                    <input type="text" id="fp-otp" required maxlength="6" placeholder="000000" class="w-full border-2 border-gray-200 rounded-xl p-3 text-center tracking-widest font-mono text-xl font-black bg-gray-50 focus:outline-none focus:border-amber-600 uppercase">
                 </div>
+
+                <div class="flex items-center justify-between text-xs">
+                    <span class="text-[11px] text-gray-500">Belum terima kode?</span>
+                    <button type="button" id="btn-fp-resend" onclick="resendForgotPasswordOtp()" class="text-[11px] text-red-600 hover:text-red-700 font-bold hover:underline">
+                        Kirim Ulang OTP
+                    </button>
+                </div>
+
                 <div class="space-y-1">
-                    <label class="block text-xs font-bold text-gray-700">Password Baru</label>
+                    <label class="block text-xs font-bold text-gray-700">Password Baru (Min. 6 Karakter)</label>
                     <input type="password" id="fp-new-pass" required placeholder="Minimal 6 karakter" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
                 </div>
                 <div class="space-y-1">
@@ -1494,7 +1567,10 @@
 
                 <div class="flex gap-2 pt-2">
                     <button type="button" onclick="backToFpStep1()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-bold text-xs transition">Kembali</button>
-                    <button type="button" onclick="submitForgotPasswordStep2()" id="btn-fp-save" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-bold text-xs shadow transition">Simpan Password</button>
+                    <button type="button" onclick="submitForgotPasswordStep2()" id="btn-fp-save" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-bold text-xs shadow transition flex items-center justify-center gap-1.5">
+                        <i class="fas fa-save text-xs"></i>
+                        <span>Simpan Password</span>
+                    </button>
                 </div>
             </div>
         </div>
