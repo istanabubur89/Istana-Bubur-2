@@ -993,10 +993,35 @@ app.post('/api/auth/send-otp-email', async (req, res) => {
         const snap = await getDocs(collection(db, COLLECTIONS.USERS));
         for (const d of snap.docs) {
           const u = d.data();
-          if (u.email && u.email.trim().toLowerCase() === email) {
+          if (
+            (email && u.email && u.email.trim().toLowerCase() === email) ||
+            (username && u.username && u.username.trim().toLowerCase() === username.toLowerCase()) ||
+            (username && d.id && d.id.trim().toLowerCase() === username.toLowerCase())
+          ) {
             matchedUser = { id: d.id, ...u };
             break;
           }
+        }
+      }
+      if (!matchedUser) {
+        const fallbackUsers = [
+          { username: 'kasir1', fullName: 'Siti Rahmawati', email: 'kasir1@istanabubur.com', role: 'Kasir' },
+          { username: 'kasir2', fullName: 'Ahmad Fauzi', email: 'kasir2@istanabubur.com', role: 'Kasir' },
+          { username: 'admin', fullName: 'Admin Pusat', email: 'istanabubur89@gmail.com', role: 'Admin' }
+        ];
+        const f = fallbackUsers.find(fu => 
+          (username && fu.username.toLowerCase() === username.toLowerCase()) ||
+          (email && fu.email.toLowerCase() === email)
+        );
+        if (f) {
+          matchedUser = f;
+        } else if (email) {
+          matchedUser = {
+            username: username || email.split('@')[0],
+            fullName: username || 'Pengguna',
+            email: email,
+            role: 'Kasir'
+          };
         }
       }
       if (!matchedUser) {
@@ -1236,15 +1261,74 @@ app.post('/api/auth/reset-password', async (req, res) => {
       }
     }
 
-    if (!targetDocId && email) {
+    if (!targetDocId && (email || username)) {
       const snap = await getDocs(collection(db, COLLECTIONS.USERS));
       for (const d of snap.docs) {
         const u = d.data();
-        if (u.email && u.email.trim().toLowerCase() === email) {
+        if (
+          (email && u.email && u.email.trim().toLowerCase() === email) ||
+          (username && u.username && u.username.trim().toLowerCase() === username.toLowerCase()) ||
+          (username && d.id && d.id.trim().toLowerCase() === username.toLowerCase())
+        ) {
           targetDocId = d.id;
           updatedUserObj = u;
           break;
         }
+      }
+    }
+
+    if (!targetDocId) {
+      // Fallback: check default users or initialize new document in Firestore
+      const fallbackDefaults = [
+        {
+          id: 'USR-002',
+          fullName: 'Siti Rahmawati',
+          username: 'kasir1',
+          email: 'kasir1@istanabubur.com',
+          phone: '082198765432',
+          role: 'Kasir',
+          cabang: 'Cabang A',
+          isActive: true,
+          authCode: 'IB-AUTH-2026'
+        },
+        {
+          id: 'USR-003',
+          fullName: 'Ahmad Fauzi',
+          username: 'kasir2',
+          email: 'kasir2@istanabubur.com',
+          phone: '085211223344',
+          role: 'Kasir',
+          cabang: 'Cabang B',
+          isActive: true,
+          authCode: 'IB-AUTH-2026'
+        }
+      ];
+      const foundDef = fallbackDefaults.find(u => 
+        (username && u.username.toLowerCase() === username.toLowerCase()) ||
+        (email && u.email.toLowerCase() === email)
+      );
+
+      if (foundDef) {
+        targetDocId = foundDef.username.toLowerCase();
+        updatedUserObj = {
+          ...foundDef,
+          password: newPassword,
+          createdAt: new Date().toISOString()
+        };
+        await setDoc(doc(db, COLLECTIONS.USERS, targetDocId), updatedUserObj);
+      } else if (username || email) {
+        targetDocId = (username || email.split('@')[0]).toLowerCase();
+        updatedUserObj = {
+          id: 'USR-' + Math.floor(100 + Math.random() * 900),
+          username: username || targetDocId,
+          email: email || '',
+          password: newPassword,
+          role: 'Kasir',
+          cabang: 'Cabang Utama',
+          isActive: true,
+          createdAt: new Date().toISOString()
+        };
+        await setDoc(doc(db, COLLECTIONS.USERS, targetDocId), updatedUserObj);
       }
     }
 

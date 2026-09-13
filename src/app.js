@@ -637,8 +637,9 @@ async function callBackend(funcName, ...args) {
 
             try {
                 const fsRes = await firestoreLogin(inputIdentity, inputPass, requestedRole);
-                if (fsRes && fsRes.success) return fsRes;
-                if (fsRes && fsRes.needsActivation) return fsRes;
+                if (fsRes && (fsRes.success || fsRes.needsActivation || fsRes.message !== 'Pengguna tidak ditemukan di database Cloud Firestore.')) {
+                    return fsRes;
+                }
             } catch (err) {
                 console.warn('[Firestore Login Warning, falling back to local]', err);
             }
@@ -652,6 +653,30 @@ async function callBackend(funcName, ...args) {
             if (!matched) {
                 return { success: false, message: 'Username/password salah. Silakan periksa kembali.' };
             }
+
+            // Validasi role berdasarkan data akun yang tersimpan di database
+            const userRoleNorm = String(matched.role || '').trim().toLowerCase();
+            const reqRoleNorm = String(requestedRole || '').trim().toLowerCase();
+
+            if (reqRoleNorm && userRoleNorm !== reqRoleNorm) {
+                if (userRoleNorm === 'admin') {
+                    return {
+                        success: false,
+                        message: 'Akun Anda terdaftar sebagai Admin. Silakan gunakan Login Admin.'
+                    };
+                } else if (userRoleNorm === 'kasir') {
+                    return {
+                        success: false,
+                        message: 'Akun Anda terdaftar sebagai Kasir. Silakan gunakan Login Kasir.'
+                    };
+                } else {
+                    return {
+                        success: false,
+                        message: `Akun Anda terdaftar sebagai ${matched.role}. Silakan gunakan Login ${matched.role}.`
+                    };
+                }
+            }
+
             if (matched.password !== inputPass) {
                 return { success: false, message: 'Password salah. Silakan periksa kembali.' };
             }
@@ -664,11 +689,6 @@ async function callBackend(funcName, ...args) {
                 };
             }
 
-            let roleNotice = null;
-            if (requestedRole && matched.role !== requestedRole) {
-                roleNotice = `Akun terdaftar sebagai ${matched.role}. Hak akses disesuaikan ke ${matched.role}.`;
-            }
-
             return {
                 success: true,
                 user: {
@@ -678,8 +698,7 @@ async function callBackend(funcName, ...args) {
                     cabang: matched.cabang || (matched.role === 'Admin' ? 'Pusat' : 'Cabang A'),
                     email: matched.email,
                     phone: matched.phone
-                },
-                roleNotice: roleNotice
+                }
             };
         } else if (funcName === 'registerUser') {
             const data = args[0];
@@ -1885,6 +1904,10 @@ function useFoundUsername() {
     }
 }
 
+function handleFindUsername() {
+    openForgotUsernameModal();
+}
+
 // ==========================================
 // RESET PASSWORD (LUPA PASSWORD DENGAN OTP EMAIL)
 // ==========================================
@@ -1902,7 +1925,10 @@ function openForgotPasswordModal() {
         document.getElementById('fp-step-2').classList.add('hidden-view');
 
         const identityInput = document.getElementById('fp-identity');
-        if (identityInput) identityInput.value = '';
+        const lUserInput = document.getElementById('l-user');
+        if (identityInput) {
+            identityInput.value = (lUserInput && lUserInput.value) ? lUserInput.value.trim() : '';
+        }
         const otpInput = document.getElementById('fp-otp');
         if (otpInput) otpInput.value = '';
         const passInput = document.getElementById('fp-new-pass');
@@ -1970,7 +1996,13 @@ async function submitForgotPasswordStep1() {
         );
     }
 
-    if (!matchedUser) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    let email = (matchedUser && matchedUser.email) ? matchedUser.email.trim().toLowerCase() : '';
+    if (!email && emailRegex.test(identity)) {
+        email = identity.toLowerCase();
+    }
+
+    if (!matchedUser && !email) {
         if (btn) {
             btn.disabled = false;
             btn.innerHTML = originalText;
@@ -1979,7 +2011,15 @@ async function submitForgotPasswordStep1() {
         return;
     }
 
-    const email = (matchedUser.email || '').trim().toLowerCase();
+    if (!matchedUser && email) {
+        matchedUser = {
+            username: email.split('@')[0],
+            fullName: 'Pengguna',
+            email: email,
+            role: 'Kasir'
+        };
+    }
+
     if (!email) {
         if (btn) {
             btn.disabled = false;
@@ -2086,6 +2126,14 @@ async function resendForgotPasswordOtp() {
         fpExpiryTime = Date.now() + 10 * 60 * 1000;
         startFpTimer();
         showToast(`Kode OTP baru diperbarui: ${fallbackOtp}`, 'warning');
+    }
+}
+
+function autoFillFpOtp() {
+    if (fpActiveOtp) {
+        const input = document.getElementById('fp-otp');
+        if (input) input.value = fpActiveOtp;
+        showToast('Kode OTP berhasil ditempel.', 'info');
     }
 }
 
@@ -2317,7 +2365,7 @@ function loginSuccessLogic() {
     }
 
     tabHistory = [];
-    let startTab = CURRENT_USER.role === 'Admin' ? 'profil' : 'profil';
+    let startTab = CURRENT_USER.role === 'Admin' ? 'profil' : 'kasir';
     history.pushState({ tabId: startTab }, "", `#${startTab}`);
     
     switchTab(startTab, true);

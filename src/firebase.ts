@@ -13,8 +13,7 @@ import {
   query,
   orderBy,
   onSnapshot,
-  enableIndexedDbPersistence,
-  Unsubscribe
+  enableIndexedDbPersistence
 } from 'firebase/firestore';
 
 export const firebaseConfig = {
@@ -189,6 +188,29 @@ export async function firestoreLogin(identity: string, pass: string, requestedRo
     return { success: false, message: 'Pengguna tidak ditemukan di database Cloud Firestore.' };
   }
 
+  // Validasi role berdasarkan data akun yang tersimpan di database
+  const userRoleNorm = String(matchedUser.role || '').trim().toLowerCase();
+  const reqRoleNorm = String(requestedRole || '').trim().toLowerCase();
+
+  if (reqRoleNorm && userRoleNorm !== reqRoleNorm) {
+    if (userRoleNorm === 'admin') {
+      return {
+        success: false,
+        message: 'Akun Anda terdaftar sebagai Admin. Silakan gunakan Login Admin.'
+      };
+    } else if (userRoleNorm === 'kasir') {
+      return {
+        success: false,
+        message: 'Akun Anda terdaftar sebagai Kasir. Silakan gunakan Login Kasir.'
+      };
+    } else {
+      return {
+        success: false,
+        message: `Akun Anda terdaftar sebagai ${matchedUser.role}. Silakan gunakan Login ${matchedUser.role}.`
+      };
+    }
+  }
+
   if (matchedUser.password !== pass) {
     return { success: false, message: 'Password salah. Silakan periksa kembali.' };
   }
@@ -202,11 +224,6 @@ export async function firestoreLogin(identity: string, pass: string, requestedRo
     };
   }
 
-  let roleNotice = null;
-  if (requestedRole && matchedUser.role !== requestedRole) {
-    roleNotice = `Akun terdaftar sebagai ${matchedUser.role}. Hak akses disesuaikan ke ${matchedUser.role}.`;
-  }
-
   return {
     success: true,
     user: {
@@ -216,8 +233,7 @@ export async function firestoreLogin(identity: string, pass: string, requestedRo
       cabang: matchedUser.cabang || (matchedUser.role === 'Admin' ? 'Pusat' : 'Cabang A'),
       email: matchedUser.email || '',
       phone: matchedUser.phone || ''
-    },
-    roleNotice
+    }
   };
 }
 
@@ -271,17 +287,23 @@ export async function firestoreRegister(userData: any) {
 
 export async function firestoreResetPassword(usernameOrEmail: string, newPass: string) {
   const normIdentity = String(usernameOrEmail || '').trim().toLowerCase();
+  if (!normIdentity) return { success: false, message: 'Identitas akun wajib diisi.' };
+
   const userDoc = await getDoc(doc(db, COLLECTIONS.USERS, normIdentity));
   if (userDoc.exists()) {
-    await setDoc(doc(db, COLLECTIONS.USERS, normIdentity), { password: newPass }, { merge: true });
+    await setDoc(doc(db, COLLECTIONS.USERS, normIdentity), { password: newPass, updatedAt: new Date().toISOString() }, { merge: true });
     return { success: true, message: 'Password berhasil diperbarui di Cloud Firestore.' };
   }
 
   const snap = await getDocs(collection(db, COLLECTIONS.USERS));
   for (const d of snap.docs) {
     const u = d.data();
-    if (u.email && u.email.toLowerCase() === normIdentity) {
-      await setDoc(doc(db, COLLECTIONS.USERS, d.id), { password: newPass }, { merge: true });
+    if (
+      (u.email && u.email.trim().toLowerCase() === normIdentity) ||
+      (u.username && u.username.trim().toLowerCase() === normIdentity) ||
+      (d.id && d.id.trim().toLowerCase() === normIdentity)
+    ) {
+      await setDoc(doc(db, COLLECTIONS.USERS, d.id), { password: newPass, updatedAt: new Date().toISOString() }, { merge: true });
       return { success: true, message: 'Password berhasil diperbarui di Cloud Firestore.' };
     }
   }
@@ -624,7 +646,7 @@ export async function firestoreDeleteHistoriGaji(slipId: string) {
 // -------------------------------------------------------------
 // REALTIME LISTENERS
 // -------------------------------------------------------------
-export function subscribeToTransactions(callback: (transactions: any[]) => void): Unsubscribe {
+export function subscribeToTransactions(callback: (transactions: any[]) => void): () => void {
   const q = collection(db, COLLECTIONS.TRANSACTIONS);
   return onSnapshot(q, (snapshot) => {
     const list: any[] = [];
