@@ -548,10 +548,10 @@ export async function firestoreGetHistoriTransaksi() {
 }
 
 export async function firestoreProcessTransaksiKasir(trx: any) {
-  const trxId = 'TRX-' + Math.floor(100000 + Math.random() * 900000);
+  const trxId = trx.id || ('TRX-' + Math.floor(100000 + Math.random() * 900000));
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
-  const tanggalFormatted = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const tanggalFormatted = trx.tanggal || `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
   
   const namaPelanggan = `${trx.namaPelanggan || 'Umum'} [${trx.jenis || 'Dine In'}${trx.keterangan ? ' - ' + trx.keterangan : ''}]`;
   const itemsJson = typeof trx.items === 'string' ? trx.items : JSON.stringify(trx.items || []);

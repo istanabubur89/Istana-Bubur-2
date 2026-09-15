@@ -343,6 +343,14 @@ function getTodayStringFormatted() {
 function closeModal(id) {
     const el = document.getElementById(id);
     if (el) el.classList.add('hidden-view');
+    if (id === 'modal-cart') {
+        const resEl = document.getElementById('checkout-result');
+        if (resEl && !resEl.classList.contains('hidden-view')) {
+            if (typeof resetCartStateForNewTransaction === 'function') {
+                resetCartStateForNewTransaction();
+            }
+        }
+    }
 }
 
 function openGuideModal(tabName = 'login') {
@@ -866,8 +874,13 @@ async function callBackend(funcName, ...args) {
             }
             return await getStoredTransaksiList();
         } else if (funcName === 'processTransaksiKasir') {
-            const trx = args[0];
-            let trxId = 'TRX-' + Math.floor(100000 + Math.random() * 900000);
+            const trx = args[0] || {};
+            const userCabang = trx.cabang || (CURRENT_USER && CURRENT_USER.cabang ? CURRENT_USER.cabang : 'Pusat');
+            const userKasir = trx.kasir || (CURRENT_USER && CURRENT_USER.username ? CURRENT_USER.username : 'Kasir');
+            trx.cabang = userCabang;
+            trx.kasir = userKasir;
+
+            let trxId = trx.id || ('TRX-' + Math.floor(100000 + Math.random() * 900000));
             try {
                 const fsRes = await firestoreProcessTransaksiKasir(trx);
                 if (fsRes && fsRes.idTrx) trxId = fsRes.idTrx;
@@ -876,20 +889,22 @@ async function callBackend(funcName, ...args) {
             }
 
             const now = new Date();
-            const tanggalFormatted = getTodayStringFormatted() + ' ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+            const pad = (n) => String(n).padStart(2, '0');
+            const tanggalFormatted = trx.tanggal || `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
             
             const newTrxItem = {
                 'ID Transaksi': trxId,
                 'Tanggal': tanggalFormatted,
-                'Cabang': CURRENT_USER ? CURRENT_USER.cabang : (trx.cabang || 'Pusat'),
-                'Kasir': CURRENT_USER ? CURRENT_USER.username : 'Kasir',
-                'Total Belanja': trx.total,
+                'Cabang': userCabang,
+                'Kasir': userKasir,
+                'Total Belanja': Number(trx.total || 0),
                 'Nama Pelanggan': `${trx.namaPelanggan || 'Umum'} [${trx.jenis || 'Dine In'}${trx.keterangan ? ' - ' + trx.keterangan : ''}]`,
                 'No WA': trx.wa || '',
-                'Bayar': trx.bayar,
-                'Kembalian': trx.kembali,
-                'Metode': trx.metode,
-                'Items JSON': typeof trx.items === 'string' ? trx.items : JSON.stringify(trx.items)
+                'Bayar': Number(trx.bayar || trx.total || 0),
+                'Kembalian': Number(trx.kembali || 0),
+                'Metode': trx.metode || 'Cash',
+                'Items JSON': typeof trx.items === 'string' ? trx.items : JSON.stringify(trx.items || []),
+                _timestamp: Date.now()
             };
 
             let saved = localStorage.getItem(TRX_STORAGE_KEY);
@@ -2443,8 +2458,14 @@ function updateKasirDashboard() {
     };
 
     (HISTORI_TRX_CACHE || []).forEach(t => {
-        const isCabangMatch = !CURRENT_USER.cabang || t['Cabang'] === CURRENT_USER.cabang;
-        if (!isCabangMatch || !isDateTrxToday(t['Tanggal'])) return;
+        const userCabang = (CURRENT_USER?.cabang || '').trim().toLowerCase();
+        const userName = (CURRENT_USER?.username || '').trim().toLowerCase();
+        const tCabang = (t['Cabang'] || '').trim().toLowerCase();
+        const tKasir = (t['Kasir'] || '').trim().toLowerCase();
+
+        const isKasirMatch = Boolean(userName && tKasir === userName);
+        const isCabangMatch = !userCabang || userCabang === 'semua' || tCabang === userCabang;
+        if ((!isKasirMatch && !isCabangMatch) || !isDateTrxToday(t['Tanggal'], t._timestamp)) return;
 
         trxCount++;
         const omset = Number(t['Total Belanja']) || 0;
@@ -3601,9 +3622,19 @@ function openCartModal() {
         showToast('Keranjang masih kosong', 'error');
         return;
     }
+    
+    const form = document.getElementById('form-checkout');
+    if (form) form.classList.remove('hidden-view');
+    const resEl = document.getElementById('checkout-result');
+    if (resEl) resEl.classList.add('hidden-view');
+
+    const btn = document.getElementById('btn-checkout');
+    if (btn) {
+        btn.innerHTML = '<i class="fas fa-check-circle"></i> Selesaikan Transaksi';
+        btn.disabled = false;
+    }
+
     document.getElementById('modal-cart').classList.remove('hidden-view');
-    document.getElementById('form-checkout').classList.remove('hidden-view');
-    document.getElementById('checkout-result').classList.add('hidden-view');
     
     const cashRadio = document.querySelector('input[name="metode-bayar"][value="Cash"]');
     if (cashRadio) cashRadio.checked = true;
@@ -3699,16 +3730,23 @@ async function processCheckout(e) {
     const jenisInput = document.getElementById('co-jenis')?.value || 'Dine In';
     const ketInput = document.getElementById('co-keterangan')?.value.trim() || '';
     
+    const userCabang = (CURRENT_USER && CURRENT_USER.cabang) ? CURRENT_USER.cabang : 'Pusat';
+    const userKasir = (CURRENT_USER && CURRENT_USER.username) ? CURRENT_USER.username : 'Kasir';
+
+    const cartSnapshot = JSON.parse(JSON.stringify(CART));
+
     const dataTrx = {
         namaPelanggan: namaPelangganInput,
         wa: waInput,
         jenis: jenisInput,
         keterangan: ketInput,
-        items: JSON.parse(JSON.stringify(CART)),
+        items: cartSnapshot,
         total: total,
         bayar: bayar,
         kembali: kembali,
-        metode: infoPembayaran
+        metode: infoPembayaran,
+        cabang: userCabang,
+        kasir: userKasir
     };
     
     try {
@@ -3717,19 +3755,20 @@ async function processCheckout(e) {
         if (res.success) {
             const trxId = res.idTrx || ('TRX-' + Math.floor(100000 + Math.random() * 900000));
             const now = new Date();
-            const tanggalFormatted = getTodayStringFormatted() + ' ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+            const pad = (n) => String(n).padStart(2, '0');
+            const tanggalFormatted = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
 
-            // CRITICAL FIX: Save to LAST_TRX_DATA so PDF, WA, and Thermal receipt work!
+            // Save to LAST_TRX_DATA so PDF, WA, and Thermal receipt work!
             LAST_TRX_DATA = {
                 id: trxId,
-                cabang: CURRENT_USER ? CURRENT_USER.cabang : 'Pusat',
-                kasir: CURRENT_USER ? CURRENT_USER.username : 'Kasir',
+                cabang: userCabang,
+                kasir: userKasir,
                 tanggal: tanggalFormatted,
                 nama_pelanggan: namaPelangganInput,
                 no_wa: waInput,
                 jenis_pesanan: jenisInput,
                 keterangan: ketInput,
-                items: JSON.parse(JSON.stringify(CART)),
+                items: cartSnapshot,
                 total: total,
                 bayar: bayar,
                 kembali: kembali,
@@ -3738,13 +3777,46 @@ async function processCheckout(e) {
                 waLink: res.waLink || null
             };
 
+            // Tampilkan ringkasan struk transaksi yang baru saja selesai
+            const summaryEl = document.getElementById('checkout-result-summary');
+            if (summaryEl) {
+                summaryEl.innerHTML = `
+                    <div class="bg-white p-3 rounded-xl border border-emerald-200 text-left text-xs mb-3 shadow-xs space-y-1">
+                        <div class="flex justify-between items-center font-extrabold text-gray-800">
+                            <span>#${trxId}</span>
+                            <span class="text-emerald-600 text-sm font-black">Rp ${formatRupiah(total)}</span>
+                        </div>
+                        <div class="text-[11px] text-gray-500">
+                            <span><i class="fas fa-user text-gray-400 mr-1"></i>${namaPelangganInput} &bull; ${jenisInput}</span>
+                        </div>
+                        <div class="text-[11px] text-gray-600 flex justify-between pt-1 border-t border-gray-100 font-semibold">
+                            <span>${infoPembayaran}</span>
+                            ${selectedMetode === 'Cash' ? `<span class="text-gray-700">Kembali: Rp ${formatRupiah(kembali)}</span>` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Kosongkan keranjang aktif kasir seketika
+            CART = [];
+            updateCartUI();
+
+            // Pulihkan tombol checkout agar siap digunakan kembali tanpa refresh
+            if (btn) {
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> Selesaikan Transaksi';
+                btn.disabled = false;
+            }
+
             document.getElementById('form-checkout').classList.add('hidden-view');
             document.getElementById('checkout-result').classList.remove('hidden-view');
             
             showToast(res.message || 'Transaksi berhasil!', 'success');
             
-            // Reload transaction history cache
-            loadHistoriTransaksi();
+            // Reload transaction history cache & update cashier dashboard
+            await loadHistoriTransaksi();
+            if (CURRENT_USER && CURRENT_USER.role !== 'Admin') {
+                updateKasirDashboard();
+            }
         } else {
             showToast(res.message || 'Gagal memproses transaksi', 'error');
             if (btn) {
@@ -3761,15 +3833,48 @@ async function processCheckout(e) {
     }
 }
 
-function resetCart() {
+function resetCartStateForNewTransaction() {
     CART = [];
     updateCartUI();
+    
     const form = document.getElementById('form-checkout');
     if (form) form.reset();
+
+    const coNama = document.getElementById('co-nama');
+    if (coNama) coNama.value = '';
+    const coWa = document.getElementById('co-wa');
+    if (coWa) coWa.value = '';
+    const coKet = document.getElementById('co-keterangan');
+    if (coKet) coKet.value = '';
+    const coBayar = document.getElementById('co-bayar');
+    if (coBayar) coBayar.value = '';
+    const coRef = document.getElementById('co-ref');
+    if (coRef) coRef.value = '';
     const kembaliEl = document.getElementById('co-kembali');
-    if (kembaliEl) kembaliEl.innerText = 'Rp 0';
+    if (kembaliEl) {
+        kembaliEl.innerText = 'Rp 0';
+        kembaliEl.className = 'text-red-500';
+    }
     const jenisEl = document.getElementById('co-jenis');
     if (jenisEl) jenisEl.value = 'Dine In';
+
+    const cashRadio = document.querySelector('input[name="metode-bayar"][value="Cash"]');
+    if (cashRadio) cashRadio.checked = true;
+    togglePaymentMethod('Cash');
+
+    const btn = document.getElementById('btn-checkout');
+    if (btn) {
+        btn.innerHTML = '<i class="fas fa-check-circle"></i> Selesaikan Transaksi';
+        btn.disabled = false;
+    }
+
+    if (form) form.classList.remove('hidden-view');
+    const resEl = document.getElementById('checkout-result');
+    if (resEl) resEl.classList.add('hidden-view');
+}
+
+function resetCart() {
+    resetCartStateForNewTransaction();
     closeModal('modal-cart');
 }
 
@@ -4240,24 +4345,41 @@ function refreshHistoriTransaksi() {
     loadHistoriTransaksi(); 
 }
 
-function isDateTrxToday(dateStr) {
+function isDateTrxToday(dateStr, timestamp) {
+    const now = new Date();
+    
+    // Check numeric/epoch timestamp first if present
+    if (timestamp) {
+        const d = new Date(timestamp);
+        if (!isNaN(d.getTime())) {
+            if (d.getDate() === now.getDate() && 
+                d.getMonth() === now.getMonth() && 
+                d.getFullYear() === now.getFullYear()) {
+                return true;
+            }
+        }
+    }
+
     if (!dateStr) return false;
+    const s = String(dateStr).trim();
     const todayFormatted = getTodayStringFormatted(); // DD/MM/YYYY
-    if (String(dateStr).trim().startsWith(todayFormatted)) return true;
+    if (s.startsWith(todayFormatted)) return true;
+
+    // Check ISO format YYYY-MM-DD
+    const isoDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    if (s.startsWith(isoDate)) return true;
     
     // Parse using parseTrxDate
-    const parsed = parseTrxDate(dateStr);
+    const parsed = parseTrxDate(s);
     if (parsed) {
-        const now = new Date();
         return parsed.getDate() === now.getDate() &&
                parsed.getMonth() === now.getMonth() &&
                parsed.getFullYear() === now.getFullYear();
     }
     
     // Parse using standard Date
-    const nativeDate = new Date(dateStr);
+    const nativeDate = new Date(s);
     if (!isNaN(nativeDate.getTime())) {
-        const now = new Date();
         return nativeDate.getDate() === now.getDate() &&
                nativeDate.getMonth() === now.getMonth() &&
                nativeDate.getFullYear() === now.getFullYear();
@@ -4283,9 +4405,18 @@ function renderHistoriTransaksi() {
     
     // JIKA KASIR: HANYA tampil riwayat transaksi hari ini saja (dan cabang kasir jika ada)
     if (!isAdmin) {
+        const userCabang = (CURRENT_USER?.cabang || '').trim().toLowerCase();
+        const userName = (CURRENT_USER?.username || '').trim().toLowerCase();
+
         filtered = filtered.filter(t => {
-            const isCabangMatch = !CURRENT_USER?.cabang || t['Cabang'] === CURRENT_USER.cabang;
-            return isCabangMatch && isDateTrxToday(t['Tanggal']);
+            const tCabang = (t['Cabang'] || '').trim().toLowerCase();
+            const tKasir = (t['Kasir'] || '').trim().toLowerCase();
+
+            const isKasirMatch = Boolean(userName && tKasir === userName);
+            const isCabangMatch = !userCabang || userCabang === 'semua' || tCabang === userCabang;
+            const isMatch = isKasirMatch || isCabangMatch;
+
+            return isMatch && isDateTrxToday(t['Tanggal'], t._timestamp);
         });
     } else {
         // JIKA ADMIN: bisa filter berdasarkan cabang atau melihat semua riwayat
@@ -5749,7 +5880,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 localStorage.setItem(TRX_STORAGE_KEY, JSON.stringify(newTrxList));
                 // Update views if visible
                 if (currentTab === 'histori-trx') {
-                    renderRiwayatTransaksi();
+                    renderHistoriTransaksi();
                 } else if (currentTab === 'profil') {
                     if (CURRENT_USER && CURRENT_USER.role === 'Admin') {
                         renderDashboardSalesCharts();
@@ -5804,6 +5935,10 @@ window.kirimWhatsAppFromHistory = kirimWhatsAppFromHistory;
 window.reprintStrukTrx = reprintStrukTrx;
 window.refreshHistoriTransaksi = refreshHistoriTransaksi;
 window.renderHistoriTransaksi = renderHistoriTransaksi;
+window.renderRiwayatTransaksi = renderHistoriTransaksi;
+window.resetCart = resetCart;
+window.resetCartStateForNewTransaction = resetCartStateForNewTransaction;
+window.openCartModal = openCartModal;
 window.confirmHapusTransaksi = confirmHapusTransaksi;
 window.isDateTrxToday = isDateTrxToday;
 window.refreshHistoriGaji = refreshHistoriGaji;
