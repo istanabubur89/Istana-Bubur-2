@@ -382,17 +382,27 @@ export async function firestoreFindUserByIdentity(identity: string) {
 // -------------------------------------------------------------
 // PRODUCT FUNCTIONS
 // -------------------------------------------------------------
+function inferKategori(nama: string = ''): string {
+  const n = (nama || '').toLowerCase();
+  if (n.includes('ongkir') || n.includes('kirim') || n.includes('kurir') || n.includes('antar') || n.includes('delivery')) return 'Ongkir';
+  if (n.includes('teh') || n.includes('jeruk') || n.includes('kopi') || n.includes('jus') || n.includes('es ') || n.includes('air') || n.includes('minum')) return 'Minuman';
+  if (n.includes('kue') || n.includes('sate') || n.includes('roti') || n.includes('gorengan') || n.includes('snack') || n.includes('kerupuk') || n.includes('emping')) return 'Kue';
+  return 'Bubur';
+}
+
 export async function firestoreGetProduk() {
   const snap = await getDocs(collection(db, COLLECTIONS.PRODUCTS));
   const list: any[] = [];
   let index = 1;
   snap.forEach((docSnap) => {
     const data = docSnap.data();
+    const kategori = data.kategori || inferKategori(data.nama);
     list.push({
       rowIndex: index++,
       'ID Produk': data.id || docSnap.id,
       'Nama Produk': data.nama || '',
       'Harga': Number(data.harga || 0),
+      'Kategori': kategori,
       'GambarBase64': data.gambar || '',
       _docId: docSnap.id
     });
@@ -406,11 +416,16 @@ export async function firestoreSaveProduk(pData: any) {
     docId = 'PRD-' + Math.floor(100 + Math.random() * 900);
   }
 
+  const nama = pData.nama || pData['Nama Produk'] || '';
+  const kategori = pData.kategori || pData['Kategori'] || inferKategori(nama);
+
   const payload: any = {
     id: docId,
-    nama: pData.nama || pData['Nama Produk'] || '',
+    nama: nama,
     harga: Number(pData.harga || pData['Harga'] || 0),
-    gambar: pData.gambar || pData['GambarBase64'] || ''
+    kategori: kategori,
+    gambar: pData.gambar !== undefined ? pData.gambar : (pData['GambarBase64'] || ''),
+    updatedAt: new Date().toISOString()
   };
 
   await setDoc(doc(db, COLLECTIONS.PRODUCTS, docId), payload, { merge: true });
@@ -418,6 +433,7 @@ export async function firestoreSaveProduk(pData: any) {
 }
 
 export async function firestoreDeleteProduk(productIdOrDocId: string) {
+  if (!productIdOrDocId) return { success: false, message: 'ID produk tidak valid' };
   // Check if doc exists with this id
   const targetDoc = doc(db, COLLECTIONS.PRODUCTS, productIdOrDocId);
   const snap = await getDoc(targetDoc);
@@ -429,7 +445,7 @@ export async function firestoreDeleteProduk(productIdOrDocId: string) {
   // Fallback: search by id field
   const allSnap = await getDocs(collection(db, COLLECTIONS.PRODUCTS));
   for (const d of allSnap.docs) {
-    if (d.data().id === productIdOrDocId) {
+    if (d.data().id === productIdOrDocId || d.id === productIdOrDocId) {
       await deleteDoc(doc(db, COLLECTIONS.PRODUCTS, d.id));
       return { success: true, message: 'Produk berhasil dihapus dari Cloud Firestore.' };
     }

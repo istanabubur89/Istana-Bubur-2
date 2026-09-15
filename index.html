@@ -34,6 +34,11 @@
         .line-clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
         .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
+        .active-cat-bubur { border-color: #f59e0b !important; background-color: #fffbeb !important; color: #78350f !important; box-shadow: 0 0 0 2px #fbbf24 !important; }
+        .active-cat-kue { border-color: #f43f5e !important; background-color: #fff1f2 !important; color: #881337 !important; box-shadow: 0 0 0 2px #fb7185 !important; }
+        .active-cat-minuman { border-color: #06b6d4 !important; background-color: #ecfeff !important; color: #164e63 !important; box-shadow: 0 0 0 2px #22d3ee !important; }
+        .active-cat-ongkir { border-color: #10b981 !important; background-color: #ecfdf5 !important; color: #064e3b !important; box-shadow: 0 0 0 2px #34d399 !important; }
+
         input[type=number]::-webkit-inner-spin-button, 
         input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
         input[type=number] { -moz-appearance: textfield; }
@@ -566,20 +571,42 @@
 
             <!-- PRODUK VIEW -->
             <div id="view-produk" class="view-content hidden-view admin-only">
-                <div class="flex justify-between items-center mb-5 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                <div class="flex justify-between items-center mb-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
                     <div>
                         <h2 class="text-lg font-extrabold text-gray-800">Master Produk</h2>
-                        <p class="text-xs text-gray-500 mt-1">Kelola data jualan</p>
+                        <p class="text-xs text-gray-500 mt-0.5">Kelola menu makanan, minuman, dan tarif ongkir</p>
                     </div>
-                    <button onclick="openFormProduk()" class="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-blue-700 shadow-md"><i class="fas fa-plus mr-1"></i> Tambah</button>
+                    <button onclick="openFormProduk()" class="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-blue-700 shadow-md flex items-center gap-1.5 transition"><i class="fas fa-plus"></i> Tambah Produk</button>
                 </div>
-                <div class="flex gap-2 mb-4">
+                
+                <!-- Search Bar -->
+                <div class="flex gap-2 mb-3">
                     <div class="relative flex-1">
                         <i class="fas fa-search absolute left-3 top-2.5 text-gray-400 text-sm"></i>
-                        <input type="text" id="search-produk" placeholder="Cari Nama atau Kode Produk..." class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 text-sm bg-white shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500" onkeyup="renderListProduk()">
+                        <input type="text" id="search-produk" placeholder="Cari nama, kode, atau kategori produk..." class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 text-sm bg-white shadow-xs focus:outline-none focus:ring-2 focus:ring-blue-500" onkeyup="renderListProduk()">
                     </div>
                 </div>
-                <div id="loading-produk" class="text-center py-12 text-gray-400 hidden-view"><div class="loader mb-3"></div><br>Memuat produk...</div>
+
+                <!-- Tombol Kategori Filter (Bubur, Kue, Minuman, Ongkir) -->
+                <div class="flex items-center gap-2 overflow-x-auto hide-scrollbar mb-4 py-1">
+                    <button type="button" onclick="setKategoriFilter('Semua')" id="btn-cat-semua" class="cat-filter-btn px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap bg-gray-900 text-white shadow-xs">
+                        <i class="fas fa-layer-group"></i> Semua
+                    </button>
+                    <button type="button" onclick="setKategoriFilter('Bubur')" id="btn-cat-bubur" class="cat-filter-btn px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap bg-white text-gray-600 border border-gray-200 hover:bg-amber-50 hover:text-amber-800 hover:border-amber-300">
+                        <i class="fas fa-bowl-food text-amber-500"></i> Bubur
+                    </button>
+                    <button type="button" onclick="setKategoriFilter('Kue')" id="btn-cat-kue" class="cat-filter-btn px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap bg-white text-gray-600 border border-gray-200 hover:bg-rose-50 hover:text-rose-800 hover:border-rose-300">
+                        <i class="fas fa-cookie-bite text-rose-500"></i> Kue
+                    </button>
+                    <button type="button" onclick="setKategoriFilter('Minuman')" id="btn-cat-minuman" class="cat-filter-btn px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap bg-white text-gray-600 border border-gray-200 hover:bg-cyan-50 hover:text-cyan-800 hover:border-cyan-300">
+                        <i class="fas fa-mug-hot text-cyan-500"></i> Minuman
+                    </button>
+                    <button type="button" onclick="setKategoriFilter('Ongkir')" id="btn-cat-ongkir" class="cat-filter-btn px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap bg-white text-gray-600 border border-gray-200 hover:bg-emerald-50 hover:text-emerald-800 hover:border-emerald-300">
+                        <i class="fas fa-truck-fast text-emerald-500"></i> Ongkir
+                    </button>
+                </div>
+
+                <div id="loading-produk" class="text-center py-12 text-gray-400 hidden-view"><div class="loader mb-3"></div><br>Menghubungkan ke Cloud Firestore...</div>
                 <div id="list-produk" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4 pb-4"></div>
             </div>
 
@@ -593,6 +620,25 @@
                     <div class="relative w-full">
                         <i class="fas fa-search absolute left-3 top-2.5 text-gray-400 text-sm"></i>
                         <input type="text" id="search-kasir-produk" placeholder="Cari Nama atau Kode Produk..." class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 text-sm bg-gray-50 shadow-inner focus:outline-none focus:ring-1 focus:ring-green-500" onkeyup="renderKasirProdukList()">
+                    </div>
+
+                    <!-- Filter Kategori Kasir (Bubur, Kue, Minuman, Ongkir) -->
+                    <div class="flex items-center gap-2 overflow-x-auto hide-scrollbar mt-3 py-1">
+                        <button type="button" onclick="setKasirKategoriFilter('Semua')" id="btn-kasir-cat-semua" class="kasir-cat-filter-btn px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap bg-gray-900 text-white shadow-xs">
+                            <i class="fas fa-layer-group"></i> Semua
+                        </button>
+                        <button type="button" onclick="setKasirKategoriFilter('Bubur')" id="btn-kasir-cat-bubur" class="kasir-cat-filter-btn px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap bg-white text-gray-600 border border-gray-200 hover:bg-amber-50 hover:text-amber-800">
+                            <i class="fas fa-bowl-food text-amber-500"></i> Bubur
+                        </button>
+                        <button type="button" onclick="setKasirKategoriFilter('Kue')" id="btn-kasir-cat-kue" class="kasir-cat-filter-btn px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap bg-white text-gray-600 border border-gray-200 hover:bg-rose-50 hover:text-rose-800">
+                            <i class="fas fa-cookie-bite text-rose-500"></i> Kue
+                        </button>
+                        <button type="button" onclick="setKasirKategoriFilter('Minuman')" id="btn-kasir-cat-minuman" class="kasir-cat-filter-btn px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap bg-white text-gray-600 border border-gray-200 hover:bg-cyan-50 hover:text-cyan-800">
+                            <i class="fas fa-mug-hot text-cyan-500"></i> Minuman
+                        </button>
+                        <button type="button" onclick="setKasirKategoriFilter('Ongkir')" id="btn-kasir-cat-ongkir" class="kasir-cat-filter-btn px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap bg-white text-gray-600 border border-gray-200 hover:bg-emerald-50 hover:text-emerald-800">
+                            <i class="fas fa-truck-fast text-emerald-500"></i> Ongkir
+                        </button>
                     </div>
                 </div>
                 
@@ -1129,26 +1175,114 @@
 
     <!-- MODAL PRODUK (TAMBAH/EDIT) -->
     <div id="modal-produk" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden-view flex items-center justify-center p-4">
-        <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-            <div class="bg-gray-50 px-5 py-4 flex justify-between items-center border-b shrink-0">
-                <h3 class="font-extrabold text-gray-800" id="mp-title">Tambah Produk</h3>
-                <button onclick="closeModal('modal-produk')" class="text-gray-400 hover:text-red-600 bg-gray-100 w-8 h-8 rounded-full flex items-center justify-center"><i class="fas fa-times"></i></button>
+        <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="bg-gray-50 px-5 py-4 flex justify-between items-center border-b border-gray-100 shrink-0">
+                <div class="flex items-center gap-2">
+                    <span class="w-8 h-8 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center text-sm font-bold"><i class="fas fa-bowl-food"></i></span>
+                    <h3 class="font-extrabold text-gray-800 text-base" id="mp-title">Tambah Produk</h3>
+                </div>
+                <button type="button" onclick="closeModal('modal-produk')" class="text-gray-400 hover:text-red-600 bg-gray-100 w-8 h-8 rounded-full flex items-center justify-center transition"><i class="fas fa-times"></i></button>
             </div>
+            
             <div class="p-5 flex-1 overflow-y-auto">
                 <form id="form-produk" onsubmit="saveProdukData(event)" class="space-y-4">
                     <input type="hidden" id="pr-rowIndex">
-                    <div><label class="block text-xs font-semibold mb-1">Nama Produk</label><input type="text" id="pr-nama" required class="w-full rounded-xl border border-gray-200 py-2.5 px-3 text-sm bg-gray-50"></div>
-                    <div><label class="block text-xs font-semibold mb-1">Harga (Rp)</label><input type="number" id="pr-harga" required min="0" class="w-full rounded-xl border border-gray-200 py-2.5 px-3 text-sm bg-gray-50 font-bold text-blue-600"></div>
+                    <input type="hidden" id="pr-id">
+                    <input type="hidden" id="pr-kategori" value="Bubur">
+
+                    <!-- PILIH KATEGORI (Bubur, Kue, Minuman, Ongkir) -->
                     <div>
-                        <label class="block text-xs font-semibold mb-1">Upload Gambar (Opsional)</label>
-                        <input type="file" id="pr-file" accept="image/*" class="w-full text-xs" onchange="previewImage(event)">
-                        <input type="hidden" id="pr-base64">
-                        <div class="mt-2 w-full aspect-square bg-gray-100 rounded-xl border border-gray-200 flex items-center justify-center overflow-hidden">
-                            <img id="pr-preview" src="" class="hidden-view w-full h-full object-cover" alt="Preview">
-                            <span id="pr-placeholder" class="text-gray-400 text-xs flex flex-col items-center"><i class="fas fa-image text-3xl mb-1 block"></i> Preview 1:1</span>
+                        <div class="flex items-center justify-between mb-1.5">
+                            <label class="block text-xs font-bold text-gray-700">Kategori Menu <span class="text-red-500">*</span></label>
+                            <span class="text-[10px] text-gray-400">Pilih salah satu</span>
+                        </div>
+                        <div class="grid grid-cols-4 gap-2">
+                            <button type="button" onclick="selectCategoryForm('Bubur')" id="cat-btn-bubur" class="cat-opt-btn flex flex-col items-center justify-center p-2.5 rounded-xl border-2 font-bold text-xs transition active-cat-bubur">
+                                <i class="fas fa-bowl-food text-lg mb-1 text-amber-500"></i>
+                                <span>Bubur</span>
+                            </button>
+                            <button type="button" onclick="selectCategoryForm('Kue')" id="cat-btn-kue" class="cat-opt-btn flex flex-col items-center justify-center p-2.5 rounded-xl border border-gray-200 bg-gray-50 text-gray-600 font-semibold text-xs hover:bg-gray-100 transition">
+                                <i class="fas fa-cookie-bite text-lg mb-1 text-rose-500"></i>
+                                <span>Kue</span>
+                            </button>
+                            <button type="button" onclick="selectCategoryForm('Minuman')" id="cat-btn-minuman" class="cat-opt-btn flex flex-col items-center justify-center p-2.5 rounded-xl border border-gray-200 bg-gray-50 text-gray-600 font-semibold text-xs hover:bg-gray-100 transition">
+                                <i class="fas fa-mug-hot text-lg mb-1 text-cyan-500"></i>
+                                <span>Minuman</span>
+                            </button>
+                            <button type="button" onclick="selectCategoryForm('Ongkir')" id="cat-btn-ongkir" class="cat-opt-btn flex flex-col items-center justify-center p-2.5 rounded-xl border border-gray-200 bg-gray-50 text-gray-600 font-semibold text-xs hover:bg-gray-100 transition">
+                                <i class="fas fa-truck-fast text-lg mb-1 text-emerald-500"></i>
+                                <span>Ongkir</span>
+                            </button>
+                        </div>
+                        <!-- Dropdown sinkronisasi -->
+                        <div class="mt-2 flex items-center gap-2">
+                            <label for="pr-kategori-select" class="text-[11px] text-gray-500 font-medium whitespace-nowrap">Dropdown:</label>
+                            <select id="pr-kategori-select" onchange="selectCategoryForm(this.value)" class="flex-1 rounded-lg border border-gray-200 py-1.5 px-2.5 text-xs bg-gray-50 text-gray-700 font-medium focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                <option value="Bubur">🥣 Bubur</option>
+                                <option value="Kue">🍪 Kue</option>
+                                <option value="Minuman">🥤 Minuman</option>
+                                <option value="Ongkir">🛵 Ongkir</option>
+                            </select>
                         </div>
                     </div>
-                    <button type="submit" id="btn-save-produk" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold text-sm shadow-md">Simpan Produk</button>
+
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 mb-1">Nama Produk <span class="text-red-500">*</span></label>
+                        <input type="text" id="pr-nama" required placeholder="Contoh: Bubur Ayam Komplit, Es Teh, Ongkir..." class="w-full rounded-xl border border-gray-200 py-2.5 px-3 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 mb-1">Harga (Rp) <span class="text-red-500">*</span></label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-2.5 text-xs font-extrabold text-gray-400">Rp</span>
+                            <input type="number" id="pr-harga" required min="0" step="500" placeholder="0" class="w-full pl-9 pr-3 py-2.5 rounded-xl border border-gray-200 text-sm bg-gray-50 font-bold text-blue-600 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+                        </div>
+                    </div>
+
+                    <!-- UPLOAD FOTO PRODUK (PC & HP ANDROID) -->
+                    <div>
+                        <div class="flex items-center justify-between mb-1.5">
+                            <label class="block text-xs font-bold text-gray-700">Foto Produk</label>
+                            <span class="text-[10px] text-gray-400">Komputer / Galeri HP</span>
+                        </div>
+                        
+                        <!-- Hidden inputs for file chooser and camera -->
+                        <input type="file" id="pr-file" accept="image/*,image/jpeg,image/png,image/webp" class="hidden" onchange="previewImage(event)">
+                        <input type="file" id="pr-camera" accept="image/*" capture="environment" class="hidden" onchange="previewImage(event)">
+                        <input type="hidden" id="pr-base64">
+
+                        <!-- Tombol Aksi Foto -->
+                        <div class="flex items-center gap-2 mb-2">
+                            <button type="button" onclick="document.getElementById('pr-file').click()" class="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 py-2 px-3 rounded-xl text-xs font-bold border border-blue-200 flex items-center justify-center gap-1.5 transition">
+                                <i class="fas fa-folder-open"></i> File / Galeri HP
+                            </button>
+                            <button type="button" onclick="document.getElementById('pr-camera').click()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-3 rounded-xl text-xs font-bold border border-gray-200 flex items-center justify-center gap-1.5 transition">
+                                <i class="fas fa-camera"></i> Kamera
+                            </button>
+                            <button type="button" id="btn-remove-photo" onclick="clearProductPhoto()" class="hidden-view bg-red-50 hover:bg-red-100 text-red-600 py-2 px-3 rounded-xl text-xs font-bold border border-red-200 flex items-center justify-center gap-1 transition" title="Hapus Foto">
+                                <i class="fas fa-trash-can"></i> Hapus
+                            </button>
+                        </div>
+
+                        <!-- Dropzone / Box Preview -->
+                        <div id="pr-dropzone" onclick="document.getElementById('pr-file').click()" class="w-full h-36 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300 hover:border-blue-400 flex items-center justify-center overflow-hidden cursor-pointer transition relative group">
+                            <img id="pr-preview" src="" class="hidden-view w-full h-full object-cover" alt="Preview Produk">
+                            <div id="pr-placeholder" class="p-4 text-center text-gray-400 flex flex-col items-center justify-center">
+                                <i class="fas fa-cloud-arrow-up text-3xl mb-1 text-gray-400 group-hover:text-blue-500 transition"></i>
+                                <span class="text-xs font-semibold text-gray-600">Pilih foto dari Galeri HP / Komputer</span>
+                                <span class="text-[10px] text-gray-400 mt-0.5">Bisa pilih dari galeri HP, file komputer, atau seret foto ke sini</span>
+                            </div>
+                            <div id="pr-change-overlay" class="hidden-view absolute inset-0 bg-black/40 items-center justify-center text-white text-xs font-bold group-hover:flex transition">
+                                <i class="fas fa-arrows-rotate mr-1.5"></i> Klik untuk Ganti Foto
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-2">
+                        <button type="submit" id="btn-save-produk" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold text-sm shadow-md transition flex items-center justify-center gap-2">
+                            <i class="fas fa-cloud-arrow-up"></i> Simpan ke Cloud Firebase
+                        </button>
+                    </div>
                 </form>
             </div>
         </div>

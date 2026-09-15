@@ -210,13 +210,14 @@ let currentLoginRole = 'Admin'; // 'Admin' or 'Kasir'
 
 // Demo initial seed data for simulator mode
 const DEFAULT_PRODUK = [
-    { rowIndex: 1, 'ID Produk': 'PRD-001', 'Nama Produk': 'Bubur Ayam Spesial', 'Harga': 15000, 'GambarBase64': '' },
-    { rowIndex: 2, 'ID Produk': 'PRD-002', 'Nama Produk': 'Bubur Ayam Komplit (Ati Ampela + Telur)', 'Harga': 20000, 'GambarBase64': '' },
-    { rowIndex: 3, 'ID Produk': 'PRD-003', 'Nama Produk': 'Sate Usus Gurih', 'Harga': 3000, 'GambarBase64': '' },
-    { rowIndex: 4, 'ID Produk': 'PRD-004', 'Nama Produk': 'Sate Telur Puyuh', 'Harga': 4000, 'GambarBase64': '' },
-    { rowIndex: 5, 'ID Produk': 'PRD-005', 'Nama Produk': 'Sate Ati Ampela', 'Harga': 4000, 'GambarBase64': '' },
-    { rowIndex: 6, 'ID Produk': 'PRD-006', 'Nama Produk': 'Teh Manis (Hangat / Dingin)', 'Harga': 5000, 'GambarBase64': '' },
-    { rowIndex: 7, 'ID Produk': 'PRD-007', 'Nama Produk': 'Jeruk Peras Segar', 'Harga': 7000, 'GambarBase64': '' }
+    { rowIndex: 1, 'ID Produk': 'PRD-001', 'Nama Produk': 'Bubur Ayam Spesial', 'Harga': 15000, 'Kategori': 'Bubur', 'GambarBase64': '' },
+    { rowIndex: 2, 'ID Produk': 'PRD-002', 'Nama Produk': 'Bubur Ayam Komplit (Ati Ampela + Telur)', 'Harga': 20000, 'Kategori': 'Bubur', 'GambarBase64': '' },
+    { rowIndex: 3, 'ID Produk': 'PRD-003', 'Nama Produk': 'Sate Usus Gurih', 'Harga': 3000, 'Kategori': 'Kue', 'GambarBase64': '' },
+    { rowIndex: 4, 'ID Produk': 'PRD-004', 'Nama Produk': 'Sate Telur Puyuh', 'Harga': 4000, 'Kategori': 'Kue', 'GambarBase64': '' },
+    { rowIndex: 5, 'ID Produk': 'PRD-005', 'Nama Produk': 'Sate Ati Ampela', 'Harga': 4000, 'Kategori': 'Kue', 'GambarBase64': '' },
+    { rowIndex: 6, 'ID Produk': 'PRD-006', 'Nama Produk': 'Teh Manis (Hangat / Dingin)', 'Harga': 5000, 'Kategori': 'Minuman', 'GambarBase64': '' },
+    { rowIndex: 7, 'ID Produk': 'PRD-007', 'Nama Produk': 'Jeruk Peras Segar', 'Harga': 7000, 'Kategori': 'Minuman', 'GambarBase64': '' },
+    { rowIndex: 8, 'ID Produk': 'PRD-008', 'Nama Produk': 'Ongkir Pengantaran Kurir (Area Outlet)', 'Harga': 5000, 'Kategori': 'Ongkir', 'GambarBase64': '' }
 ];
 
 const GAJI_STORAGE_KEY = 'ib_stored_histori_gaji';
@@ -751,38 +752,55 @@ async function callBackend(funcName, ...args) {
             // Update local backup
             let saved = localStorage.getItem(PRODUK_STORAGE_KEY);
             let list = saved ? JSON.parse(saved) : [...DEFAULT_PRODUK];
-            if (pData.rowIndex) {
-                const idx = list.findIndex(item => String(item.rowIndex) === String(pData.rowIndex));
-                if (idx !== -1) {
-                    list[idx]['Nama Produk'] = pData.nama;
-                    list[idx]['Harga'] = Number(pData.harga);
-                    if (pData.gambar) list[idx]['GambarBase64'] = pData.gambar;
-                }
+            
+            const targetId = pData['ID Produk'] || pData.id;
+            const targetRow = pData.rowIndex;
+            const idx = list.findIndex(item => 
+                (targetId && String(item['ID Produk']) === String(targetId)) ||
+                (targetRow && String(item.rowIndex) === String(targetRow))
+            );
+
+            const kategori = pData.kategori || pData['Kategori'] || 'Bubur';
+
+            if (idx !== -1) {
+                list[idx]['Nama Produk'] = pData.nama || pData['Nama Produk'];
+                list[idx]['Harga'] = Number(pData.harga || pData['Harga']);
+                list[idx]['Kategori'] = kategori;
+                if (pData.gambar !== undefined) list[idx]['GambarBase64'] = pData.gambar;
             } else {
-                const newId = 'PRD-' + String(list.length + 1).padStart(3, '0');
+                const newId = targetId || ('PRD-' + String(list.length + 1).padStart(3, '0'));
                 list.push({
                     rowIndex: list.length + 1,
                     'ID Produk': newId,
-                    'Nama Produk': pData.nama,
-                    'Harga': Number(pData.harga),
-                    'GambarBase64': pData.gambar || ''
+                    'Nama Produk': pData.nama || pData['Nama Produk'],
+                    'Harga': Number(pData.harga || pData['Harga']),
+                    'Kategori': kategori,
+                    'GambarBase64': pData.gambar || pData['GambarBase64'] || ''
                 });
             }
             localStorage.setItem(PRODUK_STORAGE_KEY, JSON.stringify(list));
             return { success: true, message: 'Produk berhasil disimpan ke Cloud Firestore' };
         } else if (funcName === 'deleteProduk') {
-            const rowIdx = args[0];
+            const param = args[0];
             let saved = localStorage.getItem(PRODUK_STORAGE_KEY);
             let list = saved ? JSON.parse(saved) : [...DEFAULT_PRODUK];
-            const target = list.find(item => String(item.rowIndex) === String(rowIdx));
-            if (target && target['ID Produk']) {
+            const target = list.find(item => 
+                (item['ID Produk'] && String(item['ID Produk']) === String(param)) ||
+                (item._docId && String(item._docId) === String(param)) ||
+                (item.rowIndex && String(item.rowIndex) === String(param))
+            );
+            const targetId = (target && target['ID Produk']) ? target['ID Produk'] : (typeof param === 'string' && param.startsWith('PRD-') ? param : null);
+            if (targetId) {
                 try {
-                    await firestoreDeleteProduk(target['ID Produk']);
+                    await firestoreDeleteProduk(targetId);
                 } catch (e) {
                     console.warn('[Firestore DeleteProduk fallback]', e);
                 }
             }
-            list = list.filter(item => String(item.rowIndex) !== String(rowIdx));
+            list = list.filter(item => 
+                String(item.rowIndex) !== String(param) && 
+                String(item['ID Produk']) !== String(param)
+            );
             localStorage.setItem(PRODUK_STORAGE_KEY, JSON.stringify(list));
             return { success: true, message: 'Produk berhasil dihapus dari Cloud Firestore' };
         } else if (funcName === 'getKaryawan') {
@@ -3043,7 +3061,87 @@ async function generateSlip(e) {
     btn.disabled = false; 
 }
 
-// Produk Master Logic
+// =============================================================
+// PRODUK MASTER & KATEGORI LOGIC (Bubur, Kue, Minuman, Ongkir)
+// =============================================================
+let currentKategoriFilter = 'Semua';
+let currentKasirKategoriFilter = 'Semua';
+const KATEGORI_OPTIONS = ['Bubur', 'Kue', 'Minuman', 'Ongkir'];
+
+function getKategoriBadge(kategori) {
+    const k = (kategori || 'Bubur').trim();
+    if (k === 'Bubur') {
+        return `<span class="inline-flex items-center gap-1 bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-extrabold px-2 py-0.5 rounded-md"><i class="fas fa-bowl-food text-[9px] text-amber-500"></i> Bubur</span>`;
+    }
+    if (k === 'Kue') {
+        return `<span class="inline-flex items-center gap-1 bg-rose-50 text-rose-800 border border-rose-200 text-[10px] font-extrabold px-2 py-0.5 rounded-md"><i class="fas fa-cookie-bite text-[9px] text-rose-500"></i> Kue</span>`;
+    }
+    if (k === 'Minuman') {
+        return `<span class="inline-flex items-center gap-1 bg-cyan-50 text-cyan-800 border border-cyan-200 text-[10px] font-extrabold px-2 py-0.5 rounded-md"><i class="fas fa-mug-hot text-[9px] text-cyan-500"></i> Minuman</span>`;
+    }
+    if (k === 'Ongkir') {
+        return `<span class="inline-flex items-center gap-1 bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-extrabold px-2 py-0.5 rounded-md"><i class="fas fa-truck-fast text-[9px] text-emerald-500"></i> Ongkir</span>`;
+    }
+    return `<span class="inline-flex items-center gap-1 bg-gray-50 text-gray-700 border border-gray-200 text-[10px] font-extrabold px-2 py-0.5 rounded-md">${k}</span>`;
+}
+
+function getKategoriDefaultIcon(kategori) {
+    const k = (kategori || 'Bubur').trim();
+    if (k === 'Bubur') return 'fa-bowl-food text-amber-400';
+    if (k === 'Kue') return 'fa-cookie-bite text-rose-400';
+    if (k === 'Minuman') return 'fa-mug-hot text-cyan-400';
+    if (k === 'Ongkir') return 'fa-truck-fast text-emerald-400';
+    return 'fa-bowl-food text-amber-400';
+}
+
+function selectCategoryForm(kategori) {
+    const valid = KATEGORI_OPTIONS.includes(kategori) ? kategori : 'Bubur';
+    const hiddenInput = document.getElementById('pr-kategori');
+    if (hiddenInput) hiddenInput.value = valid;
+    
+    const select = document.getElementById('pr-kategori-select');
+    if (select) select.value = valid;
+
+    KATEGORI_OPTIONS.forEach(k => {
+        const btn = document.getElementById('cat-btn-' + k.toLowerCase());
+        if (!btn) return;
+        if (k === valid) {
+            btn.className = `cat-opt-btn flex flex-col items-center justify-center p-2.5 rounded-xl border-2 font-bold text-xs transition active-cat-${k.toLowerCase()}`;
+        } else {
+            btn.className = 'cat-opt-btn flex flex-col items-center justify-center p-2.5 rounded-xl border border-gray-200 bg-gray-50 text-gray-600 font-semibold text-xs hover:bg-gray-100 transition';
+        }
+    });
+}
+
+function setKategoriFilter(kategori) {
+    currentKategoriFilter = kategori || 'Semua';
+    ['semua', 'bubur', 'kue', 'minuman', 'ongkir'].forEach(key => {
+        const btn = document.getElementById('btn-cat-' + key);
+        if (!btn) return;
+        if (key === currentKategoriFilter.toLowerCase()) {
+            btn.className = 'cat-filter-btn px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap bg-gray-900 text-white shadow-xs';
+        } else {
+            btn.className = 'cat-filter-btn px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap bg-white text-gray-600 border border-gray-200 hover:bg-gray-50';
+        }
+    });
+    renderListProduk();
+}
+
+function setKasirKategoriFilter(kategori) {
+    currentKasirKategoriFilter = kategori || 'Semua';
+    ['semua', 'bubur', 'kue', 'minuman', 'ongkir'].forEach(key => {
+        const btn = document.getElementById('btn-kasir-cat-' + key);
+        if (!btn) return;
+        if (key === currentKasirKategoriFilter.toLowerCase()) {
+            btn.className = 'kasir-cat-filter-btn px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap bg-gray-900 text-white shadow-xs';
+        } else {
+            btn.className = 'kasir-cat-filter-btn px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap bg-white text-gray-600 border border-gray-200 hover:bg-gray-50';
+        }
+    });
+    renderKasirProdukList();
+}
+
+// Product Master Loading & Rendering
 async function loadProduk() { 
     const loading = document.getElementById('loading-produk');
     if (loading) loading.classList.remove('hidden-view'); 
@@ -3054,119 +3152,321 @@ async function loadProduk() {
         PRODUK_CACHE = parseDataArray(res); 
         renderListProduk(); 
     } catch(e) { 
-        showToast('Gagal memuat produk', 'error'); 
+        showToast('Gagal memuat produk dari Firebase', 'error'); 
     } 
     if (loading) loading.classList.add('hidden-view'); 
 }
 
 function renderListProduk() { 
     const list = document.getElementById('list-produk'); 
+    if (!list) return;
     const searchInput = document.getElementById('search-produk'); 
-    const keyword = searchInput ? searchInput.value.toLowerCase() : ''; 
-    let filteredProduk = PRODUK_CACHE; 
+    const keyword = searchInput ? searchInput.value.toLowerCase().trim() : ''; 
+    
+    let filtered = PRODUK_CACHE || []; 
+
+    // Category filter
+    if (currentKategoriFilter && currentKategoriFilter !== 'Semua') {
+        filtered = filtered.filter(p => (p['Kategori'] || 'Bubur') === currentKategoriFilter);
+    }
+
+    // Search keyword filter
     if (keyword) { 
-        filteredProduk = PRODUK_CACHE.filter(p => { 
+        filtered = filtered.filter(p => { 
             const nama = (p['Nama Produk'] || '').toLowerCase(); 
             const id = String(p['ID Produk'] || '').toLowerCase(); 
-            return nama.includes(keyword) || id.includes(keyword); 
+            const kat = (p['Kategori'] || '').toLowerCase();
+            return nama.includes(keyword) || id.includes(keyword) || kat.includes(keyword); 
         }); 
     } 
-    if (filteredProduk.length === 0) { 
-        list.innerHTML = `<div class="col-span-full text-center text-gray-400 py-10"><i class="fas fa-box-open text-4xl mb-3"></i><p class="text-sm">Produk tidak ditemukan</p></div>`; 
+
+    if (filtered.length === 0) { 
+        list.innerHTML = `
+        <div class="col-span-full text-center text-gray-400 py-12 bg-white rounded-2xl border border-gray-100 p-6">
+            <i class="fas fa-box-open text-4xl mb-3 text-gray-300"></i>
+            <p class="text-sm font-semibold text-gray-700">Produk tidak ditemukan</p>
+            <p class="text-xs text-gray-400 mt-1">Coba sesuaikan kata kunci pencarian atau ganti filter kategori.</p>
+        </div>`; 
         return; 
     } 
-    list.innerHTML = filteredProduk.map(p => `
-        <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
-            <div class="h-28 bg-gray-100 relative">
-                ${p['GambarBase64'] ? `<img src="${p['GambarBase64']}" class="w-full h-full object-cover">` : `<div class="w-full h-full flex items-center justify-center text-gray-300"><i class="fas fa-image text-3xl"></i></div>`}
+
+    list.innerHTML = filtered.map(p => {
+        const kat = p['Kategori'] || 'Bubur';
+        const badgeHtml = getKategoriBadge(kat);
+        const iconClass = getKategoriDefaultIcon(kat);
+        const safeId = String(p['ID Produk'] || '').replace(/'/g, "\\'");
+        const safeName = String(p['Nama Produk'] || '').replace(/"/g, '&quot;');
+
+        return `
+        <div class="bg-white rounded-2xl shadow-xs border border-gray-100 overflow-hidden flex flex-col hover:shadow-md hover:border-blue-200 transition">
+            <div class="h-32 bg-gray-50 relative overflow-hidden flex items-center justify-center">
+                ${p['GambarBase64'] ? `<img src="${p['GambarBase64']}" class="w-full h-full object-cover" alt="${safeName}">` : `<div class="w-full h-full flex items-center justify-center text-gray-300"><i class="fas ${iconClass} text-4xl"></i></div>`}
+                <div class="absolute top-2 left-2 z-10">${badgeHtml}</div>
+                <div class="absolute top-2 right-2 bg-black/60 backdrop-blur-xs text-white text-[10px] font-mono px-1.5 py-0.5 rounded-md">${p['ID Produk']}</div>
             </div>
             <div class="p-3 flex flex-col flex-1">
-                <p class="font-bold text-xs text-gray-800 line-clamp-2 mb-1">${p['Nama Produk']}</p>
-                <p class="text-xs text-gray-500 font-medium mb-2">Rp ${formatRupiah(p['Harga'])}</p>
+                <p class="font-bold text-xs text-gray-900 line-clamp-2 mb-1.5" title="${safeName}">${p['Nama Produk']}</p>
+                <p class="text-sm text-blue-600 font-extrabold mb-3">Rp ${formatRupiah(p['Harga'])}</p>
                 <div class="flex gap-2 mt-auto pt-2 border-t border-gray-100">
-                    <button onclick='editProduk(${JSON.stringify(p)})' class="flex-1 bg-blue-50 text-blue-600 py-1.5 rounded-lg text-xs font-bold hover:bg-blue-100 transition"><i class="fas fa-edit"></i></button>
-                    <button onclick="confirmHapusProduk(${p.rowIndex})" class="flex-1 bg-red-50 text-red-600 py-1.5 rounded-lg text-xs font-bold hover:bg-red-100 transition"><i class="fas fa-trash"></i></button>
+                    <button type="button" onclick="openEditProdukById('${safeId}')" class="flex-1 bg-blue-50 text-blue-700 hover:bg-blue-100 py-1.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1">
+                        <i class="fas fa-edit"></i> Edit
+                    </button>
+                    <button type="button" onclick="confirmHapusProduk('${safeId}', ${p.rowIndex})" class="bg-red-50 text-red-600 hover:bg-red-100 px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center justify-center" title="Hapus Produk">
+                        <i class="fas fa-trash-can"></i>
+                    </button>
                 </div>
             </div>
-        </div>`).join(''); 
+        </div>`;
+    }).join(''); 
 }
 
-function openFormProduk() { 
-    document.getElementById('form-produk').reset(); 
-    document.getElementById('pr-rowIndex').value = ''; 
-    document.getElementById('pr-base64').value = ''; 
-    document.getElementById('pr-preview').classList.add('hidden-view'); 
-    document.getElementById('pr-placeholder').classList.remove('hidden-view'); 
-    document.getElementById('mp-title').innerText = 'Tambah Produk'; 
-    document.getElementById('modal-produk').classList.remove('hidden-view'); 
+function initProductDropzone() {
+    const dropzone = document.getElementById('pr-dropzone');
+    if (!dropzone || dropzone._dragInitialized) return;
+    dropzone._dragInitialized = true;
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropzone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.add('border-blue-500', 'bg-blue-50');
+        }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropzone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.remove('border-blue-500', 'bg-blue-50');
+        }, false);
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt && dt.files;
+        if (files && files.length > 0) {
+            previewImage({ target: { files: files } });
+        }
+    }, false);
 }
 
-function editProduk(p) { 
-    openFormProduk(); 
-    document.getElementById('mp-title').innerText = 'Edit Produk'; 
-    document.getElementById('pr-rowIndex').value = p.rowIndex; 
-    document.getElementById('pr-nama').value = p['Nama Produk']; 
-    document.getElementById('pr-harga').value = p['Harga']; 
-    if (p['GambarBase64']) { 
-        document.getElementById('pr-base64').value = p['GambarBase64']; 
-        document.getElementById('pr-preview').src = p['GambarBase64']; 
-        document.getElementById('pr-preview').classList.remove('hidden-view'); 
-        document.getElementById('pr-placeholder').classList.add('hidden-view'); 
-    } 
+function setProductPhoto(base64Data) {
+    const preview = document.getElementById('pr-preview');
+    const placeholder = document.getElementById('pr-placeholder');
+    const base64Input = document.getElementById('pr-base64');
+    const removeBtn = document.getElementById('btn-remove-photo');
+    const changeOverlay = document.getElementById('pr-change-overlay');
+
+    if (base64Data) {
+        if (base64Input) base64Input.value = base64Data;
+        if (preview) {
+            preview.src = base64Data;
+            preview.classList.remove('hidden-view');
+        }
+        if (placeholder) placeholder.classList.add('hidden-view');
+        if (removeBtn) removeBtn.classList.remove('hidden-view');
+        if (changeOverlay) changeOverlay.classList.remove('hidden-view');
+    } else {
+        clearProductPhoto();
+    }
+}
+
+function clearProductPhoto() {
+    const preview = document.getElementById('pr-preview');
+    const placeholder = document.getElementById('pr-placeholder');
+    const base64Input = document.getElementById('pr-base64');
+    const fileInput = document.getElementById('pr-file');
+    const cameraInput = document.getElementById('pr-camera');
+    const removeBtn = document.getElementById('btn-remove-photo');
+    const changeOverlay = document.getElementById('pr-change-overlay');
+
+    if (base64Input) base64Input.value = '';
+    if (fileInput) fileInput.value = '';
+    if (cameraInput) cameraInput.value = '';
+    if (preview) {
+        preview.src = '';
+        preview.classList.add('hidden-view');
+    }
+    if (placeholder) placeholder.classList.remove('hidden-view');
+    if (removeBtn) removeBtn.classList.add('hidden-view');
+    if (changeOverlay) changeOverlay.classList.add('hidden-view');
 }
 
 function previewImage(event) { 
-    const file = event.target.files[0]; 
+    const file = event.target && event.target.files && event.target.files[0]; 
     if (!file) return; 
+
+    if (!file.type.startsWith('image/')) {
+        showToast('File harus berupa format gambar (JPG, PNG, WEBP)', 'warning');
+        return;
+    }
+
     const reader = new FileReader(); 
     reader.onload = function(e) { 
-        document.getElementById('pr-base64').value = e.target.result; 
-        document.getElementById('pr-preview').src = e.target.result; 
-        document.getElementById('pr-preview').classList.remove('hidden-view'); 
-        document.getElementById('pr-placeholder').classList.add('hidden-view'); 
+        const img = new Image();
+        img.onload = function() {
+            // Compress and resize image to keep Base64 lightweight for Cloud Firestore
+            const canvas = document.createElement('canvas');
+            const MAX_WIDTH = 640;
+            const MAX_HEIGHT = 640;
+            let width = img.width;
+            let height = img.height;
+
+            if (width > height) {
+                if (width > MAX_WIDTH) {
+                    height = Math.round(height * (MAX_WIDTH / width));
+                    width = MAX_WIDTH;
+                }
+            } else {
+                if (height > MAX_HEIGHT) {
+                    width = Math.round(width * (MAX_HEIGHT / height));
+                    height = MAX_HEIGHT;
+                }
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+
+            const compressedBase64 = canvas.toDataURL('image/jpeg', 0.82);
+            setProductPhoto(compressedBase64);
+            showToast('Foto berhasil dimuat & dioptimalkan', 'info');
+        };
+        img.src = e.target.result;
     }; 
     reader.readAsDataURL(file); 
+}
+
+function openFormProduk() { 
+    const form = document.getElementById('form-produk');
+    if (form) form.reset(); 
+    
+    const rowInput = document.getElementById('pr-rowIndex');
+    if (rowInput) rowInput.value = ''; 
+    const idInput = document.getElementById('pr-id');
+    if (idInput) idInput.value = ''; 
+
+    clearProductPhoto(); 
+    selectCategoryForm('Bubur');
+    initProductDropzone();
+
+    const title = document.getElementById('mp-title');
+    if (title) title.innerText = 'Tambah Produk'; 
+    const modal = document.getElementById('modal-produk');
+    if (modal) modal.classList.remove('hidden-view'); 
+}
+
+function openEditProdukById(id) {
+    const p = (PRODUK_CACHE || []).find(x => String(x['ID Produk']) === String(id));
+    if (p) {
+        editProduk(p);
+    }
+}
+
+function editProduk(p) { 
+    if (typeof p === 'string') {
+        try {
+            p = JSON.parse(p);
+        } catch(e) {
+            p = (PRODUK_CACHE || []).find(x => String(x['ID Produk']) === String(p)) || {};
+        }
+    }
+    openFormProduk(); 
+    
+    const title = document.getElementById('mp-title');
+    if (title) title.innerText = 'Edit Produk'; 
+    
+    const rowInput = document.getElementById('pr-rowIndex');
+    if (rowInput) rowInput.value = p.rowIndex || ''; 
+    const idInput = document.getElementById('pr-id');
+    if (idInput) idInput.value = p['ID Produk'] || ''; 
+    const namaInput = document.getElementById('pr-nama');
+    if (namaInput) namaInput.value = p['Nama Produk'] || ''; 
+    const hargaInput = document.getElementById('pr-harga');
+    if (hargaInput) hargaInput.value = p['Harga'] || ''; 
+    
+    const kat = p['Kategori'] || 'Bubur';
+    selectCategoryForm(kat);
+
+    if (p['GambarBase64']) { 
+        setProductPhoto(p['GambarBase64']);
+    } else { 
+        clearProductPhoto();
+    } 
 }
 
 async function saveProdukData(e) { 
     e.preventDefault(); 
     const btn = document.getElementById('btn-save-produk'); 
-    btn.innerHTML = '<div class="loader border-white"></div> Menyimpan...'; 
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<div class="loader border-white"></div> Menyimpan ke Cloud Firebase...'; 
     btn.disabled = true; 
+
+    const rowIndex = document.getElementById('pr-rowIndex').value;
+    const id = document.getElementById('pr-id').value;
+    const nama = document.getElementById('pr-nama').value.trim();
+    const harga = document.getElementById('pr-harga').value;
+    const kategori = document.getElementById('pr-kategori').value || 'Bubur';
+    const gambar = document.getElementById('pr-base64').value;
+
     const data = { 
-        rowIndex: document.getElementById('pr-rowIndex').value, 
-        nama: document.getElementById('pr-nama').value, 
-        harga: document.getElementById('pr-harga').value, 
-        gambar: document.getElementById('pr-base64').value 
+        rowIndex: rowIndex, 
+        id: id,
+        'ID Produk': id,
+        nama: nama, 
+        'Nama Produk': nama,
+        harga: Number(harga), 
+        'Harga': Number(harga),
+        kategori: kategori,
+        'Kategori': kategori,
+        gambar: gambar,
+        'GambarBase64': gambar
     }; 
+
     try { 
         const res = await callBackend('saveProduk', data); 
         if (res.success) { 
-            showToast(res.message, 'success'); 
+            showToast(res.message || 'Produk berhasil disimpan ke Firebase!', 'success'); 
             closeModal('modal-produk'); 
-            loadProduk(); 
+            await loadProduk(); 
+            // Also refresh kasir catalog
+            renderKasirProdukList();
         } else { 
-            showToast(res.message, 'error'); 
+            showToast(res.message || 'Gagal menyimpan produk', 'error'); 
         } 
     } catch(err) { 
-        showToast('Gagal menyimpan produk', 'error'); 
-    } 
-    btn.innerHTML = 'Simpan Produk'; 
-    btn.disabled = false; 
+        console.error('Save product error:', err);
+        showToast('Gagal menyimpan produk: ' + (err.message || ''), 'error'); 
+    } finally {
+        btn.innerHTML = originalText; 
+        btn.disabled = false; 
+    }
 }
 
-function confirmHapusProduk(id) { 
+function confirmHapusProduk(id, rowIndex) { 
     document.getElementById('confirm-title').innerText = 'Hapus Produk?'; 
+    const targetProd = (PRODUK_CACHE || []).find(p => (id && String(p['ID Produk']) === String(id)) || (rowIndex && String(p.rowIndex) === String(rowIndex)));
+    const prodName = targetProd ? targetProd['Nama Produk'] : 'Produk ini';
+    
+    const msgEl = document.getElementById('confirm-message');
+    if (msgEl) {
+        msgEl.innerText = `Apakah Anda yakin ingin menghapus "${prodName}" dari database Firebase?`;
+    }
+
     document.getElementById('btn-confirm-action').onclick = async () => { 
         closeModal('modal-confirm'); 
         try { 
-            const res = await callBackend('deleteProduk', id); 
+            const res = await callBackend('deleteProduk', id || rowIndex); 
             if (res.success) { 
-                showToast(res.message, 'success'); 
-                loadProduk(); 
-            } 
+                showToast(res.message || 'Produk berhasil dihapus dari Firebase', 'success'); 
+                await loadProduk(); 
+                renderKasirProdukList();
+            } else {
+                showToast(res.message || 'Gagal menghapus produk', 'error');
+            }
         } catch(e) { 
-            showToast('Gagal menghapus data', 'error'); 
+            showToast('Gagal menghapus produk', 'error'); 
         } 
     }; 
     document.getElementById('modal-confirm').classList.remove('hidden-view'); 
@@ -3188,32 +3488,58 @@ function renderKasirProdukList() {
     const list = document.getElementById('list-kasir-produk');
     if (!list) return;
     const searchInput = document.getElementById('search-kasir-produk');
-    const keyword = searchInput ? searchInput.value.toLowerCase() : '';
+    const keyword = searchInput ? searchInput.value.toLowerCase().trim() : '';
     
-    let filteredProduk = PRODUK_CACHE;
+    let filteredProduk = PRODUK_CACHE || [];
+
+    // Filter by Kasir category
+    if (currentKasirKategoriFilter && currentKasirKategoriFilter !== 'Semua') {
+        filteredProduk = filteredProduk.filter(p => (p['Kategori'] || 'Bubur') === currentKasirKategoriFilter);
+    }
+
+    // Filter by search keyword
     if (keyword) {
-        filteredProduk = PRODUK_CACHE.filter(p => {
+        filteredProduk = filteredProduk.filter(p => {
             const nama = (p['Nama Produk'] || '').toLowerCase();
-            return nama.includes(keyword);
+            const id = String(p['ID Produk'] || '').toLowerCase();
+            const kat = (p['Kategori'] || '').toLowerCase();
+            return nama.includes(keyword) || id.includes(keyword) || kat.includes(keyword);
         });
     }
 
     if (filteredProduk.length === 0) {
-        list.innerHTML = `<div class="col-span-full text-center text-gray-400 py-10"><i class="fas fa-box-open text-4xl mb-3"></i><p class="text-sm">Produk tidak ditemukan</p></div>`;
+        list.innerHTML = `
+        <div class="col-span-full text-center text-gray-400 py-10 bg-white rounded-2xl border border-gray-100 p-6">
+            <i class="fas fa-box-open text-4xl mb-3 text-gray-300"></i>
+            <p class="text-sm font-semibold text-gray-700">Menu tidak ditemukan</p>
+            <p class="text-xs text-gray-400 mt-1">Coba ganti filter kategori atau ubah kata kunci pencarian</p>
+        </div>`;
         return;
     }
     
-    list.innerHTML = filteredProduk.map(p => `
-        <div onclick="addToCart('${p['ID Produk']}')" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col cursor-pointer hover:border-red-400 hover:shadow-md transition">
-            <div class="h-24 bg-gray-100 relative">
-                ${p['GambarBase64'] ? `<img src="${p['GambarBase64']}" class="w-full h-full object-cover">` : `<div class="w-full h-full flex items-center justify-center text-gray-300"><i class="fas fa-image text-2xl"></i></div>`}
+    list.innerHTML = filteredProduk.map(p => {
+        const kat = p['Kategori'] || 'Bubur';
+        const badgeHtml = getKategoriBadge(kat);
+        const iconClass = getKategoriDefaultIcon(kat);
+        const safeId = String(p['ID Produk'] || '').replace(/'/g, "\\'");
+        const safeName = String(p['Nama Produk'] || '').replace(/"/g, '&quot;');
+
+        return `
+        <div onclick="addToCart('${safeId}')" class="bg-white rounded-2xl shadow-xs border border-gray-100 overflow-hidden flex flex-col cursor-pointer hover:border-red-400 hover:shadow-md transition transform active:scale-95 group">
+            <div class="h-28 bg-gray-50 relative overflow-hidden flex items-center justify-center">
+                ${p['GambarBase64'] ? `<img src="${p['GambarBase64']}" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" alt="${safeName}">` : `<div class="w-full h-full flex items-center justify-center text-gray-300"><i class="fas ${iconClass} text-3xl"></i></div>`}
+                <div class="absolute top-2 left-2 z-10">${badgeHtml}</div>
             </div>
-            <div class="p-2 flex flex-col flex-1 text-center">
-                <p class="font-bold text-[10px] text-gray-800 line-clamp-2 mb-1">${p['Nama Produk']}</p>
-                <p class="text-[10px] text-red-600 font-bold mt-auto">Rp ${formatRupiah(p['Harga'])}</p>
+            <div class="p-2.5 flex flex-col flex-1">
+                <p class="font-bold text-xs text-gray-800 line-clamp-2 mb-1">${p['Nama Produk']}</p>
+                <div class="mt-auto flex items-center justify-between pt-1">
+                    <span class="text-xs text-red-600 font-extrabold">Rp ${formatRupiah(p['Harga'])}</span>
+                    <span class="w-6 h-6 rounded-lg bg-red-50 text-red-600 flex items-center justify-center text-[10px] font-bold group-hover:bg-red-600 group-hover:text-white transition"><i class="fas fa-plus"></i></span>
+                </div>
             </div>
         </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 function addToCart(id) {
@@ -6333,4 +6659,24 @@ window.printViaRawBT = printViaRawBT;
 window.testPrint = testPrint;
 window.testPrintRawBT = testPrintRawBT;
 window.cetakStrukThermal = cetakStrukThermal;
+
+// Produk & Kategori bindings (Bubur, Kue, Minuman, Ongkir)
+window.selectCategoryForm = selectCategoryForm;
+window.setKategoriFilter = setKategoriFilter;
+window.setKasirKategoriFilter = setKasirKategoriFilter;
+window.getKategoriBadge = getKategoriBadge;
+window.getKategoriDefaultIcon = getKategoriDefaultIcon;
+window.setProductPhoto = setProductPhoto;
+window.clearProductPhoto = clearProductPhoto;
+window.openEditProdukById = openEditProdukById;
+window.initProductDropzone = initProductDropzone;
+window.previewImage = previewImage;
+window.openFormProduk = openFormProduk;
+window.editProduk = editProduk;
+window.saveProdukData = saveProdukData;
+window.confirmHapusProduk = confirmHapusProduk;
+window.loadProduk = loadProduk;
+window.renderListProduk = renderListProduk;
+window.loadProdukKasir = loadProdukKasir;
+window.renderKasirProdukList = renderKasirProdukList;
 
