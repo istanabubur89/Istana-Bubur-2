@@ -81,7 +81,7 @@
                 </div>
                 <div id="login-role-hint" class="text-[11px] text-gray-500 font-semibold mb-3.5 flex items-center justify-center gap-1.5">
                     <i id="login-role-icon" class="fas fa-shield-halved text-red-600"></i>
-                    <span id="login-role-desc">Mode: Akses Penuh Sistem & Manajemen Pusat</span>
+                    <span id="login-role-desc">Mode: Akses Penuh Sistem & Manajemen Owner</span>
                 </div>
 
                 <div class="space-y-3.5 text-left mb-3">
@@ -206,12 +206,12 @@
                                     </span>
                                     <span class="inline-flex items-center gap-1.5 bg-emerald-500/90 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs">
                                         <span class="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                                        <span>Pusat Online</span>
+                                        <span>Owner Online</span>
                                     </span>
                                 </div>
                                 <h2 class="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center flex-wrap gap-2 pt-0.5">
                                     <span id="dash-owner">Admin Istana Bubur</span>
-                                    <span class="text-xs font-bold bg-white/20 text-white px-2.5 py-0.5 rounded-lg border border-white/30" id="dash-role">Admin Pusat</span>
+                                    <span class="text-xs font-bold bg-white/20 text-white px-2.5 py-0.5 rounded-lg border border-white/30" id="dash-role">Admin/Owner</span>
                                 </h2>
                                 <p class="text-xs text-red-100 font-medium max-w-xl leading-relaxed" id="admin-dash-motto">
                                     Selamat bekerja! Pantau performa penjualan, kelola stok, dan koordinasi dengan kasir seluruh cabang.
@@ -1358,7 +1358,7 @@
                 <div class="flex-1 h-0.5 bg-gray-200 mx-2" id="step-line-1"></div>
                 <div class="flex items-center gap-2">
                     <span id="step-badge-2" class="w-6 h-6 rounded-full bg-gray-200 text-gray-500 font-bold text-xs flex items-center justify-center">2</span>
-                    <span id="step-label-2" class="text-xs font-bold text-gray-400">Kode Referral</span>
+                    <span id="step-label-2" class="text-xs font-bold text-gray-400">Kode OTP</span>
                 </div>
                 <div class="flex-1 h-0.5 bg-gray-200 mx-2" id="step-line-2"></div>
                 <div class="flex items-center gap-2">
@@ -1424,68 +1424,99 @@
                         </div>
                     </div>
 
+                    <div class="space-y-1.5 text-left bg-gray-50/80 p-3 rounded-xl border border-gray-200">
+                        <label class="block text-xs font-bold text-gray-700">Metode Pengiriman Kode OTP <span class="text-red-500">*</span></label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="flex items-center gap-2 p-2.5 rounded-xl bg-white border border-emerald-500/50 cursor-pointer text-xs font-bold text-gray-800 hover:bg-emerald-50/40 transition">
+                                <input type="radio" name="reg-otp-method" value="both" checked class="text-emerald-600 focus:ring-emerald-500">
+                                <span class="flex items-center gap-1"><i class="fas fa-paper-plane text-emerald-600"></i> Email & WA</span>
+                            </label>
+                            <label class="flex items-center gap-2 p-2.5 rounded-xl bg-white border border-gray-200 cursor-pointer text-xs font-bold text-gray-800 hover:bg-emerald-50/40 transition">
+                                <input type="radio" name="reg-otp-method" value="whatsapp" class="text-emerald-600 focus:ring-emerald-500">
+                                <span class="flex items-center gap-1"><i class="fab fa-whatsapp text-emerald-600 text-sm"></i> WhatsApp</span>
+                            </label>
+                        </div>
+                        <p class="text-[10px] text-gray-500">Kode OTP 6-digit dikirimkan ke Email dan nomor WhatsApp yang didaftarkan.</p>
+                    </div>
+
                     <button type="button" onclick="submitRegisterStep1()" id="btn-submit-step1" class="w-full bg-red-600 hover:bg-red-700 text-white py-3.5 rounded-2xl font-black text-xs shadow-md shadow-red-600/20 active:scale-95 transition flex items-center justify-center gap-2 mt-2">
-                        <span>Lanjut & Kirim Kode Referral ke Email</span>
-                        <i class="fas fa-arrow-right"></i>
+                        <i class="fas fa-paper-plane"></i>
+                        <span>Lanjut & Minta Kode OTP Verifikasi</span>
                     </button>
                 </div>
 
-                <!-- STEP 2: VERIFIKASI KODE REFERRAL EMAIL -->
+                <!-- STEP 2: VERIFIKASI KODE OTP (EMAIL & WHATSAPP) -->
                 <div id="register-step-2" class="hidden-view space-y-4 text-center">
                     <div class="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center text-2xl shadow-inner">
-                        <i class="fas fa-envelope-circle-check"></i>
+                        <i class="fas fa-shield-halved"></i>
                     </div>
                     <div class="space-y-1 text-center">
-                        <h4 class="text-sm font-extrabold text-gray-900">Verifikasi Kode Referral Email</h4>
+                        <h4 class="text-sm font-extrabold text-gray-900">Verifikasi Kode OTP Pendaftaran</h4>
                         <p class="text-xs text-gray-500 max-w-xs mx-auto">
-                            Kode referral 6-digit telah dikirimkan ke alamat email terdaftar:
+                            Kode OTP 6-digit dikirimkan ke kontak pendaftar yang didaftarkan:
                         </p>
                     </div>
 
-                    <!-- Notifikasi Status Pengiriman Email Asli -->
-                    <div class="bg-emerald-50/90 border border-emerald-200 rounded-2xl p-4 text-left text-xs space-y-2.5 shadow-xs">
-                        <div class="flex items-center justify-between text-emerald-900 font-bold">
-                            <span class="flex items-center gap-2 text-xs sm:text-sm">
-                                <i class="fas fa-paper-plane text-emerald-600"></i> Email Verifikasi Terkirim
-                            </span>
-                            <span id="reg-status-badge" class="text-[10px] bg-emerald-200/80 text-emerald-900 px-2 py-0.5 rounded-full font-extrabold">Aktif</span>
+                    <!-- Kartu Kontak Penerima OTP -->
+                    <div class="bg-gray-50 border border-gray-200 rounded-2xl p-3.5 text-left text-xs space-y-2 shadow-xs">
+                        <div class="flex items-center justify-between bg-white p-2.5 rounded-xl border border-gray-100">
+                            <div class="flex items-center gap-2">
+                                <i class="fas fa-envelope text-red-600 text-sm"></i>
+                                <div>
+                                    <p class="text-[10px] text-gray-400 font-semibold">Email Penerima</p>
+                                    <p id="reg-display-email" class="text-xs font-bold text-gray-800 font-mono break-all">email@anda.com</p>
+                                </div>
+                            </div>
+                            <span id="reg-email-badge" class="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">Email Terkirim</span>
                         </div>
-                        <div class="bg-white p-3 rounded-xl border border-emerald-100 shadow-xs">
-                            <p class="text-[11px] text-gray-500 font-medium">Alamat Email Penerima:</p>
-                            <p id="reg-display-email" class="text-sm font-extrabold text-emerald-800 font-mono break-all mt-0.5">email@anda.com</p>
+
+                        <div class="flex items-center justify-between bg-white p-2.5 rounded-xl border border-gray-100">
+                            <div class="flex items-center gap-2">
+                                <i class="fab fa-whatsapp text-emerald-600 text-base"></i>
+                                <div>
+                                    <p class="text-[10px] text-gray-400 font-semibold">Nomor WhatsApp</p>
+                                    <p id="reg-display-wa" class="text-xs font-bold text-gray-800 font-mono">081234567890</p>
+                                </div>
+                            </div>
+                            <span id="reg-wa-badge" class="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">WhatsApp Siap</span>
                         </div>
-                        <p id="reg-email-notice" class="text-[11px] text-emerald-800 leading-relaxed">
-                            <i class="fas fa-info-circle mr-1 text-emerald-600"></i> Silakan periksa <strong>Kotak Masuk (Inbox)</strong> atau folder <strong>Spam</strong> email Anda, lalu ketik 6 digit kode referral di bawah ini.
-                        </p>
                     </div>
 
-                    <!-- Tombol Cepat Buka Gmail & Kirim WhatsApp -->
-                    <div class="grid grid-cols-2 gap-2">
-                        <button type="button" onclick="openGmailApp()" class="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition">
-                            <i class="fab fa-google text-red-600"></i>
-                            <span>Buka Gmail</span>
+                    <!-- Tombol Cepat Pengiriman WhatsApp & Email -->
+                    <div class="space-y-2">
+                        <button type="button" onclick="sendReferralViaWhatsApp()" id="btn-reg-wa-open" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 px-3 rounded-xl font-bold text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition flex items-center justify-center gap-2">
+                            <i class="fab fa-whatsapp text-base"></i>
+                            <span>Buka / Kirim Kode OTP di WhatsApp (<span id="reg-btn-wa-phone">WA</span>)</span>
                         </button>
-                        <button type="button" onclick="sendReferralViaWhatsApp()" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition">
-                            <i class="fab fa-whatsapp text-emerald-600"></i>
-                            <span>Kirim ke WA</span>
-                        </button>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button type="button" onclick="openGmailApp()" class="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition">
+                                <i class="fab fa-google text-red-600"></i>
+                                <span>Buka Gmail</span>
+                            </button>
+                            <button type="button" onclick="resendReferralCode()" id="btn-resend-referral" class="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition">
+                                <i class="fas fa-rotate text-blue-600"></i>
+                                <span>Kirim Ulang Email</span>
+                            </button>
+                        </div>
                     </div>
+
+                    <p id="reg-email-notice" class="text-[11px] text-gray-600 leading-relaxed bg-amber-50/80 p-2.5 rounded-xl border border-amber-200/70 text-left">
+                        <i class="fas fa-circle-info text-amber-600 mr-1"></i> Periksa pesan masuk di <strong>Email</strong> (Inbox/Spam) atau klik tombol <strong>WhatsApp</strong> di atas untuk menerima pesan resmi kode OTP.
+                    </p>
 
                     <div class="space-y-2 text-left">
-                        <label class="block text-xs font-bold text-gray-700 text-center">Masukkan 6 Digit Kode Referral dari Email</label>
+                        <label class="block text-xs font-bold text-gray-700 text-center">Masukkan 6 Digit Kode OTP Verifikasi</label>
                         <input type="text" id="reg-input-referral" maxlength="6" placeholder="000000" class="w-full text-center tracking-[0.4em] font-mono text-xl font-black border-2 border-emerald-200 rounded-2xl p-3.5 bg-gray-50 focus:outline-none focus:border-emerald-600 focus:bg-white uppercase">
                         <div class="flex items-center justify-between text-xs pt-1 px-1">
                             <span class="text-gray-500 font-medium">Masa berlaku: <span id="reg-timer" class="font-bold text-red-600">10:00</span></span>
-                            <button type="button" onclick="resendReferralCode()" id="btn-resend-referral" class="text-blue-600 hover:text-blue-800 font-bold hover:underline flex items-center gap-1">
-                                <i class="fas fa-rotate"></i> Kirim Ulang Kode
-                            </button>
+                            <span class="text-[11px] text-gray-400">Kode berlaku 10 menit</span>
                         </div>
                     </div>
 
                     <div class="flex items-center gap-2 pt-2">
                         <button type="button" onclick="backToRegisterStep1()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-2xl font-bold text-xs transition">Kembali</button>
                         <button type="button" onclick="verifyReferralStep2()" id="btn-verify-referral" class="flex-2 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-2xl font-bold text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition flex items-center justify-center gap-2">
-                            <span>Verifikasi Kode</span>
+                            <span>Verifikasi OTP</span>
                             <i class="fas fa-arrow-right text-[10px]"></i>
                         </button>
                     </div>

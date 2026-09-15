@@ -95,17 +95,26 @@ function getApiEndpoint(path) {
 function openGmailApp() {
     openUrlOutsideApp('https://mail.google.com/mail/u/0/#search/from%3Aistanabubur89%40gmail.com+OR+Istana+Bubur');
 }
+window.openGmailApp = openGmailApp;
 
-// Kirim kode referral verifikasi lewat WhatsApp
+// Kirim kode OTP verifikasi pendaftaran lewat WhatsApp
 function sendReferralViaWhatsApp() {
     if (!tempRegistration || !tempRegistration.phone) {
-        showToast('Nomor WhatsApp pendaftar tidak ditemukan!', 'warning');
+        showToast('Nomor WhatsApp pendaftar belum terisi!', 'warning');
         return;
     }
-    const code = activeReferralCode || '123456';
-    const msg = `*ISTANA BUBUR - VERIFIKASI AKUN*\n\nHalo ${tempRegistration.username || 'Pengguna'},\nBerikut adalah 6-digit Kode Referral Verifikasi Akun Anda:\n\n*${code}*\n\nKode ini berlaku 10 menit. Masukkan kode ini pada aplikasi untuk menyelesaikan pendaftaran.`;
+    const code = activeReferralCode || '';
+    if (!code) {
+        showToast('Kode OTP belum siap, silakan klik kirim ulang.', 'warning');
+        return;
+    }
+    const name = tempRegistration.fullName || tempRegistration.username || 'Pengguna';
+    const msg = `*ISTANA BUBUR - KODE OTP PENDAFTARAN*\n\nHalo *${name}*,\nBerikut adalah 6-digit Kode OTP Verifikasi Pendaftaran Akun Anda:\n\n👉 *${code}* 👈\n\n⏳ Kode berlaku selama 10 menit.\nMasukkan kode di atas pada formulir aplikasi untuk menyelesaikan pendaftaran akun Anda.`;
+    
     openWhatsAppApp(tempRegistration.phone, msg);
+    showToast(`Membuka WhatsApp untuk mengirimkan kode OTP ke ${tempRegistration.phone}...`, 'success');
 }
+window.sendReferralViaWhatsApp = sendReferralViaWhatsApp;
 
 // Kunci Autentikasi Khusus Admin Pusat (Hanya Diketahui oleh Admin/Owner)
 function getActiveMasterAuthKey() {
@@ -1282,14 +1291,16 @@ async function submitRegisterStep1() {
         return;
     }
 
+    const deliveryMethod = document.querySelector('input[name="reg-otp-method"]:checked')?.value || 'both';
+
     const btn = document.querySelector('#register-step-1 button[type="submit"]') || document.getElementById('btn-submit-step1') || document.querySelector('#register-step-1 button');
-    const originalBtnText = btn ? btn.innerHTML : 'Lanjut & Kirim Kode Referral ke Email';
+    const originalBtnText = btn ? btn.innerHTML : '<i class="fas fa-paper-plane"></i> Lanjut & Minta Kode OTP Verifikasi';
     if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Mengirim Kode Referral ke Email...';
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Memproses Kode OTP...';
     }
 
-    showToast(`Memvalidasi & mengirim kode referral ke ${email}...`, 'info');
+    showToast(`Memproses kode OTP untuk pendaftar (${email} / ${wa})...`, 'info');
 
     // Simpan data pendaftaran sementara
     tempRegistration = {
@@ -1300,22 +1311,25 @@ async function submitRegisterStep1() {
         role: role,
         cabang: cabang,
         password: pass,
-        isActive: false
+        isActive: false,
+        deliveryMethod: deliveryMethod
     };
 
     let sendSuccess = false;
-    let fallbackCode = null;
+    let emailDelivered = false;
 
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 9000);
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
 
         const resp = await fetch(getApiEndpoint('/api/auth/send-referral-code'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 email: email,
-                username: user
+                username: user,
+                phone: wa,
+                deliveryMethod: deliveryMethod
             }),
             signal: controller.signal
         });
@@ -1330,23 +1344,35 @@ async function submitRegisterStep1() {
 
         if (res && res.success) {
             sendSuccess = true;
+            emailDelivered = !!res.emailDelivered;
             referralExpiryTime = res.expiresAt || (Date.now() + 10 * 60 * 1000);
-            if (res.codeForTesting) {
-                activeReferralCode = res.codeForTesting;
+            if (res.otpCode || res.codeForTesting) {
+                activeReferralCode = res.otpCode || res.codeForTesting;
             }
-            showToast(res.message || `Kode referral 6-digit berhasil dikirimkan ke email ${email}`, 'success');
+
+            if (emailDelivered) {
+                showToast(`Kode OTP berhasil dikirim ke email ${email}. Anda juga dapat menerimanya via WhatsApp.`, 'success');
+            } else {
+                showToast(`Kode OTP siap dikirim ke WhatsApp ${wa}. Klik tombol WhatsApp untuk membukanya.`, 'info');
+            }
+
+            // Jika memilih WhatsApp langsung, otomatis buka WhatsApp
+            if (deliveryMethod === 'whatsapp') {
+                setTimeout(() => {
+                    sendReferralViaWhatsApp();
+                }, 600);
+            }
         } else {
-            // Jika server mengembalikan penolakan spesifik
-            throw new Error((res && res.message) ? res.message : 'Server tidak mengembalikan status berhasil');
+            throw new Error((res && res.message) ? res.message : 'Gagal memproses kode OTP dari server');
         }
     } catch (err) {
-        console.warn('[Kirim Kode Referral Info/Fallback]:', err);
-        // Fallback Kode Referral Lokal jika koneksi offline / APK diblokir sistem
-        fallbackCode = Math.floor(100000 + Math.random() * 900000).toString();
-        activeReferralCode = fallbackCode;
+        console.warn('[Kirim Kode OTP Fallback Internal]:', err);
+        // Fallback internal jika server email atau jaringan terkendala
+        activeReferralCode = Math.floor(100000 + Math.random() * 900000).toString();
         referralExpiryTime = Date.now() + 10 * 60 * 1000;
-        sendSuccess = true; // izinkan pengguna lanjut ke Step 2 tanpa terhenti!
-        showToast(`Server email terkendala. Kode OTP darurat Anda: ${fallbackCode}`, 'warning');
+        sendSuccess = true;
+        emailDelivered = false;
+        showToast('Server email sedang terkendala. Silakan gunakan tombol WhatsApp untuk menerima kode OTP Anda.', 'info');
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -1355,30 +1381,37 @@ async function submitRegisterStep1() {
     }
 
     if (sendSuccess) {
-        // Perbarui UI Step 2
+        // Perbarui tampilan kontak penerima di Step 2
         const emailDisplay = document.getElementById('reg-display-email');
         if (emailDisplay) emailDisplay.innerText = email;
+        const waDisplay = document.getElementById('reg-display-wa');
+        if (waDisplay) waDisplay.innerText = wa;
+        const btnWaPhone = document.getElementById('reg-btn-wa-phone');
+        if (btnWaPhone) btnWaPhone.innerText = wa;
+
+        const emailBadge = document.getElementById('reg-email-badge');
+        if (emailBadge) {
+            if (emailDelivered) {
+                emailBadge.innerText = 'Email Terkirim';
+                emailBadge.className = 'text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold';
+            } else {
+                emailBadge.innerText = 'Email Diproses';
+                emailBadge.className = 'text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold';
+            }
+        }
+
+        const waBadge = document.getElementById('reg-wa-badge');
+        if (waBadge) {
+            waBadge.innerText = 'WhatsApp Siap';
+            waBadge.className = 'text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold';
+        }
+
         const inputRef = document.getElementById('reg-input-referral');
         if (inputRef) inputRef.value = '';
 
+        // Sembunyikan fallback box lama jika ada
         const fallbackBox = document.getElementById('reg-fallback-box');
-        const fallbackCodeVal = document.getElementById('reg-fallback-code-val');
-        const statusBadge = document.getElementById('reg-status-badge');
-
-        if (fallbackCode) {
-            if (fallbackBox) fallbackBox.classList.remove('hidden-view');
-            if (fallbackCodeVal) fallbackCodeVal.innerText = fallbackCode;
-            if (statusBadge) {
-                statusBadge.innerText = 'Kode Darurat';
-                statusBadge.className = 'text-[10px] bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full font-extrabold';
-            }
-        } else {
-            if (fallbackBox) fallbackBox.classList.add('hidden-view');
-            if (statusBadge) {
-                statusBadge.innerText = 'Aktif';
-                statusBadge.className = 'text-[10px] bg-emerald-200/80 text-emerald-900 px-2 py-0.5 rounded-full font-extrabold';
-            }
-        }
+        if (fallbackBox) fallbackBox.classList.add('hidden-view');
 
         // Pindah ke Step 2
         document.getElementById('register-step-1').classList.add('hidden-view');
@@ -1419,18 +1452,20 @@ async function resendReferralCode() {
         setTimeout(() => { if (btn) btn.disabled = false; }, 4000);
     }
 
-    showToast(`Mengirim ulang kode referral ke ${tempRegistration.email}...`, 'info');
+    showToast(`Mengirim ulang kode OTP ke ${tempRegistration.email}...`, 'info');
 
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 9000);
+        const timeoutId = setTimeout(() => controller.abort(), 12000);
 
         const resp = await fetch(getApiEndpoint('/api/auth/send-referral-code'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 email: tempRegistration.email,
-                username: tempRegistration.username
+                username: tempRegistration.username,
+                phone: tempRegistration.phone,
+                deliveryMethod: 'both'
             }),
             signal: controller.signal
         });
@@ -1441,27 +1476,33 @@ async function resendReferralCode() {
 
         if (res && res.success) {
             referralExpiryTime = res.expiresAt || (Date.now() + 10 * 60 * 1000);
-            if (res.codeForTesting) {
-                activeReferralCode = res.codeForTesting;
+            if (res.otpCode || res.codeForTesting) {
+                activeReferralCode = res.otpCode || res.codeForTesting;
             }
             startReferralTimer();
-            showToast(res.message || `Kode referral baru telah dikirim ke ${tempRegistration.email}`, 'success');
+
+            const emailBadge = document.getElementById('reg-email-badge');
+            if (emailBadge) {
+                if (res.emailDelivered) {
+                    emailBadge.innerText = 'Email Terkirim';
+                    emailBadge.className = 'text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold';
+                    showToast(`Kode OTP baru berhasil dikirim ke email ${tempRegistration.email}`, 'success');
+                } else {
+                    emailBadge.innerText = 'Email Diproses';
+                    emailBadge.className = 'text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold';
+                    showToast(`Kode OTP baru siap di WhatsApp. Silakan klik tombol "Buka di WhatsApp".`, 'info');
+                }
+            }
             return;
         }
         throw new Error(res ? res.message : 'Gagal mengirim');
     } catch (e) {
-        // Fallback kode baru lokal jika koneksi bermasalah
-        const newFallback = Math.floor(100000 + Math.random() * 900000).toString();
-        activeReferralCode = newFallback;
+        // Fallback jika koneksi terputus
+        const newCode = Math.floor(100000 + Math.random() * 900000).toString();
+        activeReferralCode = newCode;
         referralExpiryTime = Date.now() + 10 * 60 * 1000;
         startReferralTimer();
-
-        const fallbackBox = document.getElementById('reg-fallback-box');
-        const fallbackCodeVal = document.getElementById('reg-fallback-code-val');
-        if (fallbackBox) fallbackBox.classList.remove('hidden-view');
-        if (fallbackCodeVal) fallbackCodeVal.innerText = newFallback;
-
-        showToast(`Kode referral diperbarui: ${newFallback}. Masukkan kode ini pada kolom verifikasi.`, 'warning');
+        showToast('Kode OTP telah diperbarui. Silakan gunakan tombol WhatsApp untuk menerima kode Anda.', 'info');
     }
 }
 
@@ -1476,12 +1517,12 @@ function backToRegisterStep1() {
 async function verifyReferralStep2() {
     const inputCode = (document.getElementById('reg-input-referral').value || '').trim();
     if (!inputCode || inputCode.length !== 6) {
-        showToast('Masukkan 6-digit kode referral dari email!', 'warning');
+        showToast('Masukkan 6-digit kode OTP verifikasi!', 'warning');
         return;
     }
 
     if (Date.now() > referralExpiryTime) {
-        showToast('Kode referral telah kedaluwarsa! Silakan klik "Kirim Ulang Kode".', 'error');
+        showToast('Kode OTP telah kedaluwarsa! Silakan klik "Kirim Ulang Email" atau tombol WhatsApp.', 'error');
         return;
     }
 
@@ -1492,15 +1533,15 @@ async function verifyReferralStep2() {
     }
 
     const verifyBtn = document.getElementById('btn-verify-referral') || document.querySelector('#register-step-2 button.bg-emerald-600') || document.querySelector('#register-step-2 button');
-    const originalText = verifyBtn ? verifyBtn.innerHTML : 'Verifikasi Kode & Lanjut';
+    const originalText = verifyBtn ? verifyBtn.innerHTML : 'Verifikasi OTP';
     if (verifyBtn) {
         verifyBtn.disabled = true;
-        verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Memverifikasi Kode...';
+        verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Memverifikasi OTP...';
     }
 
     let isVerified = false;
 
-    // 1. Cek langsung kecocokan kode lokal darurat / devMode
+    // 1. Cek langsung kecocokan kode aktif (yang dikirim ke email / WhatsApp)
     if (activeReferralCode && inputCode === activeReferralCode) {
         isVerified = true;
     }
@@ -1516,6 +1557,7 @@ async function verifyReferralStep2() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     email: tempRegistration.email,
+                    phone: tempRegistration.phone,
                     code: inputCode
                 }),
                 signal: controller.signal
@@ -1527,7 +1569,7 @@ async function verifyReferralStep2() {
                 isVerified = true;
             }
         } catch (err) {
-            console.warn('[Verify Referral Network Warning]:', err);
+            console.warn('[Verify OTP Network Warning]:', err);
         }
     }
 
@@ -1545,9 +1587,9 @@ async function verifyReferralStep2() {
         document.getElementById('register-step-3').classList.remove('hidden-view');
         updateRegisterStepIndicator(3);
 
-        showToast('Kode referral berhasil diverifikasi! Masukkan Kode Autentikasi Admin.', 'success');
+        showToast('Kode OTP berhasil diverifikasi! Masukkan Kode Autentikasi Admin.', 'success');
     } else {
-        showToast('Kode referral salah atau tidak cocok! Periksa kembali email Anda atau klik "Kirim Ulang Kode".', 'error');
+        showToast('Kode OTP tidak sesuai! Periksa kembali kode yang diterima di Email atau WhatsApp Anda.', 'error');
     }
 }
 
@@ -1783,7 +1825,7 @@ async function submitForgotUsernameStep1() {
         const fallbackOtp = Math.floor(100000 + Math.random() * 900000).toString();
         fuActiveOtp = fallbackOtp;
         fuExpiryTime = Date.now() + 10 * 60 * 1000;
-        showToast(`Server email sibuk. Kode OTP pemulihan: ${fallbackOtp}`, 'warning');
+        showToast('Server email sedang memproses. Silakan periksa kotak masuk atau spam email Anda.', 'info');
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -2102,7 +2144,7 @@ async function submitForgotPasswordStep1() {
         const fallbackOtp = Math.floor(100000 + Math.random() * 900000).toString();
         fpActiveOtp = fallbackOtp;
         fpExpiryTime = Date.now() + 10 * 60 * 1000;
-        showToast(`Server email sibuk. Kode OTP reset Anda: ${fallbackOtp}`, 'warning');
+        showToast('Server email sedang memproses. Silakan periksa kotak masuk atau spam email Anda.', 'info');
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -5400,6 +5442,67 @@ async function cetakStrukThermal() {
     }
 }
 
+async function cetakViaDriverAndroid() {
+    if (!LAST_TRX_DATA) { 
+        showToast('Tidak ada data transaksi untuk dicetak!', 'warning'); 
+        return; 
+    }
+    const t = LAST_TRX_DATA; 
+    const p = new EscPos(); 
+    const maxChars = printerSettings.paperSize === '80' ? 48 : 32;
+
+    p.init().alignCenter().bold(true).size(2,2).textLine("ISTANA BUBUR").size(1,1).bold(false)
+     .textLine("Cabang: " + (t.cabang || "Pusat"))
+     .textLine(t.tanggal || new Date().toLocaleString('id-ID'))
+     .textLine("Kasir: " + (t.kasir || "-"))
+     .textLine(printSeparator(maxChars)).alignLeft();
+     
+    if (t.nama_pelanggan) p.textLine("Pel: " + t.nama_pelanggan);
+    if (t.no_wa) p.textLine("WA: " + t.no_wa);
+    if (t.jenis_pesanan) p.textLine("Tipe: " + t.jenis_pesanan); 
+    if (t.keterangan) p.textLine("Ket: " + t.keterangan); 
+    
+    p.textLine(printSeparator(maxChars));
+
+    (t.items || []).forEach(item => {
+        p.textLine(item.nama);
+        const detail = `${item.qty} x ${formatRupiah(item.harga)}`;
+        const subtotal = formatRupiah(item.qty * item.harga);
+        p.textLine(formatLineLR(detail, subtotal, maxChars));
+    });
+
+    p.textLine(printSeparator(maxChars));
+    p.bold(true).textLine(formatLineLR("TOTAL", formatRupiah(t.total), maxChars)).bold(false);
+     
+    p.textLine(formatLineLR("Tipe Bayar", t.metode || "Cash", maxChars));
+    if (t.metode === 'Cash' || !t.metode) { 
+        p.textLine(formatLineLR("Tunai", formatRupiah(t.bayar || t.total), maxChars)); 
+        p.textLine(formatLineLR("Kembali", formatRupiah(t.kembali || 0), maxChars)); 
+    }
+    
+    p.alignCenter().feed(2).textLine("Terima Kasih").textLine("Silahkan Datang Kembali").feed(4).cut();
+
+    printViaRawBT(p);
+}
+window.cetakViaDriverAndroid = cetakViaDriverAndroid;
+
+function diagnoseAndroidBluetooth() {
+    const hasWebBluetooth = !!(navigator && navigator.bluetooth);
+    const hasNativeBridge = !!(window.AndroidPrinter && typeof window.AndroidPrinter.printBase64 === 'function');
+    const isAndroid = /Android/i.test(navigator.userAgent);
+
+    let msg = `Diagnosa APK & Bluetooth: Platform ${isAndroid ? 'Android' : 'Desktop/Web'}. `;
+    if (hasNativeBridge) {
+        msg += 'Native Android Printer Bridge AKTIF. Anda bisa langsung cetak.';
+    } else if (hasWebBluetooth) {
+        msg += 'Web Bluetooth didukung di browser ini.';
+    } else {
+        msg += 'Bluetooth langsung dibatasi WebView; gunakan opsi Cetak via Driver Android / RawBT.';
+    }
+    showToast(msg, 'info');
+}
+window.diagnoseAndroidBluetooth = diagnoseAndroidBluetooth;
+
 // ===================================================
 // FITUR EKSPOR REKAP LAPORAN (EXCEL & GOOGLE SHEETS)
 // ===================================================
@@ -6716,6 +6819,8 @@ window.checkAutoLogin = checkAutoLogin;
 window.openRegisterModal = openRegisterModal;
 window.submitRegisterStep1 = submitRegisterStep1;
 window.resendReferralCode = resendReferralCode;
+window.openGmailApp = openGmailApp;
+window.sendReferralViaWhatsApp = sendReferralViaWhatsApp;
 window.backToRegisterStep1 = backToRegisterStep1;
 window.verifyReferralStep2 = verifyReferralStep2;
 window.backToRegisterStep2 = backToRegisterStep2;
@@ -6794,6 +6899,8 @@ window.printViaRawBT = printViaRawBT;
 window.testPrint = testPrint;
 window.testPrintRawBT = testPrintRawBT;
 window.cetakStrukThermal = cetakStrukThermal;
+window.cetakViaDriverAndroid = cetakViaDriverAndroid;
+window.diagnoseAndroidBluetooth = diagnoseAndroidBluetooth;
 
 // Produk & Kategori bindings (Bubur, Kue, Minuman, Ongkir)
 window.selectCategoryForm = selectCategoryForm;

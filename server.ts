@@ -29,6 +29,7 @@ let MASTER_ADMIN_AUTH_CODES = ['IB-AUTH-2026', 'ADMIN-IB-889', 'IB-PUSAT-99'];
 // Storage for OTP Referral Codes (In-memory cache with SHA-256 hash & expiry)
 interface ReferralRecord {
   email: string;
+  phone?: string;
   username: string;
   otpHash: string;
   createdAtMs: number;
@@ -578,6 +579,8 @@ app.get('/api/chat/cabangs', (req, res) => {
 app.post('/api/auth/send-referral-code', async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const username = String(req.body.username || 'Pengguna').trim();
+  const phone = String(req.body.phone || '').trim();
+  const deliveryMethod = String(req.body.deliveryMethod || 'both').trim(); // 'both' | 'whatsapp' | 'email'
 
   // 1. Validasi format email
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -594,9 +597,18 @@ app.post('/api/auth/send-referral-code', async (req, res) => {
   const now = Date.now();
   const expiresAtMs = now + (10 * 60 * 1000); // 10 menit
 
-  // 3. Simpan hash & metadata
+  // Normalisasi nomor WhatsApp (Format 62...)
+  let cleanPhone = phone.replace(/[^0-9]/g, '');
+  if (cleanPhone.startsWith('0')) {
+    cleanPhone = '62' + cleanPhone.slice(1);
+  } else if (cleanPhone.startsWith('8')) {
+    cleanPhone = '62' + cleanPhone;
+  }
+
+  // 3. Simpan hash & metadata (tersedia via email maupun nomor whatsapp)
   const record: ReferralRecord = {
     email,
+    phone: cleanPhone || phone,
     username,
     otpHash,
     createdAtMs: now,
@@ -604,9 +616,18 @@ app.post('/api/auth/send-referral-code', async (req, res) => {
     used: false
   };
   referralCodesStore.set(email, record);
+  if (cleanPhone) {
+    referralCodesStore.set(cleanPhone, record);
+  }
 
-  // 4. Siapkan Konten Email
-  const subject = `[Istana Bubur] Kode Referral Pendaftaran: ${otp}`;
+  // 4. Siapkan format pesan WhatsApp resmi
+  const waMsg = `*ISTANA BUBUR - KODE OTP PENDAFTARAN*\n\nHalo *${username}*,\nBerikut adalah 6-digit Kode OTP Verifikasi Pendaftaran Akun Anda:\n\n👉 *${otp}* 👈\n\nKode ini bersifat rahasia dan berlaku selama 10 menit.\nMasukkan kode ini pada aplikasi untuk menyelesaikan pendaftaran.`;
+  const waUrl = cleanPhone 
+    ? `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(waMsg)}`
+    : `https://api.whatsapp.com/send?text=${encodeURIComponent(waMsg)}`;
+
+  // 5. Siapkan Konten Email
+  const subject = `[Istana Bubur] Kode OTP Verifikasi Pendaftaran: ${otp}`;
   const htmlContent = `
   <!DOCTYPE html>
   <html>
@@ -619,7 +640,7 @@ app.post('/api/auth/send-referral-code', async (req, res) => {
       </div>
       <div style="padding: 24px; color: #1e293b;">
         <p style="margin-top: 0;">Halo <strong>${username}</strong>,</p>
-        <p>Berikut adalah 6-digit kode referral verifikasi email untuk pendaftaran akun Anda:</p>
+        <p>Berikut adalah 6-digit kode OTP verifikasi pendaftaran akun Anda:</p>
         <div style="text-align: center; margin: 28px 0;">
           <div style="display: inline-block; background: #0f172a; color: #ffffff; font-family: monospace; font-size: 34px; font-weight: 900; letter-spacing: 8px; padding: 16px 32px; border-radius: 12px;">
             ${otp}
@@ -627,7 +648,7 @@ app.post('/api/auth/send-referral-code', async (req, res) => {
           <p style="color: #dc2626; font-size: 12px; font-weight: 700; margin-top: 10px;">⏳ Berlaku selama 10 Menit</p>
         </div>
         <p style="font-size: 13px; color: #64748b; line-height: 1.5;">
-          Masukkan kode ini pada aplikasi untuk melanjutkan ke pengisian Kode Autentikasi Admin.
+          Jangan berikan kode ini kepada siapapun demi keamanan sistem. Masukkan kode ini pada aplikasi untuk melanjutkan pendaftaran.
         </p>
       </div>
       <div style="background: #f8fafc; border-top: 1px solid #f1f5f9; padding: 16px; text-align: center; font-size: 11px; color: #94a3b8;">
@@ -638,45 +659,49 @@ app.post('/api/auth/send-referral-code', async (req, res) => {
   </html>
   `;
 
-  // 5. Kirim via SMTP dengan auto-fallback (Port 465 SSL -> Port 587 TLS)
-  try {
-    const sendResult = await sendEmailWithFallback({
-      to: email,
-      subject,
-      html: htmlContent
-    });
+  // 6. Kirim via SMTP jika metode melibatkan email
+  let emailDelivered = false;
+  let emailErrorMsg = '';
 
-    if (sendResult.success) {
-      console.log(`[SMTP SUCCESS] Sent to ${email} via port ${sendResult.port}`);
-      return res.json({
-        success: true,
-        delivered: true,
-        expiresAt: expiresAtMs,
-        message: `Kode referral 6-digit berhasil dikirimkan ke email ${email}. Silakan cek Kotak Masuk atau folder Spam Gmail Anda.`
+  if (deliveryMethod !== 'whatsapp') {
+    try {
+      const sendResult = await sendEmailWithFallback({
+        to: email,
+        subject,
+        html: htmlContent
       });
-    }
 
-    // Jika gagal mengirim via SMTP, sediakan pesan jelas dan kode darurat
-    console.error(`[SMTP FAILED] ${sendResult.error}`);
-    return res.status(200).json({
-      success: true,
-      delivered: false,
-      devMode: true,
-      codeForTesting: otp,
-      expiresAt: expiresAtMs,
-      message: `Email ke ${email} terkendala SMTP (${sendResult.error}). Kode referral verifikasi Anda: ${otp}`
-    });
-  } catch (err: any) {
-    console.error('[SEND REFERRAL EXCEPTION]:', err);
-    return res.status(200).json({
-      success: true,
-      delivered: false,
-      devMode: true,
-      codeForTesting: otp,
-      expiresAt: expiresAtMs,
-      message: `Kode referral pendaftaran: ${otp}. Masukkan kode ini pada langkah 2.`
-    });
+      if (sendResult.success) {
+        emailDelivered = true;
+        console.log(`[SMTP SUCCESS] Sent to ${email} via port ${sendResult.port}`);
+      } else {
+        emailErrorMsg = sendResult.error || 'Kendala koneksi SMTP';
+        console.warn(`[SMTP WARN] Email to ${email} error: ${emailErrorMsg}`);
+      }
+    } catch (err: any) {
+      emailErrorMsg = err?.message || 'Gagal mengirim email';
+      console.warn(`[SMTP EXCEPTION] Email to ${email}:`, emailErrorMsg);
+    }
   }
+
+  // Response: TIDAK membocorkan kode darurat di pesan teks
+  // Kode OTP disediakan untuk channel WhatsApp & sinkronisasi verifikasi
+  return res.json({
+    success: true,
+    emailDelivered,
+    emailError: emailDelivered ? null : emailErrorMsg,
+    phone: cleanPhone || phone,
+    email,
+    expiresAt: expiresAtMs,
+    otpCode: otp,
+    whatsappUrl: waUrl,
+    whatsappMessage: waMsg,
+    message: emailDelivered
+      ? `Kode OTP verifikasi berhasil dikirim ke email ${email}. Anda juga dapat menerimanya via WhatsApp.`
+      : (cleanPhone
+          ? `Kode OTP verifikasi siap dikirimkan ke WhatsApp ${phone}. Silakan buka chat WhatsApp untuk menerimanya.`
+          : `Kode OTP verifikasi telah diproses untuk akun Anda. Silakan cek email atau gunakan nomor WhatsApp.`)
+  });
 });
 
 // Endpoint status SMTP Gmail
@@ -773,13 +798,13 @@ app.post('/api/auth/send-referral-email', async (req, res) => {
     return res.json({
       success: true,
       delivered: false,
-      message: `Kode verifikasi diproses untuk email ${email}. (Kode cadangan: ${code})`
+      message: `Email sedang diproses. Silakan periksa inbox/spam atau gunakan nomor WhatsApp yang didaftarkan.`
     });
   } catch (err: any) {
     return res.status(200).json({
       success: true,
       delivered: false,
-      message: `Kode verifikasi Anda adalah: ${code}`
+      message: `Email sedang diproses. Silakan periksa inbox/spam atau gunakan nomor WhatsApp yang didaftarkan.`
     });
   }
 });
@@ -787,34 +812,43 @@ app.post('/api/auth/send-referral-email', async (req, res) => {
 // Endpoint: Verifikasi Kode Referral OTP
 app.post('/api/auth/verify-referral-code', (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
+  const phone = String(req.body.phone || '').trim();
   const code = String(req.body.code || '').trim();
 
-  if (!email || !code || code.length !== 6) {
+  if (!code || code.length !== 6) {
     return res.status(400).json({
       success: false,
-      message: 'Email dan 6-digit kode referral wajib diisi.'
+      message: 'Kode OTP 6-digit wajib diisi.'
     });
   }
 
-  const record = referralCodesStore.get(email);
+  let cleanPhone = phone.replace(/[^0-9]/g, '');
+  if (cleanPhone.startsWith('0')) cleanPhone = '62' + cleanPhone.slice(1);
+  else if (cleanPhone.startsWith('8')) cleanPhone = '62' + cleanPhone;
+
+  let record = referralCodesStore.get(email);
+  if (!record && cleanPhone) {
+    record = referralCodesStore.get(cleanPhone);
+  }
+
   if (!record) {
     return res.status(404).json({
       success: false,
-      message: 'Kode referral untuk email ini tidak ditemukan. Silakan klik "Kirim Kode Referral ke Email".'
+      message: 'Kode OTP untuk data pendaftaran ini tidak ditemukan atau telah kedaluwarsa. Silakan minta kode baru.'
     });
   }
 
   if (record.used) {
     return res.status(400).json({
       success: false,
-      message: 'Kode referral ini sudah pernah digunakan. Silakan minta kode baru.'
+      message: 'Kode OTP ini sudah pernah digunakan. Silakan minta kode baru.'
     });
   }
 
   if (Date.now() > record.expiresAtMs) {
     return res.status(410).json({
       success: false,
-      message: 'Kode referral telah kedaluwarsa (lebih dari 10 menit). Silakan klik "Kirim Ulang Kode".'
+      message: 'Kode OTP telah kedaluwarsa (lebih dari 10 menit). Silakan minta kode baru.'
     });
   }
 
@@ -822,7 +856,7 @@ app.post('/api/auth/verify-referral-code', (req, res) => {
   if (inputHash !== record.otpHash) {
     return res.status(401).json({
       success: false,
-      message: 'Kode referral salah! Periksa kembali angka yang tertera pada email Anda.'
+      message: 'Kode OTP tidak cocok! Periksa kembali angka yang diterima di Email atau WhatsApp Anda.'
     });
   }
 
@@ -830,7 +864,7 @@ app.post('/api/auth/verify-referral-code', (req, res) => {
   record.used = true;
   return res.json({
     success: true,
-    message: 'Kode referral email berhasil diverifikasi!'
+    message: 'Kode OTP verifikasi pendaftaran berhasil diverifikasi!'
   });
 });
 
@@ -1135,7 +1169,7 @@ app.post('/api/auth/send-otp-email', async (req, res) => {
       devMode: true,
       expiresAt: expiresAtMs,
       codeForTesting: otp,
-      message: `Kode OTP verifikasi: ${otp}. (Terkendala kirim SMTP: ${sendResult.error})`
+      message: `Email verifikasi terkendala sementara (${sendResult.error}). Silakan coba kirim ulang atau gunakan verifikasi alternatif.`
     });
   } catch (err: any) {
     console.error('[SEND OTP EXCEPTION]:', err);
@@ -1145,7 +1179,7 @@ app.post('/api/auth/send-otp-email', async (req, res) => {
       devMode: true,
       expiresAt: expiresAtMs,
       codeForTesting: otp,
-      message: `Kode OTP verifikasi: ${otp}`
+      message: `Email verifikasi terkendala sementara. Silakan coba kirim ulang atau gunakan verifikasi alternatif.`
     });
   }
 });
