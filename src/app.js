@@ -23,7 +23,17 @@ import {
     firestoreGetHistoriGaji,
     firestoreProcessSlipGaji,
     firestoreDeleteHistoriGaji,
-    subscribeToTransactions
+    subscribeToTransactions,
+    subscribeToAdminChat,
+    sendAdminChatMessage,
+    deleteAdminChatMessage,
+    subscribeToAdminConversations,
+    markAdminConversationRead,
+    subscribeToGroupChat,
+    sendGroupChatMessage,
+    deleteGroupChatMessage,
+    clearGroupChatMessages,
+    compressImageFile
 } from './firebase.ts';
 
 // Global Cache & State
@@ -66,7 +76,25 @@ const KARYAWAN_STORAGE_KEY = 'ib_stored_karyawan';
 const USERS_STORAGE_KEY = 'ib_stored_users';
 const MASTER_AUTH_STORAGE_KEY = 'ib_master_auth_key';
 
-// Helper URL Endpoint API agar mendukung Browser, Android WebView APK (file://), Capacitor, dan Cloud Host
+let chatPollTimer = null;
+let wsPingInterval = null;
+
+// Domain Cloud Server default untuk Android WebView APK, Capacitor, dan Web
+const CLOUD_HOST_DEFAULT = 'ais-dev-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app';
+
+// Deteksi cerdas apakah berjalan di dalam APK Android WebView / file:// / Capacitor / local host non-dev
+function isAndroidApkOrFileEnv() {
+    const origin = window.location.origin;
+    const protocol = window.location.protocol;
+    const host = window.location.host;
+    return !origin || origin === 'null' || protocol === 'file:' || 
+        origin.startsWith('capacitor://') || origin.startsWith('ionic://') || origin.startsWith('content://') ||
+        !host || host === 'null' || host === '' || 
+        (window.location.hostname === 'localhost' && window.location.port !== '3000') ||
+        (typeof window.AndroidPrinter !== 'undefined' && protocol !== 'https:' && protocol !== 'http:');
+}
+
+// Helper URL Endpoint API agar mendukung Browser Web, Desktop, dan Android WebView APK (file://)
 function getApiEndpoint(path) {
     if (!path.startsWith('/')) path = '/' + path;
     
@@ -76,20 +104,40 @@ function getApiEndpoint(path) {
         return customServer.replace(/\/+$/, '') + path;
     }
 
-    // 2. Deteksi lingkungan APK (file:, null, capacitor:, dll)
-    const origin = window.location.origin;
-    const protocol = window.location.protocol;
-    const isApkOrFile = !origin || origin === 'null' || protocol === 'file:' || 
-        origin.startsWith('capacitor://') || origin.startsWith('ionic://') || origin.startsWith('content://');
-
-    if (isApkOrFile) {
-        // Arahkan ke Cloud Run backend
-        return 'https://ais-dev-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app' + path;
+    // 2. Deteksi lingkungan APK Android WebView (file:, null, capacitor:, dll)
+    if (isAndroidApkOrFileEnv()) {
+        return 'https://' + CLOUD_HOST_DEFAULT + path;
     }
 
-    // 3. Lingkungan web standar (gunakan relative path)
+    // 3. Lingkungan web & desktop standar (gunakan relative path)
     return path;
 }
+
+// Helper URL Endpoint WebSocket agar mendukung APK Android WebView, Web Browser, dan Desktop
+function getWebSocketEndpoint(path = '/ws/chat') {
+    if (!path.startsWith('/')) path = '/' + path;
+
+    // 1. Cek jika pengguna menyetel server custom di localStorage
+    const customServer = (localStorage.getItem('IB_API_SERVER_URL') || '').trim();
+    if (customServer.startsWith('http://') || customServer.startsWith('https://')) {
+        const wsProto = customServer.startsWith('https://') ? 'wss:' : 'ws:';
+        const cleanHost = customServer.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+        return `${wsProto}//${cleanHost}${path}`;
+    }
+
+    // 2. Deteksi lingkungan APK Android WebView
+    if (isAndroidApkOrFileEnv()) {
+        return `wss://${CLOUD_HOST_DEFAULT}${path}`;
+    }
+
+    // 3. Lingkungan web & desktop standar
+    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host || CLOUD_HOST_DEFAULT;
+    return `${wsProto}//${host}${path}`;
+}
+window.isAndroidApkOrFileEnv = isAndroidApkOrFileEnv;
+window.getApiEndpoint = getApiEndpoint;
+window.getWebSocketEndpoint = getWebSocketEndpoint;
 
 // Buka Aplikasi Gmail di luar APK/Browser
 function openGmailApp() {
@@ -146,7 +194,7 @@ function setActiveMasterAuthKey(newKey) {
 const VALID_AUTH_CODES = ['IB-AUTH-2026', 'ADMIN-IB-889', 'IB-PUSAT-99'];
 
 
-// Akun Bawaan (Admin bawaan telah dihapus sesuai permintaan)
+// Akun Bawaan (Hanya Kasir bawaan tanpa hardcode cabang, admin bawaan telah dihapus)
 const DEFAULT_USERS = [
     {
         username: 'kasir1',
@@ -155,7 +203,7 @@ const DEFAULT_USERS = [
         email: 'kasir1@istanabubur.com',
         phone: '082198765432',
         role: 'Kasir',
-        cabang: 'Cabang A',
+        cabang: '',
         isActive: true,
         authCode: 'IB-AUTH-2026'
     },
@@ -166,7 +214,7 @@ const DEFAULT_USERS = [
         email: 'kasir2@istanabubur.com',
         phone: '085211223344',
         role: 'Kasir',
-        cabang: 'Cabang B',
+        cabang: '',
         isActive: true,
         authCode: 'IB-AUTH-2026'
     }
@@ -180,6 +228,13 @@ function getAllUsers() {
             if (Array.isArray(parsed)) {
                 // Filter hapus akun bawaan admin/123456 jika masih tersimpan di storage lokal lama
                 parsed = parsed.filter(u => !(u.username && u.username.toLowerCase() === 'admin' && (u.password === '123456' || u.password === '123')));
+                // Hapus nama cabang hardcode Cabang A, B, C dari data lama
+                parsed = parsed.map(u => {
+                    if (u.cabang && ['Cabang A', 'Cabang B', 'Cabang C'].includes(u.cabang.trim())) {
+                        return { ...u, cabang: '' };
+                    }
+                    return u;
+                });
                 localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(parsed));
                 const combined = [...DEFAULT_USERS];
                 parsed.forEach(p => {
@@ -196,6 +251,56 @@ function getAllUsers() {
     } catch(e) {}
     return [...DEFAULT_USERS];
 }
+
+// Ambil seluruh daftar cabang yang benar-benar terdaftar di sistem (tanpa Cabang A, B, C hardcode)
+function getAllRegisteredBranches() {
+    const branchSet = new Set();
+    
+    // 1. Ambil dari akun pengguna yang terdaftar di sistem
+    const users = getAllUsers();
+    if (Array.isArray(users)) {
+        users.forEach(u => {
+            const c = (u.cabang || '').trim();
+            if (c && c !== 'Pusat' && c !== 'Semua' && !['Cabang A', 'Cabang B', 'Cabang C'].includes(c)) {
+                branchSet.add(c);
+            }
+        });
+    }
+
+    // 2. Ambil dari penempatan cabang data karyawan terdaftar
+    const karyawanList = Array.isArray(KARYAWAN_DATA) && KARYAWAN_DATA.length > 0 ? KARYAWAN_DATA : (KARYAWAN_CACHE || []);
+    if (Array.isArray(karyawanList)) {
+        karyawanList.forEach(k => {
+            const loc = (k['Lokasi Cabang'] || k['Cabang'] || k.cabang || '').trim();
+            if (loc && loc !== 'Pusat' && loc !== 'Semua' && !['Cabang A', 'Cabang B', 'Cabang C'].includes(loc)) {
+                branchSet.add(loc);
+            }
+        });
+    }
+
+    // 3. Ambil dari cabang transaksi yang tercatat
+    if (Array.isArray(HISTORI_TRX_CACHE)) {
+        HISTORI_TRX_CACHE.forEach(t => {
+            const c = (t['Cabang'] || t.cabang || '').trim();
+            if (c && c !== 'Pusat' && c !== 'Semua' && !['Cabang A', 'Cabang B', 'Cabang C'].includes(c)) {
+                branchSet.add(c);
+            }
+        });
+    }
+
+    // 4. Ambil dari riwayat percakapan chat aktif
+    if (Array.isArray(CHAT_MESSAGES)) {
+        CHAT_MESSAGES.forEach(m => {
+            const mc = (m.cabang || '').trim();
+            if (mc && mc !== 'Pusat' && mc !== 'Semua' && !['Cabang A', 'Cabang B', 'Cabang C'].includes(mc)) {
+                branchSet.add(mc);
+            }
+        });
+    }
+
+    return Array.from(branchSet).sort();
+}
+window.getAllRegisteredBranches = getAllRegisteredBranches;
 
 function saveUserAccount(userObj) {
     let saved = [];
@@ -242,7 +347,7 @@ const DEFAULT_HISTORI_GAJI = [
         'Bonus': 150000, 
         'Potongan': 0, 
         'Total Gaji': 2490000, 
-        'Cabang': 'Cabang A', 
+        'Cabang': 'Pusat', 
         'Jabatan': 'Kasir', 
         'No WA': '081234567890', 
         'Keterangan Libur': '', 
@@ -258,7 +363,7 @@ const DEFAULT_HISTORI_GAJI = [
         'Bonus': 100000, 
         'Potongan': 50000, 
         'Total Gaji': 2550000, 
-        'Cabang': 'Cabang A', 
+        'Cabang': 'Pusat', 
         'Jabatan': 'Dapur Bubur', 
         'No WA': '081298765432', 
         'Keterangan Libur': 'Izin 1 hari', 
@@ -283,8 +388,8 @@ const DEFAULT_HISTORI_GAJI = [
 ];
 
 const DEFAULT_KARYAWAN = [
-    { rowIndex: 1, 'ID Karyawan': 'KRY-001', 'Nama': 'Budi Santoso', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Kasir', 'Lokasi Cabang': 'Cabang A', 'No WA': '081234567890', 'Gaji Harian': 90000, 'Email': 'budi@istanabubur.com' },
-    { rowIndex: 2, 'ID Karyawan': 'KRY-002', 'Nama': 'Siti Rahma', 'Jenis Kelamin': 'Perempuan', 'Jabatan': 'Dapur Bubur', 'Lokasi Cabang': 'Cabang A', 'No WA': '081298765432', 'Gaji Harian': 100000, 'Email': 'siti@istanabubur.com' },
+    { rowIndex: 1, 'ID Karyawan': 'KRY-001', 'Nama': 'Budi Santoso', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Kasir', 'Lokasi Cabang': 'Pusat', 'No WA': '081234567890', 'Gaji Harian': 90000, 'Email': 'budi@istanabubur.com' },
+    { rowIndex: 2, 'ID Karyawan': 'KRY-002', 'Nama': 'Siti Rahma', 'Jenis Kelamin': 'Perempuan', 'Jabatan': 'Dapur Bubur', 'Lokasi Cabang': 'Pusat', 'No WA': '081298765432', 'Gaji Harian': 100000, 'Email': 'siti@istanabubur.com' },
     { rowIndex: 3, 'ID Karyawan': 'KRY-003', 'Nama': 'Agus Prayogo', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Driver', 'Lokasi Cabang': 'Pusat', 'No WA': '081345678901', 'Gaji Harian': 85000, 'Email': 'agus@istanabubur.com' }
 ];
 
@@ -294,7 +399,7 @@ function getSampleTransactions() {
         {
             'ID Transaksi': 'TRX-882101',
             'Tanggal': `${today} 08:30`,
-            'Cabang': 'Cabang A',
+            'Cabang': 'Pusat',
             'Kasir': 'kasir1',
             'Total Belanja': 45000,
             'Nama Pelanggan': 'Pak Joko [Dine In - Sambal dipisah]',
@@ -311,7 +416,7 @@ function getSampleTransactions() {
         {
             'ID Transaksi': 'TRX-882102',
             'Tanggal': `${today} 09:15`,
-            'Cabang': 'Cabang A',
+            'Cabang': 'Pusat',
             'Kasir': 'kasir1',
             'Total Belanja': 20000,
             'Nama Pelanggan': 'Ibu Dewi [Takeaway - Kerupuk banyak]',
@@ -713,7 +818,7 @@ async function callBackend(funcName, ...args) {
                     username: matched.username,
                     fullName: matched.fullName || matched.username,
                     role: matched.role,
-                    cabang: matched.cabang || (matched.role === 'Admin' ? 'Pusat' : 'Cabang A'),
+                    cabang: (matched.cabang && !['Cabang A', 'Cabang B', 'Cabang C'].includes(matched.cabang.trim())) ? matched.cabang : (matched.role === 'Admin' ? 'Pusat' : ''),
                     email: matched.email,
                     phone: matched.phone
                 }
@@ -2424,12 +2529,16 @@ async function saveNewAdminAuthCode(e) {
     syncAdminAuthKeyUI();
 }
 
+function initChatWebSocket() {
+    initRealtimeChatSystem();
+}
+
 function loginSuccessLogic() {
     document.getElementById('auth-view').classList.add('hidden-view');
     document.getElementById('main-app').classList.remove('hidden-view');
     
     applyRoleRestrictions();
-    initChatWebSocket();
+    initRealtimeChatSystem();
 
     const now = new Date();
     const monthDash = document.getElementById('filter-month-dashboard');
@@ -2774,10 +2883,12 @@ async function initDashboardCharts() {
 function populateCabangFilterDashboard() {
     const filter = document.getElementById('filter-cabang-dashboard');
     if (!filter) return;
-    const cabangs = new Set();
-    (HISTORI_TRX_CACHE || []).forEach(t => { if (t['Cabang']) cabangs.add(t['Cabang']); });
+    const currentVal = filter.value || 'Semua';
+    const registered = typeof getAllRegisteredBranches === 'function' ? getAllRegisteredBranches() : [];
     let html = '<option value="Semua">Semua Cabang</option>';
-    cabangs.forEach(c => html += `<option value="${c}">${c}</option>`);
+    registered.forEach(c => {
+        html += `<option value="${c}" ${c === currentVal ? 'selected' : ''}>${c}</option>`;
+    });
     filter.innerHTML = html;
 }
 
@@ -4365,10 +4476,9 @@ async function loadHistoriTransaksi() {
         if (CURRENT_USER && CURRENT_USER.role === 'Admin') {
             const filter = document.getElementById('filter-cabang-trx');
             if (filter) {
-                const cabangs = new Set();
-                HISTORI_TRX_CACHE.forEach(t => { if (t['Cabang']) cabangs.add(t['Cabang']); });
+                const registered = typeof getAllRegisteredBranches === 'function' ? getAllRegisteredBranches() : [];
                 let html = '<option value="Semua">Semua Cabang</option>';
-                cabangs.forEach(c => html += `<option value="${c}">${c}</option>`);
+                registered.forEach(c => html += `<option value="${c}">${c}</option>`);
                 const prevVal = filter.value;
                 filter.innerHTML = html;
                 if (Array.from(filter.options).some(o => o.value === prevVal)) filter.value = prevVal;
@@ -5518,7 +5628,7 @@ function openExportModal(defaultType = 'transaksi') {
     // Populate branch select
     const cabangSelect = document.getElementById('export-filter-cabang');
     if (cabangSelect) {
-        const branches = new Set(['Semua', 'Pusat', 'Cabang A', 'Cabang B']);
+        const branches = new Set(['Semua', 'Pusat', ...getAllRegisteredBranches()]);
         if (Array.isArray(HISTORI_TRX_CACHE)) {
             HISTORI_TRX_CACHE.forEach(t => { if (t['Cabang']) branches.add(t['Cabang']); });
         }
@@ -6070,185 +6180,999 @@ window.generateReceiptWhatsAppMessage = generateReceiptWhatsAppMessage;
 window.generateSlipGajiWhatsAppMessage = generateSlipGajiWhatsAppMessage;
 
 // ==========================================
-// REAL-TIME CHAT BANTUAN (ADMIN & SELURUH CABANG)
+// REAL-TIME CHAT BANTUAN (CLOUD FIRESTORE)
+// 1. CHAT ADMIN (1-on-1 Privat User ↔ Admin)
+// 2. GRUP PENGGUNA (Grup Publik Seluruh User)
+// Realtime Firestore onSnapshot, Base64 Image Compression,
+// Audio Notification, Pop-up Banner, Moderasi Admin
 // ==========================================
 
-function initChatWebSocket() {
-    if (!CURRENT_USER) return;
-    if (wsChat && (wsChat.readyState === WebSocket.OPEN || wsChat.readyState === WebSocket.CONNECTING)) {
-        return;
-    }
+let currentChatSubMode = 'admin'; // 'admin' | 'group'
+let currentSelectedAdminChatUser = null; // target user { username, fullName, role, cabang }
+let adminConversationsList = [];
+let userAdminChatMessages = [];
+let groupChatMessages = [];
 
+let unreadAdminCount = 0;
+let unreadGroupCount = 0;
+let adminUnreadPerUser = {}; // { [username]: count }
+
+let unsubscribeAdminChatListener = null;
+let unsubscribeAdminConversationsListener = null;
+let unsubscribeGroupChatListener = null;
+let unsubscribeKasirAdminChatListener = null;
+
+let pendingUserAdminImage = null; // base64 string
+let pendingAdminThreadImage = null; // base64 string
+let pendingGroupImage = null; // base64 string
+
+let isUserScrolledUpAdmin = false;
+let isUserScrolledUpGroup = false;
+
+// Format Tanggal & Waktu lengkap: DD/MM/YYYY HH:mm
+function formatChatDateTime(isoString) {
+    if (!isoString) return '';
     try {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/chat`;
-        wsChat = new WebSocket(wsUrl);
-
-        updateChatWsStatus('connecting');
-
-        wsChat.onopen = () => {
-            updateChatWsStatus('online');
-            // Register current user session with WebSocket server
-            wsChat.send(JSON.stringify({
-                type: 'register',
-                user: {
-                    username: CURRENT_USER.username,
-                    role: CURRENT_USER.role,
-                    cabang: CURRENT_USER.cabang
-                }
-            }));
-        };
-
-        wsChat.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                if (data.type === 'init') {
-                    CHAT_MESSAGES = Array.isArray(data.messages) ? data.messages : [];
-                    if (data.onlineUsers) {
-                        updateOnlineUsersUI(data.onlineUsers);
-                    }
-                    if (currentTab === 'chat') {
-                        renderChatMessages();
-                        if (CURRENT_USER.role === 'Admin') renderAdminCabangTabs();
-                    }
-                } else if (data.type === 'new_message') {
-                    const newMsg = data.message;
-                    if (!newMsg) return;
-
-                    // Idempotent check
-                    const exists = CHAT_MESSAGES.some(m => m.id === newMsg.id);
-                    if (!exists) {
-                        CHAT_MESSAGES.push(newMsg);
-                    }
-
-                    const isFromSelf = (CURRENT_USER && newMsg.sender === CURRENT_USER.username);
-
-                    // Play bright audio chime for incoming messages from others
-                    if (!isFromSelf) {
-                        playChatNotificationSound();
-                    }
-
-                    const isCurrentTabChat = (currentTab === 'chat');
-
-                    if (CURRENT_USER && CURRENT_USER.role === 'Admin') {
-                        const targetBranch = newMsg.cabang || 'Cabang A';
-                        const isLookingAtThisBranch = isCurrentTabChat && (currentAdminChatCabang === targetBranch || currentAdminChatCabang === 'Semua');
-
-                        if (isLookingAtThisBranch) {
-                            renderChatMessages(newMsg.id);
-                            renderAdminCabangTabs();
-                            if (isUserScrolledUp) {
-                                showScrollBottomButton();
-                            } else {
-                                scrollChatToBottom(false);
-                            }
-                        } else {
-                            if (!isFromSelf) {
-                                if (targetBranch !== 'Semua') {
-                                    cabangUnreadCounts[targetBranch] = (cabangUnreadCounts[targetBranch] || 0) + 1;
-                                }
-                                chatUnreadCount++;
-                                updateChatUnreadBadges();
-                                if (isCurrentTabChat) {
-                                    renderAdminCabangTabs();
-                                }
-                                showChatNotificationPopup(newMsg);
-                            }
-                        }
-                    } else if (CURRENT_USER && CURRENT_USER.role === 'Kasir') {
-                        const userCabang = CURRENT_USER.cabang || 'Cabang A';
-                        const isRelevant = (newMsg.cabang === userCabang || newMsg.cabang === 'Semua');
-
-                        if (isRelevant) {
-                            if (isCurrentTabChat) {
-                                renderChatMessages(newMsg.id);
-                                if (isUserScrolledUp) {
-                                    showScrollBottomButton();
-                                } else {
-                                    scrollChatToBottom(false);
-                                }
-                            } else {
-                                if (!isFromSelf) {
-                                    chatUnreadCount++;
-                                    updateChatUnreadBadges();
-                                    showChatNotificationPopup(newMsg);
-                                }
-                            }
-                        }
-                    }
-                } else if (data.type === 'presence') {
-                    if (data.onlineUsers) {
-                        updateOnlineUsersUI(data.onlineUsers);
-                    }
-                } else if (data.type === 'typing') {
-                    handleIncomingTyping(data);
-                }
-            } catch (err) {
-                console.error('Error handling WebSocket message:', err);
-            }
-        };
-
-        wsChat.onclose = () => {
-            updateChatWsStatus('offline');
-            if (CURRENT_USER) {
-                setTimeout(() => {
-                    initChatWebSocket();
-                }, 4000);
-            }
-        };
-
-        wsChat.onerror = (err) => {
-            console.warn('WebSocket error:', err);
-            updateChatWsStatus('offline');
-        };
+        const d = new Date(isoString);
+        if (isNaN(d.getTime())) return '';
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const year = d.getFullYear();
+        const hours = String(d.getHours()).padStart(2, '0');
+        const mins = String(d.getMinutes()).padStart(2, '0');
+        return `${day}/${month}/${year} ${hours}:${mins}`;
     } catch (e) {
-        console.error('Failed to initialize WebSocket:', e);
-        updateChatWsStatus('offline');
+        return '';
+    }
+}
+
+// Inisialisasi Sistem Chat Realtime Firestore
+function initRealtimeChatSystem() {
+    if (!CURRENT_USER) return;
+    cleanupChatSubscriptions();
+
+    // 1. Dengarkan Grup Pengguna Realtime untuk semua role
+    unsubscribeGroupChatListener = subscribeToGroupChat((messages) => {
+        const previousLength = groupChatMessages.length;
+        const oldLastId = groupChatMessages.length > 0 ? groupChatMessages[groupChatMessages.length - 1].id : null;
+        groupChatMessages = messages || [];
+
+        // Deteksi jika ada pesan baru masuk dari user lain
+        if (groupChatMessages.length > 0) {
+            const latest = groupChatMessages[groupChatMessages.length - 1];
+            if (latest.senderUsername !== CURRENT_USER.username && latest.id !== oldLastId && previousLength > 0) {
+                playChatNotificationSound();
+                if (currentTab !== 'chat' || currentChatSubMode !== 'group') {
+                    unreadGroupCount++;
+                    updateChatUnreadBadges();
+                    showChatNotificationPopup({
+                        title: 'Pesan Baru di Grup Pengguna',
+                        sender: `${latest.senderName || latest.senderUsername} (${latest.senderCabang || 'Cabang'})`,
+                        text: latest.text || (latest.imageUrl ? '📷 [Foto Terlampir]' : ''),
+                        mode: 'group'
+                    });
+                }
+            }
+        }
+
+        if (currentTab === 'chat' && currentChatSubMode === 'group') {
+            renderGroupChatMessages();
+            scrollGroupChatToBottom(!isUserScrolledUpGroup);
+        }
+    });
+
+    // 2. Dengarkan Chat Admin
+    if (CURRENT_USER.role === 'Admin') {
+        // Admin mendengarkan seluruh ringkasan percakapan pengguna
+        unsubscribeAdminConversationsListener = subscribeToAdminConversations((convs) => {
+            adminConversationsList = convs || [];
+            
+            // Hitung total unread untuk Admin
+            let totalAdminUnread = 0;
+            adminUnreadPerUser = {};
+            adminConversationsList.forEach(c => {
+                const count = c.unreadForAdmin || 0;
+                adminUnreadPerUser[c.username] = count;
+                totalAdminUnread += count;
+            });
+            unreadAdminCount = totalAdminUnread;
+            updateChatUnreadBadges();
+
+            if (currentTab === 'chat' && currentChatSubMode === 'admin') {
+                renderAdminConversationsSidebar();
+            }
+        });
+
+        // Jika Admin sedang membuka percakapan dengan pengguna tertentu
+        if (currentSelectedAdminChatUser) {
+            subscribeAdminToUserThread(currentSelectedAdminChatUser.username);
+        }
+    } else {
+        // Kasir / Pengguna Umum mendengarkan percakapan pribadi mereka dengan Admin
+        unsubscribeKasirAdminChatListener = subscribeToAdminChat(CURRENT_USER.username, (messages) => {
+            const previousLength = userAdminChatMessages.length;
+            const oldLastId = userAdminChatMessages.length > 0 ? userAdminChatMessages[userAdminChatMessages.length - 1].id : null;
+            userAdminChatMessages = messages || [];
+
+            if (userAdminChatMessages.length > 0) {
+                const latest = userAdminChatMessages[userAdminChatMessages.length - 1];
+                if (latest.senderRole === 'Admin' && latest.id !== oldLastId && previousLength > 0) {
+                    playChatNotificationSound();
+                    if (currentTab !== 'chat' || currentChatSubMode !== 'admin') {
+                        unreadAdminCount++;
+                        updateChatUnreadBadges();
+                        showChatNotificationPopup({
+                            title: 'Balasan dari Admin Pusat',
+                            sender: '👑 Admin Pusat',
+                            text: latest.text || (latest.imageUrl ? '📷 [Foto Terlampir]' : ''),
+                            mode: 'admin'
+                        });
+                    }
+                }
+            }
+
+            if (currentTab === 'chat' && currentChatSubMode === 'admin') {
+                renderUserAdminMessages();
+                scrollUserAdminChatToBottom(!isUserScrolledUpAdmin);
+                // Tandai dibaca
+                markAdminConversationRead(CURRENT_USER.username, 'Kasir');
+                unreadAdminCount = 0;
+                updateChatUnreadBadges();
+            }
+        });
+    }
+}
+
+function cleanupChatSubscriptions() {
+    if (unsubscribeAdminChatListener) {
+        try { unsubscribeAdminChatListener(); } catch(e) {}
+        unsubscribeAdminChatListener = null;
+    }
+    if (unsubscribeAdminConversationsListener) {
+        try { unsubscribeAdminConversationsListener(); } catch(e) {}
+        unsubscribeAdminConversationsListener = null;
+    }
+    if (unsubscribeGroupChatListener) {
+        try { unsubscribeGroupChatListener(); } catch(e) {}
+        unsubscribeGroupChatListener = null;
+    }
+    if (unsubscribeKasirAdminChatListener) {
+        try { unsubscribeKasirAdminChatListener(); } catch(e) {}
+        unsubscribeKasirAdminChatListener = null;
     }
 }
 
 function closeChatWebSocket() {
-    if (wsChat) {
-        try {
-            wsChat.close();
-        } catch (e) {}
-        wsChat = null;
-    }
+    cleanupChatSubscriptions();
     chatUnreadCount = 0;
+    unreadAdminCount = 0;
+    unreadGroupCount = 0;
     updateChatUnreadBadges();
 }
 
-function updateChatWsStatus(status) {
-    const badge = document.getElementById('chat-ws-status-badge');
-    const text = document.getElementById('chat-ws-status-text');
-    const dot = document.getElementById('chat-ws-dot');
-    if (!badge || !text || !dot) return;
+// Buka Menu Chat Bantuan
+function openChatView() {
+    if (!CURRENT_USER) return;
+    initRealtimeChatSystem();
+    updateChatSoundUI();
+    switchChatSubMode(currentChatSubMode);
+}
 
-    if (status === 'online') {
-        badge.className = 'inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200';
-        dot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
-        text.innerText = 'Online (Live)';
-    } else if (status === 'connecting') {
-        badge.className = 'inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200';
-        dot.className = 'w-2 h-2 rounded-full bg-amber-500 animate-pulse';
-        text.innerText = 'Menghubungkan...';
+// Beralih Sub-Tab: 'admin' atau 'group'
+function switchChatSubMode(mode) {
+    currentChatSubMode = mode;
+
+    const btnAdmin = document.getElementById('btn-chat-subtab-admin');
+    const btnGroup = document.getElementById('btn-chat-subtab-group');
+    const containerAdmin = document.getElementById('container-chat-admin');
+    const containerGroup = document.getElementById('container-chat-group');
+    const userAdminView = document.getElementById('user-admin-chat-view');
+    const adminAdminView = document.getElementById('admin-admin-chat-view');
+    const badgeSubAdmin = document.getElementById('badge-sub-admin-unread');
+    const badgeSubGroup = document.getElementById('badge-sub-group-unread');
+
+    if (mode === 'admin') {
+        if (btnAdmin) {
+            btnAdmin.className = 'flex items-center gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold transition shadow-xs bg-red-600 text-white';
+        }
+        if (btnGroup) {
+            btnGroup.className = 'flex items-center gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold transition text-gray-700 bg-white hover:bg-gray-100 border border-gray-200';
+        }
+
+        if (containerAdmin) containerAdmin.classList.remove('hidden-view');
+        if (containerGroup) containerGroup.classList.add('hidden-view');
+
+        if (CURRENT_USER.role === 'Admin') {
+            if (userAdminView) userAdminView.classList.add('hidden-view');
+            if (adminAdminView) adminAdminView.classList.remove('hidden-view');
+            renderAdminConversationsSidebar();
+            if (currentSelectedAdminChatUser) {
+                subscribeAdminToUserThread(currentSelectedAdminChatUser.username);
+            }
+        } else {
+            if (userAdminView) userAdminView.classList.remove('hidden-view');
+            if (adminAdminView) adminAdminView.classList.add('hidden-view');
+            renderUserAdminMessages();
+            scrollUserAdminChatToBottom(false);
+            markAdminConversationRead(CURRENT_USER.username, 'Kasir');
+            unreadAdminCount = 0;
+            if (badgeSubAdmin) badgeSubAdmin.classList.add('hidden-view');
+            updateChatUnreadBadges();
+        }
     } else {
-        badge.className = 'inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200';
-        dot.className = 'w-2 h-2 rounded-full bg-gray-400';
-        text.innerText = 'Mode Cadangan (HTTP)';
+        // Mode Grup Pengguna
+        if (btnGroup) {
+            btnGroup.className = 'flex items-center gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold transition shadow-xs bg-red-600 text-white';
+        }
+        if (btnAdmin) {
+            btnAdmin.className = 'flex items-center gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold transition text-gray-700 bg-white hover:bg-gray-100 border border-gray-200';
+        }
+
+        if (containerAdmin) containerAdmin.classList.add('hidden-view');
+        if (containerGroup) containerGroup.classList.remove('hidden-view');
+
+        unreadGroupCount = 0;
+        if (badgeSubGroup) badgeSubGroup.classList.add('hidden-view');
+        updateChatUnreadBadges();
+
+        // Tampilkan tombol moderasi admin jika role Admin
+        const modBadge = document.getElementById('admin-group-moderation-badge');
+        const clearBtn = document.getElementById('btn-clear-group-chat');
+        if (CURRENT_USER.role === 'Admin') {
+            if (modBadge) modBadge.classList.remove('hidden-view');
+            if (clearBtn) clearBtn.classList.remove('hidden-view');
+        } else {
+            if (modBadge) modBadge.classList.add('hidden-view');
+            if (clearBtn) clearBtn.classList.add('hidden-view');
+        }
+
+        renderGroupChatMessages();
+        scrollGroupChatToBottom(false);
     }
 }
 
-function updateOnlineUsersUI(onlineUsers) {
-    const el = document.getElementById('chat-online-count');
-    if (!el || !Array.isArray(onlineUsers)) return;
-    const count = Math.max(1, onlineUsers.length);
-    el.innerText = `${count} Online`;
+// ----------------------------------------------------
+// 1. BAGIAN CHAT USER ↔ ADMIN (TAMPILAN USER / KASIR)
+// ----------------------------------------------------
+
+function renderUserAdminMessages() {
+    const container = document.getElementById('user-admin-messages-box');
+    if (!container || !CURRENT_USER) return;
+
+    if (userAdminChatMessages.length === 0) {
+        container.innerHTML = `
+            <div class="h-full min-h-[280px] flex flex-col items-center justify-center text-center p-6 text-gray-400">
+                <div class="w-14 h-14 rounded-2xl bg-red-50 text-red-500 flex items-center justify-center text-2xl mb-3 shadow-inner">
+                    <i class="fas fa-headset"></i>
+                </div>
+                <p class="text-sm font-bold text-gray-800 mb-1">Mulai Chat dengan Admin Pusat</p>
+                <p class="text-xs text-gray-500 max-w-sm leading-relaxed">
+                    Sampaikan kendala kasir, stok menu, printer, atau pertanyaan operasional langsung ke Admin.
+                </p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = userAdminChatMessages.map(msg => {
+        const isSelf = (msg.senderUsername === CURRENT_USER.username);
+        const timeFormatted = formatChatDateTime(msg.timestamp);
+
+        if (isSelf) {
+            return `
+                <div class="flex flex-col items-end">
+                    <div class="max-w-[85%] sm:max-w-[70%] bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl rounded-tr-none p-3.5 shadow-sm">
+                        <div class="flex items-center justify-between gap-3 mb-1 text-[10px] text-red-100 font-medium">
+                            <span class="font-bold">${escapeHtml(msg.senderName || msg.senderUsername)} (Anda)</span>
+                            <span>${timeFormatted}</span>
+                        </div>
+                        ${msg.imageUrl ? `
+                            <div class="mb-2 cursor-pointer group relative overflow-hidden rounded-xl bg-black/20" onclick="openChatImageModal('${msg.imageUrl}', '${escapeHtml(msg.senderName)}')">
+                                <img src="${msg.imageUrl}" alt="Lampiran Foto" class="max-h-60 w-full object-cover rounded-xl transition duration-200 group-hover:scale-102">
+                                <div class="absolute inset-0 bg-black/30 group-hover:bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition text-white text-xs font-bold gap-1.5">
+                                    <i class="fas fa-search-plus"></i> Lihat Foto
+                                </div>
+                            </div>
+                        ` : ''}
+                        ${msg.text ? `<p class="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(msg.text)}</p>` : ''}
+                        <div class="flex items-center justify-end gap-1 mt-1 text-[10px] text-red-100">
+                            <i class="fas fa-check-double text-[9px]"></i>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else {
+            return `
+                <div class="flex flex-col items-start">
+                    <div class="max-w-[85%] sm:max-w-[70%] bg-white border border-gray-200 text-gray-900 rounded-2xl rounded-tl-none p-3.5 shadow-xs">
+                        <div class="flex items-center justify-between gap-3 mb-1.5">
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-xs font-bold text-gray-900">${escapeHtml(msg.senderName || 'Admin Pusat')}</span>
+                                <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-800 border border-red-200">👑 Admin</span>
+                            </div>
+                            <span class="text-[10px] text-gray-400 font-medium">${timeFormatted}</span>
+                        </div>
+                        ${msg.imageUrl ? `
+                            <div class="mb-2 cursor-pointer group relative overflow-hidden rounded-xl bg-gray-100" onclick="openChatImageModal('${msg.imageUrl}', 'Admin Pusat')">
+                                <img src="${msg.imageUrl}" alt="Lampiran Foto" class="max-h-60 w-full object-cover rounded-xl transition duration-200 group-hover:scale-102">
+                                <div class="absolute inset-0 bg-black/30 group-hover:bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition text-white text-xs font-bold gap-1.5">
+                                    <i class="fas fa-search-plus"></i> Lihat Foto
+                                </div>
+                            </div>
+                        ` : ''}
+                        ${msg.text ? `<p class="text-xs sm:text-sm leading-relaxed text-gray-800 whitespace-pre-wrap break-words">${escapeHtml(msg.text)}</p>` : ''}
+                    </div>
+                </div>
+            `;
+        }
+    }).join('');
 }
 
-// ==========================================
-// NOTIFIKASI AUDIO & POPUP CHAT
-// ==========================================
+async function handleSendUserAdminMessage(e) {
+    if (e) e.preventDefault();
+    if (!CURRENT_USER) return;
+
+    const input = document.getElementById('input-text-user-admin');
+    const text = input ? input.value.trim() : '';
+    const imageUrl = pendingUserAdminImage;
+
+    if (!text && !imageUrl) {
+        showToast('Ketik pesan atau pilih foto untuk dikirim', 'info');
+        return;
+    }
+
+    const btn = document.getElementById('btn-send-user-admin');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin text-xs"></i>';
+    }
+
+    try {
+        await sendAdminChatMessage({
+            username: CURRENT_USER.username,
+            senderUsername: CURRENT_USER.username,
+            senderName: CURRENT_USER.fullName || CURRENT_USER.username,
+            senderRole: CURRENT_USER.role || 'Kasir',
+            senderCabang: CURRENT_USER.cabang || 'Pusat',
+            text: text,
+            imageUrl: imageUrl || ''
+        });
+
+        if (input) input.value = '';
+        cancelChatImageUpload('user-admin');
+        scrollUserAdminChatToBottom(true);
+    } catch (err) {
+        console.error('Gagal mengirim pesan admin:', err);
+        showToast('Gagal mengirim pesan. Silakan coba lagi.', 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-paper-plane text-xs"></i><span class="hidden sm:inline text-xs font-bold">Kirim</span>';
+        }
+    }
+}
+
+function scrollUserAdminChatToBottom(smooth = true) {
+    const box = document.getElementById('user-admin-messages-box');
+    if (box) {
+        box.scrollTo({
+            top: box.scrollHeight,
+            behavior: smooth ? 'smooth' : 'auto'
+        });
+    }
+}
+
+function sendQuickPromptAdmin(text) {
+    const input = document.getElementById('input-text-user-admin');
+    if (input) {
+        input.value = text;
+        handleSendUserAdminMessage(null);
+    }
+}
+
+// ----------------------------------------------------
+// 2. BAGIAN CHAT ADMIN VIEW (TAMPILAN ADMIN KELOLA SEMUA USER)
+// ----------------------------------------------------
+
+function renderAdminConversationsSidebar() {
+    const container = document.getElementById('admin-conversations-list-container');
+    const searchInput = document.getElementById('admin-user-search-input');
+    if (!container) return;
+
+    const searchQuery = (searchInput ? searchInput.value.trim().toLowerCase() : '');
+    const allUsers = typeof getAllUsers === 'function' ? getAllUsers() : [];
+
+    // Gabungkan riwayat percakapan dari Firestore dengan semua pengguna yang terdaftar
+    const userMap = new Map();
+
+    // 1. Masukkan pengguna terdaftar
+    allUsers.forEach(u => {
+        if (u.username.toLowerCase() !== 'admin') {
+            userMap.set(u.username, {
+                username: u.username,
+                fullName: u.fullName || u.username,
+                role: u.role || 'Kasir',
+                cabang: u.cabang || 'Pusat',
+                lastMessage: 'Belum ada percakapan',
+                lastTimestamp: '',
+                unreadForAdmin: adminUnreadPerUser[u.username] || 0
+            });
+        }
+    });
+
+    // 2. Terapkan data dari adminConversationsList (Firestore)
+    adminConversationsList.forEach(c => {
+        if (c.username && c.username.toLowerCase() !== 'admin') {
+            const existing = userMap.get(c.username) || {};
+            userMap.set(c.username, {
+                username: c.username,
+                fullName: c.fullName || existing.fullName || c.username,
+                role: c.role || existing.role || 'Kasir',
+                cabang: c.cabang || existing.cabang || 'Pusat',
+                lastMessage: c.lastMessage || existing.lastMessage || 'Belum ada percakapan',
+                lastTimestamp: c.lastTimestamp || existing.lastTimestamp || '',
+                unreadForAdmin: c.unreadForAdmin || 0
+            });
+        }
+    });
+
+    let list = Array.from(userMap.values());
+
+    // Filter pencarian
+    if (searchQuery) {
+        list = list.filter(u => 
+            u.username.toLowerCase().includes(searchQuery) ||
+            u.fullName.toLowerCase().includes(searchQuery) ||
+            u.cabang.toLowerCase().includes(searchQuery)
+        );
+    }
+
+    // Urutkan: yang punya pesan belum dibaca di paling atas, lalu berdasarkan waktu terakhir
+    list.sort((a, b) => {
+        if ((b.unreadForAdmin || 0) !== (a.unreadForAdmin || 0)) {
+            return (b.unreadForAdmin || 0) - (a.unreadForAdmin || 0);
+        }
+        const timeA = a.lastTimestamp ? new Date(a.lastTimestamp).getTime() : 0;
+        const timeB = b.lastTimestamp ? new Date(b.lastTimestamp).getTime() : 0;
+        return timeB - timeA;
+    });
+
+    if (list.length === 0) {
+        container.innerHTML = `
+            <div class="p-6 text-center text-xs text-gray-400">
+                <i class="fas fa-user-slash text-2xl mb-2 text-gray-300"></i>
+                <p>Tidak ada pengguna ditemukan</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = list.map(user => {
+        const isSelected = currentSelectedAdminChatUser && currentSelectedAdminChatUser.username === user.username;
+        const unread = user.unreadForAdmin || 0;
+        const timeFormatted = user.lastTimestamp ? formatChatDateTime(user.lastTimestamp).split(' ')[1] : '';
+
+        const activeClass = isSelected 
+            ? 'bg-red-50/80 border-red-200 shadow-xs' 
+            : 'bg-white hover:bg-gray-50 border-gray-100';
+
+        const initial = (user.fullName || user.username).charAt(0).toUpperCase();
+
+        return `
+            <div onclick="selectAdminChatUser('${escapeHtml(user.username)}', '${escapeHtml(user.fullName)}', '${escapeHtml(user.role)}', '${escapeHtml(user.cabang)}')"
+                 class="p-3 rounded-2xl border transition-all cursor-pointer flex items-center gap-3 ${activeClass}">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-gray-800 to-gray-700 text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-xs relative">
+                    ${initial}
+                    ${unread > 0 ? `<span class="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-600 rounded-full border-2 border-white animate-pulse"></span>` : ''}
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between gap-1 mb-0.5">
+                        <span class="text-xs font-bold text-gray-900 truncate">${escapeHtml(user.fullName)}</span>
+                        ${timeFormatted ? `<span class="text-[10px] text-gray-400 shrink-0 font-medium">${timeFormatted}</span>` : ''}
+                    </div>
+                    <div class="flex items-center justify-between gap-1">
+                        <p class="text-[11px] text-gray-500 truncate max-w-[130px] sm:max-w-[170px]">${escapeHtml(user.lastMessage)}</p>
+                        ${unread > 0 ? `<span class="px-1.5 py-0.2 rounded-full bg-red-600 text-white text-[9px] font-black shrink-0 animate-bounce">${unread}</span>` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function selectAdminChatUser(username, fullName, role, cabang) {
+    currentSelectedAdminChatUser = { username, fullName, role, cabang };
+
+    const emptyState = document.getElementById('admin-chat-empty-state');
+    const activePanel = document.getElementById('admin-chat-active-panel');
+    const nameEl = document.getElementById('selected-admin-chat-user-name');
+    const subEl = document.getElementById('selected-admin-chat-user-sub');
+    const avatarEl = document.getElementById('selected-admin-chat-user-avatar');
+
+    if (emptyState) emptyState.classList.add('hidden-view');
+    if (activePanel) activePanel.classList.remove('hidden-view');
+
+    if (nameEl) nameEl.innerText = fullName || username;
+    if (subEl) subEl.innerText = `@${username} • ${cabang || 'Pusat'} • ${role || 'Kasir'}`;
+    if (avatarEl) avatarEl.innerText = (fullName || username).charAt(0).toUpperCase();
+
+    // Di HP, alihkan tampilan dari list ke thread
+    toggleAdminChatMobilePanel('chat');
+
+    renderAdminConversationsSidebar();
+    subscribeAdminToUserThread(username);
+    markAdminConversationRead(username, 'Admin');
+
+    // Kurangi hitungan lokal
+    if (adminUnreadPerUser[username]) {
+        adminUnreadPerUser[username] = 0;
+    }
+    unreadAdminCount = Object.values(adminUnreadPerUser).reduce((a, b) => a + b, 0);
+    updateChatUnreadBadges();
+}
+
+let currentAdminThreadMessages = [];
+
+function subscribeAdminToUserThread(targetUsername) {
+    if (unsubscribeAdminChatListener) {
+        try { unsubscribeAdminChatListener(); } catch(e) {}
+        unsubscribeAdminChatListener = null;
+    }
+
+    unsubscribeAdminChatListener = subscribeToAdminChat(targetUsername, (messages) => {
+        currentAdminThreadMessages = messages || [];
+        renderAdminThreadMessages();
+        scrollAdminThreadToBottom(false);
+    });
+}
+
+function renderAdminThreadMessages() {
+    const container = document.getElementById('admin-thread-messages-box');
+    if (!container || !currentSelectedAdminChatUser) return;
+
+    if (currentAdminThreadMessages.length === 0) {
+        container.innerHTML = `
+            <div class="h-full min-h-[280px] flex flex-col items-center justify-center text-center p-6 text-gray-400">
+                <div class="w-14 h-14 rounded-2xl bg-gray-100 text-gray-400 flex items-center justify-center text-2xl mb-3 shadow-inner">
+                    <i class="fas fa-comment-dots"></i>
+                </div>
+                <p class="text-sm font-bold text-gray-800 mb-1">Belum Ada Percakapan</p>
+                <p class="text-xs text-gray-500 max-w-sm leading-relaxed">
+                    Kirim pesan pertama kepada <strong>${escapeHtml(currentSelectedAdminChatUser.fullName)}</strong> (@${escapeHtml(currentSelectedAdminChatUser.username)}).
+                </p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = currentAdminThreadMessages.map(msg => {
+        const isSelf = (msg.senderUsername === CURRENT_USER.username || msg.senderRole === 'Admin');
+        const timeFormatted = formatChatDateTime(msg.timestamp);
+
+        const deleteBtn = `
+            <button onclick="confirmDeleteAdminMessage('${currentSelectedAdminChatUser.username}', '${msg.id}')" title="Hapus pesan" class="text-gray-400 hover:text-red-600 p-1 rounded transition text-xs opacity-80 hover:opacity-100">
+                <i class="fas fa-trash-alt"></i>
+            </button>
+        `;
+
+        if (isSelf) {
+            return `
+                <div class="flex flex-col items-end group/item">
+                    <div class="max-w-[85%] sm:max-w-[70%] bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl rounded-tr-none p-3.5 shadow-sm">
+                        <div class="flex items-center justify-between gap-3 mb-1 text-[10px] text-red-100 font-medium">
+                            <span class="font-bold">👑 Admin Pusat (Anda)</span>
+                            <span>${timeFormatted}</span>
+                        </div>
+                        ${msg.imageUrl ? `
+                            <div class="mb-2 cursor-pointer group relative overflow-hidden rounded-xl bg-black/20" onclick="openChatImageModal('${msg.imageUrl}', 'Admin Pusat')">
+                                <img src="${msg.imageUrl}" alt="Lampiran Foto" class="max-h-60 w-full object-cover rounded-xl transition duration-200 group-hover:scale-102">
+                                <div class="absolute inset-0 bg-black/30 group-hover:bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition text-white text-xs font-bold gap-1.5">
+                                    <i class="fas fa-search-plus"></i> Lihat Foto
+                                </div>
+                            </div>
+                        ` : ''}
+                        ${msg.text ? `<p class="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(msg.text)}</p>` : ''}
+                        <div class="flex items-center justify-between gap-2 mt-1 pt-1 border-t border-white/10 text-[10px] text-red-100">
+                            <div>${deleteBtn}</div>
+                            <i class="fas fa-check-double text-[9px]"></i>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else {
+            return `
+                <div class="flex flex-col items-start group/item">
+                    <div class="max-w-[85%] sm:max-w-[70%] bg-white border border-gray-200 text-gray-900 rounded-2xl rounded-tl-none p-3.5 shadow-xs">
+                        <div class="flex items-center justify-between gap-3 mb-1.5">
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-xs font-bold text-gray-900">${escapeHtml(msg.senderName || msg.senderUsername)}</span>
+                                <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">🏪 ${escapeHtml(msg.senderCabang || 'Kasir')}</span>
+                            </div>
+                            <div class="flex items-center gap-1">
+                                ${deleteBtn}
+                                <span class="text-[10px] text-gray-400 font-medium">${timeFormatted}</span>
+                            </div>
+                        </div>
+                        ${msg.imageUrl ? `
+                            <div class="mb-2 cursor-pointer group relative overflow-hidden rounded-xl bg-gray-100" onclick="openChatImageModal('${msg.imageUrl}', '${escapeHtml(msg.senderName)}')">
+                                <img src="${msg.imageUrl}" alt="Lampiran Foto" class="max-h-60 w-full object-cover rounded-xl transition duration-200 group-hover:scale-102">
+                                <div class="absolute inset-0 bg-black/30 group-hover:bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition text-white text-xs font-bold gap-1.5">
+                                    <i class="fas fa-search-plus"></i> Lihat Foto
+                                </div>
+                            </div>
+                        ` : ''}
+                        ${msg.text ? `<p class="text-xs sm:text-sm leading-relaxed text-gray-800 whitespace-pre-wrap break-words">${escapeHtml(msg.text)}</p>` : ''}
+                    </div>
+                </div>
+            `;
+        }
+    }).join('');
+}
+
+async function handleSendAdminThreadMessage(e) {
+    if (e) e.preventDefault();
+    if (!CURRENT_USER || !currentSelectedAdminChatUser) return;
+
+    const input = document.getElementById('input-text-admin-thread');
+    const text = input ? input.value.trim() : '';
+    const imageUrl = pendingAdminThreadImage;
+
+    if (!text && !imageUrl) {
+        showToast('Ketik balasan atau pilih foto untuk dikirim', 'info');
+        return;
+    }
+
+    const btn = document.getElementById('btn-send-admin-thread');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin text-xs"></i>';
+    }
+
+    try {
+        await sendAdminChatMessage({
+            username: currentSelectedAdminChatUser.username,
+            senderUsername: CURRENT_USER.username,
+            senderName: CURRENT_USER.fullName || 'Admin Pusat',
+            senderRole: 'Admin',
+            senderCabang: 'Pusat',
+            text: text,
+            imageUrl: imageUrl || ''
+        });
+
+        if (input) input.value = '';
+        cancelChatImageUpload('admin-thread');
+        scrollAdminThreadToBottom(true);
+    } catch (err) {
+        console.error('Gagal mengirim balasan admin:', err);
+        showToast('Gagal mengirim balasan. Silakan coba lagi.', 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-paper-plane text-xs"></i><span class="hidden sm:inline text-xs font-bold">Kirim Balasan</span>';
+        }
+    }
+}
+
+function scrollAdminThreadToBottom(smooth = true) {
+    const box = document.getElementById('admin-thread-messages-box');
+    if (box) {
+        box.scrollTo({
+            top: box.scrollHeight,
+            behavior: smooth ? 'smooth' : 'auto'
+        });
+    }
+}
+
+async function confirmDeleteAdminMessage(username, msgId) {
+    if (!confirm('Hapus pesan ini dari riwayat chat?')) return;
+    try {
+        await deleteAdminChatMessage(username, msgId);
+        showToast('Pesan berhasil dihapus', 'success');
+    } catch (err) {
+        console.error('Gagal menghapus pesan admin:', err);
+        showToast('Gagal menghapus pesan', 'error');
+    }
+}
+
+function toggleAdminChatMobilePanel(panel) {
+    const userListPanel = document.getElementById('admin-chat-user-list-panel');
+    const threadPanel = document.getElementById('admin-chat-thread-panel');
+
+    if (!userListPanel || !threadPanel) return;
+
+    if (panel === 'chat') {
+        userListPanel.classList.add('hidden', 'lg:flex');
+        threadPanel.classList.remove('hidden');
+    } else {
+        userListPanel.classList.remove('hidden');
+        threadPanel.classList.add('hidden');
+    }
+}
+
+// ----------------------------------------------------
+// 3. BAGIAN GRUP PENGGUNA (OBROLAN SELURUH USER)
+// ----------------------------------------------------
+
+function renderGroupChatMessages() {
+    const container = document.getElementById('group-chat-messages-box');
+    const countEl = document.getElementById('group-chat-message-count');
+    if (!container || !CURRENT_USER) return;
+
+    if (countEl) countEl.innerText = `${groupChatMessages.length} pesan`;
+
+    if (groupChatMessages.length === 0) {
+        container.innerHTML = `
+            <div class="h-full min-h-[280px] flex flex-col items-center justify-center text-center p-6 text-gray-400">
+                <div class="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center text-2xl mb-3 shadow-inner">
+                    <i class="fas fa-users"></i>
+                </div>
+                <p class="text-sm font-bold text-gray-800 mb-1">Grup Pengguna Masih Kosong</p>
+                <p class="text-xs text-gray-500 max-w-sm leading-relaxed">
+                    Kirim pesan pertama untuk menyapa seluruh pengguna aplikasi dan rekan kerja di Istana Bubur!
+                </p>
+            </div>
+        `;
+        return;
+    }
+
+    const isAdmin = CURRENT_USER.role === 'Admin';
+
+    container.innerHTML = groupChatMessages.map(msg => {
+        const isSelf = (msg.senderUsername === CURRENT_USER.username);
+        const isMsgAdmin = (msg.senderRole === 'Admin');
+        const timeFormatted = formatChatDateTime(msg.timestamp);
+
+        const deleteButtonHtml = isAdmin ? `
+            <button onclick="confirmDeleteGroupMessage('${msg.id}')" title="Hapus pesan ini (Moderasi Admin)" class="text-gray-400 hover:text-red-600 p-1 rounded-md hover:bg-gray-100 transition text-xs">
+                <i class="fas fa-trash-alt"></i>
+            </button>
+        ` : '';
+
+        if (isSelf) {
+            return `
+                <div class="flex flex-col items-end group/msg">
+                    <div class="max-w-[85%] sm:max-w-[70%] bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl rounded-tr-none p-3.5 shadow-sm">
+                        <div class="flex items-center justify-between gap-3 mb-1 text-[10px] text-red-100 font-medium">
+                            <div class="flex items-center gap-1.5">
+                                <span class="font-bold">${escapeHtml(msg.senderName || msg.senderUsername)} (Anda)</span>
+                                ${isMsgAdmin ? '<span class="px-1.5 py-0.2 rounded bg-white/20 text-white text-[9px] font-bold">👑 Admin</span>' : ''}
+                            </div>
+                            <span>${timeFormatted}</span>
+                        </div>
+                        ${msg.imageUrl ? `
+                            <div class="mb-2 cursor-pointer group relative overflow-hidden rounded-xl bg-black/20" onclick="openChatImageModal('${msg.imageUrl}', '${escapeHtml(msg.senderName)}')">
+                                <img src="${msg.imageUrl}" alt="Lampiran Foto" class="max-h-60 w-full object-cover rounded-xl transition duration-200 group-hover:scale-102">
+                                <div class="absolute inset-0 bg-black/30 group-hover:bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition text-white text-xs font-bold gap-1.5">
+                                    <i class="fas fa-search-plus"></i> Lihat Foto
+                                </div>
+                            </div>
+                        ` : ''}
+                        ${msg.text ? `<p class="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(msg.text)}</p>` : ''}
+                        <div class="flex items-center justify-between gap-2 mt-1 pt-1 border-t border-white/10 text-[10px] text-red-100">
+                            <span class="text-[9px] opacity-85">🏪 ${escapeHtml(msg.senderCabang || 'Cabang')}</span>
+                            <div class="flex items-center gap-2">
+                                ${deleteButtonHtml}
+                                <i class="fas fa-check-double text-[9px]"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else {
+            const roleBadge = isMsgAdmin 
+                ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-800 border border-red-200">👑 Admin</span>'
+                : `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">🏪 ${escapeHtml(msg.senderCabang || 'Kasir')}</span>`;
+
+            return `
+                <div class="flex flex-col items-start group/msg">
+                    <div class="max-w-[85%] sm:max-w-[70%] bg-white border border-gray-200 text-gray-900 rounded-2xl rounded-tl-none p-3.5 shadow-xs">
+                        <div class="flex items-center justify-between gap-3 mb-1.5">
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                <span class="text-xs font-bold text-gray-900">${escapeHtml(msg.senderName || msg.senderUsername)}</span>
+                                <span class="text-[10px] text-gray-400">@${escapeHtml(msg.senderUsername)}</span>
+                                ${roleBadge}
+                            </div>
+                            <div class="flex items-center gap-1">
+                                ${deleteButtonHtml}
+                                <span class="text-[10px] text-gray-400 font-medium">${timeFormatted}</span>
+                            </div>
+                        </div>
+                        ${msg.imageUrl ? `
+                            <div class="mb-2 cursor-pointer group relative overflow-hidden rounded-xl bg-gray-100" onclick="openChatImageModal('${msg.imageUrl}', '${escapeHtml(msg.senderName)}')">
+                                <img src="${msg.imageUrl}" alt="Lampiran Foto" class="max-h-60 w-full object-cover rounded-xl transition duration-200 group-hover:scale-102">
+                                <div class="absolute inset-0 bg-black/30 group-hover:bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition text-white text-xs font-bold gap-1.5">
+                                    <i class="fas fa-search-plus"></i> Lihat Foto
+                                </div>
+                            </div>
+                        ` : ''}
+                        ${msg.text ? `<p class="text-xs sm:text-sm leading-relaxed text-gray-800 whitespace-pre-wrap break-words">${escapeHtml(msg.text)}</p>` : ''}
+                    </div>
+                </div>
+            `;
+        }
+    }).join('');
+}
+
+async function handleSendGroupChatMessage(e) {
+    if (e) e.preventDefault();
+    if (!CURRENT_USER) return;
+
+    const input = document.getElementById('input-text-group-chat');
+    const text = input ? input.value.trim() : '';
+    const imageUrl = pendingGroupImage;
+
+    if (!text && !imageUrl) {
+        showToast('Ketik pesan atau pilih foto untuk dikirim ke grup', 'info');
+        return;
+    }
+
+    const btn = document.getElementById('btn-send-group-chat');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin text-xs"></i>';
+    }
+
+    try {
+        await sendGroupChatMessage({
+            senderUsername: CURRENT_USER.username,
+            senderName: CURRENT_USER.fullName || CURRENT_USER.username,
+            senderRole: CURRENT_USER.role || 'Kasir',
+            senderCabang: CURRENT_USER.cabang || 'Pusat',
+            text: text,
+            imageUrl: imageUrl || ''
+        });
+
+        if (input) input.value = '';
+        cancelChatImageUpload('group');
+        scrollGroupChatToBottom(true);
+    } catch (err) {
+        console.error('Gagal mengirim pesan grup:', err);
+        showToast('Gagal mengirim pesan ke grup. Silakan coba lagi.', 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-paper-plane text-xs"></i><span class="hidden sm:inline text-xs font-bold">Kirim</span>';
+        }
+    }
+}
+
+function scrollGroupChatToBottom(smooth = true) {
+    const box = document.getElementById('group-chat-messages-box');
+    if (box) {
+        box.scrollTo({
+            top: box.scrollHeight,
+            behavior: smooth ? 'smooth' : 'auto'
+        });
+    }
+}
+
+async function confirmDeleteGroupMessage(msgId) {
+    if (CURRENT_USER.role !== 'Admin') return;
+    if (!confirm('Apakah Anda yakin ingin menghapus pesan ini dari Grup Pengguna?')) return;
+
+    try {
+        await deleteGroupChatMessage(msgId);
+        showToast('Pesan grup berhasil dihapus (Moderasi Admin)', 'success');
+    } catch (err) {
+        console.error('Gagal menghapus pesan grup:', err);
+        showToast('Gagal menghapus pesan grup', 'error');
+    }
+}
+
+async function confirmClearGroupChat() {
+    if (CURRENT_USER.role !== 'Admin') return;
+    const confirmClear = confirm('PERINGATAN MODERASI:\nApakah Anda yakin ingin membersihkan/menghapus seluruh pesan dalam Grup Pengguna? Tindakan ini tidak dapat dibatalkan.');
+    if (!confirmClear) return;
+
+    try {
+        await clearGroupChatMessages();
+        showToast('Seluruh pesan grup berhasil dibersihkan', 'success');
+    } catch (err) {
+        console.error('Gagal membersihkan grup:', err);
+        showToast('Gagal membersihkan riwayat pesan grup', 'error');
+    }
+}
+
+// ----------------------------------------------------
+// 4. PENANGANAN GAMBAR / FOTO CHAT & LIGHTBOX
+// ----------------------------------------------------
+
+function triggerChatImageSelect(target) {
+    let inputId = '';
+    if (target === 'user-admin') inputId = 'input-file-user-admin';
+    else if (target === 'admin-thread') inputId = 'input-file-admin-thread';
+    else if (target === 'group') inputId = 'input-file-group-chat';
+
+    const input = document.getElementById(inputId);
+    if (input) input.click();
+}
+
+async function onChatImageChosen(e, target) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    try {
+        showToast('Memproses & mengompres foto...', 'info');
+        const compressedBase64 = await compressImageFile(file, 900, 0.72);
+
+        if (target === 'user-admin') {
+            pendingUserAdminImage = compressedBase64;
+            const box = document.getElementById('preview-box-user-admin');
+            const img = document.getElementById('preview-img-user-admin');
+            if (box) box.classList.remove('hidden-view');
+            if (img) img.src = compressedBase64;
+        } else if (target === 'admin-thread') {
+            pendingAdminThreadImage = compressedBase64;
+            const box = document.getElementById('preview-box-admin-thread');
+            const img = document.getElementById('preview-img-admin-thread');
+            if (box) box.classList.remove('hidden-view');
+            if (img) img.src = compressedBase64;
+        } else if (target === 'group') {
+            pendingGroupImage = compressedBase64;
+            const box = document.getElementById('preview-box-group-chat');
+            const img = document.getElementById('preview-img-group-chat');
+            if (box) box.classList.remove('hidden-view');
+            if (img) img.src = compressedBase64;
+        }
+
+        showToast('Foto siap dikirim', 'success');
+    } catch (err) {
+        console.error('Kompres gambar gagal:', err);
+        showToast('Gagal memproses gambar', 'error');
+    }
+}
+
+function cancelChatImageUpload(target) {
+    if (target === 'user-admin') {
+        pendingUserAdminImage = null;
+        const box = document.getElementById('preview-box-user-admin');
+        const fileInput = document.getElementById('input-file-user-admin');
+        if (box) box.classList.add('hidden-view');
+        if (fileInput) fileInput.value = '';
+    } else if (target === 'admin-thread') {
+        pendingAdminThreadImage = null;
+        const box = document.getElementById('preview-box-admin-thread');
+        const fileInput = document.getElementById('input-file-admin-thread');
+        if (box) box.classList.add('hidden-view');
+        if (fileInput) fileInput.value = '';
+    } else if (target === 'group') {
+        pendingGroupImage = null;
+        const box = document.getElementById('preview-box-group-chat');
+        const fileInput = document.getElementById('input-file-group-chat');
+        if (box) box.classList.add('hidden-view');
+        if (fileInput) fileInput.value = '';
+    }
+}
+
+function openChatImageModal(imageUrl, senderName = 'Foto Chat') {
+    const modal = document.getElementById('modal-chat-image-preview');
+    const img = document.getElementById('chat-preview-modal-img');
+    const title = document.getElementById('chat-preview-modal-title');
+    const downloadBtn = document.getElementById('btn-download-chat-image');
+
+    if (!modal || !img) return;
+
+    img.src = imageUrl;
+    if (title) title.innerText = `Lampiran Foto • Dari ${senderName}`;
+    if (downloadBtn) {
+        downloadBtn.href = imageUrl;
+        downloadBtn.download = `chat-istana-bubur-${Date.now()}.jpg`;
+    }
+
+    modal.classList.remove('hidden-view');
+}
+
+function closeChatImageModal(e) {
+    if (e && e.target && e.target.closest && e.target.closest('#modal-chat-image-preview > div')) {
+        return;
+    }
+    const modal = document.getElementById('modal-chat-image-preview');
+    if (modal) modal.classList.add('hidden-view');
+}
+
+// ----------------------------------------------------
+// 5. NOTIFIKASI SUARA & FLOATING POPUP BANNER
+// ----------------------------------------------------
 
 function playChatNotificationSound() {
     if (!isChatSoundEnabled) return;
@@ -6265,7 +7189,7 @@ function playChatNotificationSound() {
         if (!audioCtx) return;
 
         const now = audioCtx.currentTime;
-        // Two-tone cheerful bell: 587.33Hz (D5) -> 880Hz (A5)
+        // Nada ramah ceria dua-tingkat: 587.33Hz (D5) -> 880Hz (A5)
         const osc1 = audioCtx.createOscillator();
         const gain1 = audioCtx.createGain();
         osc1.type = 'sine';
@@ -6318,8 +7242,8 @@ function updateChatSoundUI() {
     }
 }
 
-function showChatNotificationPopup(newMsg) {
-    if (!newMsg) return;
+function showChatNotificationPopup(data) {
+    if (!data) return;
     const container = document.getElementById('chat-notification-banner-container');
     if (!container) return;
 
@@ -6328,10 +7252,7 @@ function showChatNotificationPopup(newMsg) {
     popup.id = popupId;
     popup.className = 'pointer-events-auto bg-white border-2 border-red-500 rounded-2xl p-3.5 shadow-2xl shadow-red-900/20 transform transition-all duration-300 translate-y-[-15px] opacity-0 flex items-start gap-3 w-full';
 
-    const isFromAdmin = newMsg.role === 'Admin';
-    const senderDisplay = isFromAdmin ? 'Admin Pusat' : `${newMsg.sender} (${newMsg.cabang || 'Cabang'})`;
-    const roleBadge = isFromAdmin ? '👑 Pusat' : `🏪 ${newMsg.cabang || 'Cabang'}`;
-    const truncatedText = escapeHtml(newMsg.text.length > 75 ? newMsg.text.slice(0, 72) + '...' : newMsg.text);
+    const truncatedText = escapeHtml(data.text && data.text.length > 75 ? data.text.slice(0, 72) + '...' : data.text);
 
     popup.innerHTML = `
         <div class="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center text-lg shrink-0 border border-red-100 relative">
@@ -6341,12 +7262,12 @@ function showChatNotificationPopup(newMsg) {
         </div>
         <div class="flex-1 min-w-0">
             <div class="flex items-center justify-between gap-1.5 mb-1">
-                <span class="text-xs font-black text-gray-900 truncate">${escapeHtml(senderDisplay)}</span>
-                <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 shrink-0">${roleBadge}</span>
+                <span class="text-xs font-black text-gray-900 truncate">${escapeHtml(data.sender)}</span>
+                <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 shrink-0">${data.mode === 'admin' ? 'Chat Admin' : 'Grup Pengguna'}</span>
             </div>
             <p class="text-xs text-gray-700 leading-snug break-words mb-2.5 line-clamp-2">${truncatedText}</p>
             <div class="flex items-center gap-2">
-                <button onclick="openChatFromNotification('${newMsg.cabang || 'Cabang A'}', '${popupId}')" class="text-xs bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold px-3 py-1 rounded-lg transition shadow-xs flex items-center gap-1.5">
+                <button onclick="openChatFromNotification('${data.mode}', '${popupId}')" class="text-xs bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold px-3 py-1 rounded-lg transition shadow-xs flex items-center gap-1.5">
                     <i class="fas fa-reply text-[10px]"></i>
                     <span>Buka Chat</span>
                 </button>
@@ -6381,43 +7302,10 @@ function dismissChatPopup(popupId) {
     }, 250);
 }
 
-function openChatFromNotification(cabang, popupId) {
+function openChatFromNotification(mode, popupId) {
     dismissChatPopup(popupId);
-    if (CURRENT_USER && CURRENT_USER.role === 'Admin') {
-        currentAdminChatCabang = (cabang && cabang !== 'Semua') ? cabang : 'Semua';
-    }
     switchTab('chat');
-}
-
-function handleChatScroll() {
-    const box = document.getElementById('chat-messages-box');
-    const btn = document.getElementById('btn-scroll-bottom-chat');
-    if (!box) return;
-
-    const distanceFromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
-    isUserScrolledUp = (distanceFromBottom > 90);
-
-    if (!isUserScrolledUp && btn) {
-        btn.classList.add('hidden-view');
-    }
-}
-
-function showScrollBottomButton() {
-    const btn = document.getElementById('btn-scroll-bottom-chat');
-    if (btn) btn.classList.remove('hidden-view');
-}
-
-function scrollChatToBottom(smooth = true) {
-    const box = document.getElementById('chat-messages-box');
-    const btn = document.getElementById('btn-scroll-bottom-chat');
-    if (btn) btn.classList.add('hidden-view');
-    isUserScrolledUp = false;
-    if (box) {
-        box.scrollTo({
-            top: box.scrollHeight,
-            behavior: smooth ? 'smooth' : 'auto'
-        });
-    }
+    switchChatSubMode(mode);
 }
 
 function updateChatUnreadBadges() {
@@ -6429,8 +7317,33 @@ function updateChatUnreadBadges() {
     const kasirDashBadge = document.getElementById('kasir-dash-unread-badge');
     const chatIcon = document.getElementById('header-chat-icon');
 
-    if (chatUnreadCount > 0) {
-        const countText = chatUnreadCount > 99 ? '99+' : String(chatUnreadCount);
+    const badgeSubAdmin = document.getElementById('badge-sub-admin-unread');
+    const badgeSubGroup = document.getElementById('badge-sub-group-unread');
+
+    // Update subtab badges
+    if (badgeSubAdmin) {
+        if (unreadAdminCount > 0) {
+            badgeSubAdmin.innerText = unreadAdminCount > 99 ? '99+' : String(unreadAdminCount);
+            badgeSubAdmin.classList.remove('hidden-view');
+        } else {
+            badgeSubAdmin.classList.add('hidden-view');
+        }
+    }
+
+    if (badgeSubGroup) {
+        if (unreadGroupCount > 0) {
+            badgeSubGroup.innerText = unreadGroupCount > 99 ? '99+' : String(unreadGroupCount);
+            badgeSubGroup.classList.remove('hidden-view');
+        } else {
+            badgeSubGroup.classList.add('hidden-view');
+        }
+    }
+
+    const totalUnread = unreadAdminCount + unreadGroupCount;
+    chatUnreadCount = totalUnread;
+
+    if (totalUnread > 0) {
+        const countText = totalUnread > 99 ? '99+' : String(totalUnread);
 
         if (tabBadge) {
             tabBadge.innerText = countText;
@@ -6440,12 +7353,8 @@ function updateChatUnreadBadges() {
             headerBadge.innerText = countText;
             headerBadge.classList.remove('hidden-view');
         }
-        if (headerPing) {
-            headerPing.classList.remove('hidden-view');
-        }
-        if (menuDot) {
-            menuDot.classList.remove('hidden-view');
-        }
+        if (headerPing) headerPing.classList.remove('hidden-view');
+        if (menuDot) menuDot.classList.remove('hidden-view');
         if (adminDashBadge) {
             adminDashBadge.innerText = `${countText} Pesan Baru`;
             adminDashBadge.classList.remove('hidden-view');
@@ -6454,11 +7363,8 @@ function updateChatUnreadBadges() {
             kasirDashBadge.innerText = `${countText} Baru`;
             kasirDashBadge.classList.remove('hidden-view');
         }
-        if (chatIcon) {
-            chatIcon.classList.add('animate-bounce');
-        }
+        if (chatIcon) chatIcon.classList.add('animate-bounce');
 
-        // Tanda notifikasi di Tab browser
         document.title = `(${countText}) 💬 Pesan Baru | Istana Bubur`;
     } else {
         if (tabBadge) tabBadge.classList.add('hidden-view');
@@ -6467,215 +7373,9 @@ function updateChatUnreadBadges() {
         if (menuDot) menuDot.classList.add('hidden-view');
         if (adminDashBadge) adminDashBadge.classList.add('hidden-view');
         if (kasirDashBadge) kasirDashBadge.classList.add('hidden-view');
-        if (chatIcon) {
-            chatIcon.classList.remove('animate-bounce');
-        }
+        if (chatIcon) chatIcon.classList.remove('animate-bounce');
 
-        // Kembalikan judul halaman
         document.title = 'Istana Bubur';
-    }
-}
-
-function openChatView() {
-    if (!CURRENT_USER) return;
-
-    if (CURRENT_USER.role === 'Admin') {
-        if (currentAdminChatCabang !== 'Semua') {
-            cabangUnreadCounts[currentAdminChatCabang] = 0;
-        } else {
-            cabangUnreadCounts = {};
-        }
-        chatUnreadCount = Object.values(cabangUnreadCounts).reduce((a, b) => a + b, 0);
-    } else {
-        chatUnreadCount = 0;
-    }
-
-    updateChatUnreadBadges();
-    updateChatSoundUI();
-
-    initChatWebSocket();
-
-    const kasirLabel = document.getElementById('kasir-chat-cabang-label');
-    if (kasirLabel) {
-        kasirLabel.innerText = CURRENT_USER.cabang || 'Cabang A';
-    }
-
-    const headerDesc = document.getElementById('chat-header-desc');
-    if (headerDesc) {
-        if (CURRENT_USER.role === 'Admin') {
-            headerDesc.innerText = 'Pusat Bantuan & Komunikasi Seluruh Cabang Istana Bubur';
-        } else {
-            headerDesc.innerText = `Terhubung langsung dengan Admin Pusat (Cabang: ${CURRENT_USER.cabang || 'Cabang A'})`;
-        }
-    }
-
-    if (CURRENT_USER.role === 'Admin') {
-        renderAdminCabangTabs();
-    }
-
-    renderChatMessages();
-
-    setTimeout(() => {
-        scrollChatToBottom(false);
-        const input = document.getElementById('chat-input-text');
-        if (input) input.focus();
-    }, 100);
-}
-
-function renderAdminCabangTabs() {
-    const container = document.getElementById('admin-cabang-pill-container');
-    if (!container) return;
-
-    const cabangSet = new Set(['Semua', 'Cabang A', 'Cabang B', 'Cabang C']);
-    if (Array.isArray(HISTORI_TRX_CACHE)) {
-        HISTORI_TRX_CACHE.forEach(t => {
-            if (t['Cabang']) cabangSet.add(t['Cabang']);
-        });
-    }
-    CHAT_MESSAGES.forEach(m => {
-        if (m.cabang && m.cabang !== 'Semua') cabangSet.add(m.cabang);
-    });
-
-    const cabangs = Array.from(cabangSet);
-    container.innerHTML = cabangs.map(c => {
-        const isActive = (c === currentAdminChatCabang);
-        const label = c === 'Semua' ? '📢 Semua Cabang (Broadcast)' : `🏪 ${c}`;
-        const activeClass = isActive 
-            ? 'bg-red-600 text-white font-bold shadow-sm' 
-            : 'bg-gray-100 text-gray-700 hover:bg-gray-200 font-medium';
-
-        const unreadThisCabang = (c === 'Semua') ? 0 : (cabangUnreadCounts[c] || 0);
-        const unreadBadgeHtml = unreadThisCabang > 0
-            ? `<span class="ml-1.5 px-1.5 py-0.2 rounded-full text-[9px] font-black ${isActive ? 'bg-white text-red-600' : 'bg-red-600 text-white animate-pulse'}">${unreadThisCabang}</span>`
-            : '';
-
-        return `
-            <button onclick="selectAdminChatCabang('${c}')" class="shrink-0 text-xs px-3.5 py-1.5 rounded-xl transition active:scale-95 flex items-center ${activeClass}">
-                <span>${label}</span>
-                ${unreadBadgeHtml}
-            </button>
-        `;
-    }).join('');
-}
-
-function selectAdminChatCabang(cabang) {
-    currentAdminChatCabang = cabang;
-    if (cabang !== 'Semua') {
-        cabangUnreadCounts[cabang] = 0;
-    } else {
-        cabangUnreadCounts = {};
-    }
-    chatUnreadCount = Object.values(cabangUnreadCounts).reduce((a, b) => a + b, 0);
-    updateChatUnreadBadges();
-
-    renderAdminCabangTabs();
-    renderChatMessages();
-    scrollChatToBottom(false);
-    
-    const input = document.getElementById('chat-input-text');
-    if (input) {
-        input.placeholder = cabang === 'Semua' 
-            ? 'Kirim pesan broadcast ke SEMUA cabang...' 
-            : `Tulis balasan ke ${cabang}...`;
-        input.focus();
-    }
-}
-
-function renderChatMessages(highlightMessageId = null) {
-    const container = document.getElementById('chat-messages-box');
-    const titleEl = document.getElementById('chat-active-channel-title');
-    const countEl = document.getElementById('chat-message-count');
-    if (!container || !CURRENT_USER) return;
-
-    const isAdmin = CURRENT_USER.role === 'Admin';
-    let filtered = [];
-
-    if (isAdmin) {
-        if (currentAdminChatCabang === 'Semua') {
-            filtered = [...CHAT_MESSAGES];
-            if (titleEl) titleEl.innerText = 'Ruang Chat: Seluruh Cabang (Semua)';
-        } else {
-            filtered = CHAT_MESSAGES.filter(m => m.cabang === currentAdminChatCabang || m.cabang === 'Semua');
-            if (titleEl) titleEl.innerText = `Ruang Chat: ${currentAdminChatCabang}`;
-        }
-    } else {
-        const userCabang = CURRENT_USER.cabang || 'Cabang A';
-        filtered = CHAT_MESSAGES.filter(m => m.cabang === userCabang || m.cabang === 'Semua');
-        if (titleEl) titleEl.innerText = `Ruang Chat: ${userCabang} ↔ Admin Pusat`;
-    }
-
-    if (countEl) {
-        countEl.innerText = `${filtered.length} pesan`;
-    }
-
-    if (filtered.length === 0) {
-        container.innerHTML = `
-            <div class="h-full flex flex-col items-center justify-center text-center p-6 text-gray-400">
-                <div class="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 text-2xl mb-3">
-                    <i class="fas fa-comments"></i>
-                </div>
-                <p class="text-sm font-bold text-gray-700 mb-1">Belum Ada Percakapan</p>
-                <p class="text-xs text-gray-400 max-w-xs">
-                    ${isAdmin ? 'Belum ada pesan pada saluran ini. Pilih cabang lain atau kirim pesan baru di bawah.' : 'Mulai chat untuk menghubungi Admin Pusat terkait bantuan operasional, printer, stok, atau kasir.'}
-                </p>
-            </div>
-        `;
-        return;
-    }
-
-    container.innerHTML = filtered.map(msg => {
-        const isSelf = msg.sender === CURRENT_USER.username;
-        const isBroadcast = msg.cabang === 'Semua';
-        const isHighlighted = (msg.id && msg.id === highlightMessageId);
-        const highlightClass = isHighlighted ? 'ring-4 ring-amber-400 ring-offset-2 animate-pulse' : '';
-
-        if (isSelf) {
-            return `
-                <div class="flex flex-col items-end">
-                    <div class="max-w-[85%] sm:max-w-[75%] bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl rounded-tr-none px-4 py-2.5 shadow-sm ${highlightClass}">
-                        <div class="flex items-center justify-between gap-2 mb-1">
-                            <span class="text-[10px] font-bold text-red-100">${msg.role === 'Admin' ? 'Admin Pusat' : (CURRENT_USER.cabang || 'Kasir')}</span>
-                            ${isBroadcast ? '<span class="text-[9px] bg-white/20 text-white px-1.5 py-0.5 rounded font-semibold">Broadcast</span>' : ''}
-                        </div>
-                        <p class="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(msg.text)}</p>
-                        <div class="flex items-center justify-end gap-1.5 mt-1.5 text-[10px] text-red-100">
-                            <span>${msg.formattedTime || ''}</span>
-                            <i class="fas fa-check-double text-[9px]"></i>
-                        </div>
-                    </div>
-                </div>
-            `;
-        } else {
-            const isMsgAdmin = msg.role === 'Admin';
-            const roleBadgeClass = isMsgAdmin 
-                ? 'bg-red-50 text-red-700 border-red-200' 
-                : 'bg-blue-50 text-blue-700 border-blue-200';
-            const roleLabel = isMsgAdmin 
-                ? 'Admin Pusat' 
-                : `${msg.sender} (${msg.cabang})`;
-
-            return `
-                <div class="flex flex-col items-start">
-                    <div class="max-w-[85%] sm:max-w-[75%] bg-white border border-gray-200 text-gray-800 rounded-2xl rounded-tl-none px-4 py-2.5 shadow-xs ${highlightClass}">
-                        <div class="flex items-center justify-between gap-2 mb-1">
-                            <div class="flex items-center gap-1.5">
-                                <span class="text-xs font-bold text-gray-900">${escapeHtml(msg.sender)}</span>
-                                <span class="text-[9px] font-bold px-1.5 py-0.5 rounded border ${roleBadgeClass}">${roleLabel}</span>
-                            </div>
-                            ${isBroadcast ? '<span class="text-[9px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded font-semibold">Broadcast</span>' : ''}
-                        </div>
-                        <p class="text-xs sm:text-sm leading-relaxed text-gray-700 whitespace-pre-wrap break-words">${escapeHtml(msg.text)}</p>
-                        <div class="flex items-center justify-end mt-1.5 text-[10px] text-gray-400">
-                            <span>${msg.formattedTime || ''}</span>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-    }).join('');
-
-    if (!isUserScrolledUp) {
-        container.scrollTop = container.scrollHeight;
     }
 }
 
@@ -6687,127 +7387,6 @@ function escapeHtml(text) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
-}
-
-async function handleSendChatMessage(e) {
-    if (e) e.preventDefault();
-    if (!CURRENT_USER) return;
-
-    const input = document.getElementById('chat-input-text');
-    if (!input) return;
-    const text = input.value.trim();
-    if (!text) return;
-
-    let targetCabang = 'Semua';
-    if (CURRENT_USER.role === 'Admin') {
-        targetCabang = currentAdminChatCabang;
-    } else {
-        targetCabang = CURRENT_USER.cabang || 'Cabang A';
-    }
-
-    input.value = '';
-
-    if (wsChat && wsChat.readyState === WebSocket.OPEN) {
-        wsChat.send(JSON.stringify({ type: 'typing', isTyping: false }));
-        isTypingSent = false;
-    }
-
-    if (wsChat && wsChat.readyState === WebSocket.OPEN) {
-        wsChat.send(JSON.stringify({
-            type: 'chat_message',
-            cabang: targetCabang,
-            sender: CURRENT_USER.username,
-            text: text
-        }));
-    } else {
-        // Fallback to HTTP REST
-        try {
-            const resp = await fetch(getApiEndpoint('/api/chat/send'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    cabang: targetCabang,
-                    sender: CURRENT_USER.username,
-                    role: CURRENT_USER.role,
-                    text: text
-                })
-            });
-            const res = await resp.json();
-            if (res.success && res.message) {
-                const exists = CHAT_MESSAGES.some(m => m.id === res.message.id);
-                if (!exists) {
-                    CHAT_MESSAGES.push(res.message);
-                    renderChatMessages();
-                }
-            }
-        } catch (err) {
-            console.error('Error fallback sending chat:', err);
-            showToast('Gagal mengirim pesan chat', 'error');
-        }
-    }
-
-    setTimeout(() => {
-        const box = document.getElementById('chat-messages-box');
-        if (box) box.scrollTop = box.scrollHeight;
-    }, 50);
-}
-
-function sendQuickPrompt(promptText) {
-    const input = document.getElementById('chat-input-text');
-    if (input) {
-        input.value = promptText;
-        handleSendChatMessage(null);
-    }
-}
-
-function handleChatTyping(e) {
-    if (!wsChat || wsChat.readyState !== WebSocket.OPEN) return;
-    if (!isTypingSent) {
-        isTypingSent = true;
-        wsChat.send(JSON.stringify({ type: 'typing', isTyping: true }));
-    }
-    clearTimeout(typingTimeout);
-    typingTimeout = setTimeout(() => {
-        isTypingSent = false;
-        if (wsChat && wsChat.readyState === WebSocket.OPEN) {
-            wsChat.send(JSON.stringify({ type: 'typing', isTyping: false }));
-        }
-    }, 2000);
-}
-
-function handleIncomingTyping(data) {
-    if (!CURRENT_USER || data.sender === CURRENT_USER.username) return;
-    const indicator = document.getElementById('chat-typing-indicator');
-    const textEl = document.getElementById('chat-typing-text');
-    if (!indicator || !textEl) return;
-
-    if (data.isTyping) {
-        textEl.innerText = `${data.sender} (${data.role === 'Admin' ? 'Admin Pusat' : data.cabang}) sedang mengetik...`;
-        indicator.classList.remove('hidden-view');
-        clearTimeout(indicator._hideTimer);
-        indicator._hideTimer = setTimeout(() => {
-            indicator.classList.add('hidden-view');
-        }, 3000);
-    } else {
-        indicator.classList.add('hidden-view');
-    }
-}
-
-async function refreshChatHistory() {
-    if (!CURRENT_USER) return;
-    try {
-        const targetCabang = CURRENT_USER.role === 'Admin' ? currentAdminChatCabang : (CURRENT_USER.cabang || 'Cabang A');
-        const resp = await fetch(getApiEndpoint(`/api/chat/messages?cabang=${encodeURIComponent(targetCabang)}&role=${encodeURIComponent(CURRENT_USER.role)}`));
-        const res = await resp.json();
-        if (res.success && Array.isArray(res.messages)) {
-            CHAT_MESSAGES = res.messages;
-            renderChatMessages();
-            if (CURRENT_USER.role === 'Admin') renderAdminCabangTabs();
-            showToast('Riwayat chat berhasil dimuat ulang', 'success');
-        }
-    } catch (e) {
-        console.error('Error refreshing chat:', e);
-    }
 }
 
 // Global window bindings for authentication & account management
@@ -6850,25 +7429,46 @@ window.backToFpStep1 = backToFpStep1;
 window.submitForgotPasswordStep2 = submitForgotPasswordStep2;
 
 // Chat & Dashboard bindings
-window.initChatWebSocket = initChatWebSocket;
+window.initRealtimeChatSystem = initRealtimeChatSystem;
+window.initChatWebSocket = initRealtimeChatSystem; // backward compatibility
 window.closeChatWebSocket = closeChatWebSocket;
+window.syncChatMessagesFromServer = () => {};
+window.startChatPolling = () => {};
+window.updateChatPollingFrequency = () => {};
 window.openChatView = openChatView;
-window.renderAdminCabangTabs = renderAdminCabangTabs;
-window.selectAdminChatCabang = selectAdminChatCabang;
-window.renderChatMessages = renderChatMessages;
-window.handleSendChatMessage = handleSendChatMessage;
-window.sendQuickPrompt = sendQuickPrompt;
-window.handleChatTyping = handleChatTyping;
-window.refreshChatHistory = refreshChatHistory;
+window.switchChatSubMode = switchChatSubMode;
+window.renderUserAdminMessages = renderUserAdminMessages;
+window.handleSendUserAdminMessage = handleSendUserAdminMessage;
+window.sendQuickPromptAdmin = sendQuickPromptAdmin;
+window.scrollUserAdminChatToBottom = scrollUserAdminChatToBottom;
+window.renderAdminConversationsSidebar = renderAdminConversationsSidebar;
+window.selectAdminChatUser = selectAdminChatUser;
+window.subscribeAdminToUserThread = subscribeAdminToUserThread;
+window.renderAdminThreadMessages = renderAdminThreadMessages;
+window.handleSendAdminThreadMessage = handleSendAdminThreadMessage;
+window.scrollAdminThreadToBottom = scrollAdminThreadToBottom;
+window.confirmDeleteAdminMessage = confirmDeleteAdminMessage;
+window.toggleAdminChatMobilePanel = toggleAdminChatMobilePanel;
+window.renderGroupChatMessages = renderGroupChatMessages;
+window.handleSendGroupChatMessage = handleSendGroupChatMessage;
+window.scrollGroupChatToBottom = scrollGroupChatToBottom;
+window.confirmDeleteGroupMessage = confirmDeleteGroupMessage;
+window.confirmClearGroupChat = confirmClearGroupChat;
+window.triggerChatImageSelect = triggerChatImageSelect;
+window.onChatImageChosen = onChatImageChosen;
+window.cancelChatImageUpload = cancelChatImageUpload;
+window.openChatImageModal = openChatImageModal;
+window.closeChatImageModal = closeChatImageModal;
 window.playChatNotificationSound = playChatNotificationSound;
 window.toggleChatSound = toggleChatSound;
 window.updateChatSoundUI = updateChatSoundUI;
 window.showChatNotificationPopup = showChatNotificationPopup;
 window.dismissChatPopup = dismissChatPopup;
 window.openChatFromNotification = openChatFromNotification;
-window.handleChatScroll = handleChatScroll;
-window.showScrollBottomButton = showScrollBottomButton;
-window.scrollChatToBottom = scrollChatToBottom;
+window.updateChatUnreadBadges = updateChatUnreadBadges;
+window.handleSendChatMessage = handleSendUserAdminMessage;
+window.sendQuickPrompt = sendQuickPromptAdmin;
+window.scrollChatToBottom = scrollUserAdminChatToBottom;
 window.updateAdminDashboardGreeting = updateAdminDashboardGreeting;
 window.openGuideModal = openGuideModal;
 window.switchGuideTab = switchGuideTab;

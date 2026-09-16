@@ -50,5 +50,26 @@ service cloud.firestore {
     match /referralCodes/{email} {
       allow read, write: if true;
     }
+
+    // -------------------------------------------------------------
+    // KOLEKSI: ADMIN CONVERSATIONS (Metadata Percakapan 1-on-1 User ↔ Admin)
+    // -------------------------------------------------------------
+    match /admin_conversations/{allSubcollections=**} {
+      allow read, write: if true;
+    }
+
+    // -------------------------------------------------------------
+    // KOLEKSI: ADMIN CHATS (Pesan Pribadi User ↔ Admin)
+    // -------------------------------------------------------------
+    match /admin_chats/{username}/{allSubcollections=**} {
+      allow read, write: if true;
+    }
+
+    // -------------------------------------------------------------
+    // KOLEKSI: GROUP MESSAGES (Obrolan Grup Pengguna Seluruh Aplikasi)
+    // -------------------------------------------------------------
+    match /group_messages/{allSubcollections=**} {
+      allow read, write: if true;
+    }
   }
 }

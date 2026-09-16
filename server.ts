@@ -161,34 +161,16 @@ export interface ClientConnection {
   cabang: string;
 }
 
-// In-memory chat storage seeded with initial conversation
+// In-memory chat storage seeded with initial conversation (tanpa hardcode Cabang A, B, C)
 const chatMessages: ChatMessage[] = [
   {
-    id: 'msg-init-1',
-    cabang: 'Cabang A',
+    id: 'msg-init-welcome',
+    cabang: 'Semua',
     sender: 'Admin Pusat',
     role: 'Admin',
-    text: 'Halo tim Kasir Cabang A! Selamat bertugas hari ini. Silakan chat di sini jika butuh bantuan stok, printer, atau operasional.',
-    timestamp: new Date(Date.now() - 3600000).toISOString(),
+    text: 'Selamat datang di Ruang Chat Bantuan & Operasional Istana Bubur. Hubungi Admin Pusat jika membutuhkan bantuan operasional kasir.',
+    timestamp: new Date().toISOString(),
     formattedTime: '08:00'
-  },
-  {
-    id: 'msg-init-2',
-    cabang: 'Cabang A',
-    sender: 'kasir1',
-    role: 'Kasir',
-    text: 'Siap Pak Admin, mesin kasir dan printer bluetooth sudah terhubung normal.',
-    timestamp: new Date(Date.now() - 3000000).toISOString(),
-    formattedTime: '08:15'
-  },
-  {
-    id: 'msg-init-3',
-    cabang: 'Cabang B',
-    sender: 'Admin Pusat',
-    role: 'Admin',
-    text: 'Halo tim Kasir Cabang B! Jangan lupa cek ketersediaan kerupuk dan sate telur puyuh ya.',
-    timestamp: new Date(Date.now() - 1800000).toISOString(),
-    formattedTime: '08:30'
   }
 ];
 
@@ -506,10 +488,11 @@ app.get('/view-doc/:docId', (req, res) => {
 
 app.get('/api/chat/messages', (req, res) => {
   const { cabang, role } = req.query;
-  if (role === 'Admin' && (!cabang || cabang === 'Semua')) {
+  // If role is Admin, always return all messages so Admin can monitor and switch all branches
+  if (role === 'Admin') {
     return res.json({ success: true, messages: chatMessages });
   }
-  if (cabang) {
+  if (cabang && cabang !== 'Semua') {
     const filtered = chatMessages.filter(m => m.cabang === cabang || m.cabang === 'Semua');
     return res.json({ success: true, messages: filtered });
   }
@@ -527,16 +510,21 @@ app.post('/api/chat/send', (req, res) => {
   const minutes = String(now.getMinutes()).padStart(2, '0');
 
   const newMsg: ChatMessage = {
-    id: 'msg-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+    id: req.body.id || ('msg-' + Date.now() + '-' + Math.floor(Math.random() * 1000)),
     cabang: cabang || 'Pusat',
     sender: sender,
     role: role || 'Kasir',
     text: String(text).trim(),
-    timestamp: now.toISOString(),
-    formattedTime: `${hours}:${minutes}`
+    timestamp: req.body.timestamp || now.toISOString(),
+    formattedTime: req.body.formattedTime || `${hours}:${minutes}`
   };
 
-  chatMessages.push(newMsg);
+  const existingIdx = chatMessages.findIndex(m => m.id === newMsg.id);
+  if (existingIdx === -1) {
+    chatMessages.push(newMsg);
+  } else {
+    chatMessages[existingIdx] = newMsg;
+  }
 
   // Broadcast via WS
   broadcast({
@@ -556,10 +544,12 @@ app.get('/api/chat/cabangs', (req, res) => {
   const cabangMap: Record<string, { lastMessage: ChatMessage | null; unreadCount: number }> = {};
   
   chatMessages.forEach(m => {
-    if (!cabangMap[m.cabang]) {
-      cabangMap[m.cabang] = { lastMessage: null, unreadCount: 0 };
+    if (m.cabang && !['Cabang A', 'Cabang B', 'Cabang C'].includes(m.cabang)) {
+      if (!cabangMap[m.cabang]) {
+        cabangMap[m.cabang] = { lastMessage: null, unreadCount: 0 };
+      }
+      cabangMap[m.cabang].lastMessage = m;
     }
-    cabangMap[m.cabang].lastMessage = m;
   });
 
   res.json({
@@ -1321,7 +1311,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
           email: 'kasir1@istanabubur.com',
           phone: '082198765432',
           role: 'Kasir',
-          cabang: 'Cabang A',
+          cabang: '',
           isActive: true,
           authCode: 'IB-AUTH-2026'
         },
@@ -1332,7 +1322,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
           email: 'kasir2@istanabubur.com',
           phone: '085211223344',
           role: 'Kasir',
-          cabang: 'Cabang B',
+          cabang: '',
           isActive: true,
           authCode: 'IB-AUTH-2026'
         }
@@ -1444,17 +1434,22 @@ async function startServer() {
           const minutes = String(now.getMinutes()).padStart(2, '0');
 
           const newMsg: ChatMessage = {
-            id: 'msg-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+            id: data.id || ('msg-' + Date.now() + '-' + Math.floor(Math.random() * 1000)),
             cabang: data.cabang || clientConn.cabang,
             sender: clientConn.username || data.sender || 'Anonim',
             role: clientConn.role,
             text: String(data.text || '').trim(),
-            timestamp: now.toISOString(),
-            formattedTime: `${hours}:${minutes}`
+            timestamp: data.timestamp || now.toISOString(),
+            formattedTime: data.formattedTime || `${hours}:${minutes}`
           };
 
           if (newMsg.text) {
-            chatMessages.push(newMsg);
+            const existingIdx = chatMessages.findIndex(m => m.id === newMsg.id);
+            if (existingIdx === -1) {
+              chatMessages.push(newMsg);
+            } else {
+              chatMessages[existingIdx] = newMsg;
+            }
 
             broadcast({
               type: 'new_message',
@@ -1476,6 +1471,8 @@ async function startServer() {
             if (client.role === 'Admin') return true;
             return client.cabang === clientConn.cabang;
           });
+        } else if (data.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong', time: Date.now() }));
         }
       } catch (e) {
         console.error('Error processing WS packet:', e);
@@ -1494,6 +1491,21 @@ async function startServer() {
       console.error('WS client error:', err);
       clients.delete(clientConn);
     });
+  });
+
+  // Periodic ping to keep WebSocket connections alive on Cloud Run & mobile networks
+  const wsHeartbeatInterval = setInterval(() => {
+    wss.clients.forEach((ws) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.ping();
+        } catch (e) {}
+      }
+    });
+  }, 25000);
+
+  server.on('close', () => {
+    clearInterval(wsHeartbeatInterval);
   });
 
   // Vite middleware setup

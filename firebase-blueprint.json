@@ -80,6 +80,58 @@
         "totalGaji": { "type": "number", "description": "Nominal total gaji yang diterima" }
       },
       "required": ["id", "bulan", "nama", "totalGaji"]
+    },
+    "AdminConversation": {
+      "title": "AdminConversation",
+      "description": "Daftar percakapan 1-on-1 antara user dan admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 50, "description": "Username pengguna thread" },
+        "username": { "type": "string", "maxLength": 50, "description": "Username akun" },
+        "fullName": { "type": "string", "maxLength": 100, "description": "Nama lengkap pengguna" },
+        "role": { "type": "string", "maxLength": 30, "description": "Role pengguna" },
+        "cabang": { "type": "string", "maxLength": 50, "description": "Cabang penempatan" },
+        "lastMessage": { "type": "string", "maxLength": 3000, "description": "Pesan terakhir" },
+        "lastTimestamp": { "type": "string", "description": "Waktu pesan terakhir" },
+        "unreadForAdmin": { "type": "number", "description": "Jumlah pesan belum dibaca oleh admin" },
+        "unreadForUser": { "type": "number", "description": "Jumlah pesan belum dibaca oleh user" },
+        "updatedAt": { "type": "string", "description": "Waktu pembaruan" }
+      },
+      "required": ["username", "lastMessage"]
+    },
+    "AdminChatMessage": {
+      "title": "AdminChatMessage",
+      "description": "Pesan chat pribadi antara user dan admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 50, "description": "ID Pesan" },
+        "senderUsername": { "type": "string", "maxLength": 50, "description": "Username pengirim" },
+        "senderName": { "type": "string", "maxLength": 100, "description": "Nama pengirim" },
+        "senderRole": { "type": "string", "maxLength": 30, "description": "Role pengirim" },
+        "senderCabang": { "type": "string", "maxLength": 50, "description": "Cabang pengirim" },
+        "text": { "type": "string", "maxLength": 3000, "description": "Isi pesan teks" },
+        "imageUrl": { "type": "string", "description": "URL gambar atau Base64 terlampir" },
+        "timestamp": { "type": "string", "description": "Format tanggal dan jam tampilan" },
+        "createdAt": { "type": "number", "description": "Epoch timestamp" }
+      },
+      "required": ["senderUsername", "senderRole"]
+    },
+    "GroupChatMessage": {
+      "title": "GroupChatMessage",
+      "description": "Pesan dalam grup obrolan seluruh pengguna",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 50, "description": "ID Pesan" },
+        "senderUsername": { "type": "string", "maxLength": 50, "description": "Username pengirim" },
+        "senderName": { "type": "string", "maxLength": 100, "description": "Nama pengirim" },
+        "senderRole": { "type": "string", "maxLength": 30, "description": "Role pengirim" },
+        "senderCabang": { "type": "string", "maxLength": 50, "description": "Cabang pengirim" },
+        "text": { "type": "string", "maxLength": 3000, "description": "Isi pesan teks" },
+        "imageUrl": { "type": "string", "description": "URL gambar atau Base64 terlampir" },
+        "timestamp": { "type": "string", "description": "Format tanggal dan jam tampilan" },
+        "createdAt": { "type": "number", "description": "Epoch timestamp" }
+      },
+      "required": ["senderUsername", "senderRole"]
     }
   },
   "firestore": {
@@ -102,6 +154,18 @@
     "/payroll/{slipId}": {
       "schema": "Payroll",
       "description": "Histori slip penggajian staf dan karyawan"
+    },
+    "/admin_conversations/{username}": {
+      "schema": "AdminConversation",
+      "description": "Metadata percakapan 1-on-1 user dengan admin"
+    },
+    "/admin_chats/{username}/messages/{msgId}": {
+      "schema": "AdminChatMessage",
+      "description": "Pesan chat pribadi antara user dan admin"
+    },
+    "/group_messages/{msgId}": {
+      "schema": "GroupChatMessage",
+      "description": "Pesan obrolan dalam grup pengguna aplikasi"
     }
   }
 }

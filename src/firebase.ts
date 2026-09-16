@@ -54,48 +54,28 @@ export const COLLECTIONS = {
   TRANSACTIONS: 'transactions',
   EMPLOYEES: 'employees',
   PAYROLL: 'payroll',
-  REFERRAL_CODES: 'referralCodes'
+  REFERRAL_CODES: 'referralCodes',
+  ADMIN_CONVERSATIONS: 'admin_conversations',
+  ADMIN_CHATS: 'admin_chats',
+  GROUP_MESSAGES: 'group_messages'
 };
 
-// Helper: Seed Default Data if collections are empty
+// Helper: Seed Default Data if collections are empty (hanya data dasar tanpa dummy cabang A, B, C)
 export async function seedInitialFirestoreData() {
   try {
-    // 1. Check & Seed Users
-    const usersSnap = await getDocs(collection(db, COLLECTIONS.USERS));
-    if (usersSnap.empty) {
-      const defaultUsers = [
-        {
-          id: 'USR-002',
-          fullName: 'Siti Rahmawati',
-          username: 'kasir1',
-          password: '123',
-          email: 'kasir1@istanabubur.com',
-          phone: '082198765432',
-          role: 'Kasir',
-          cabang: 'Cabang A',
-          isActive: true,
-          authCode: 'IB-AUTH-2026',
-          createdAt: new Date().toISOString()
-        },
-        {
-          id: 'USR-003',
-          fullName: 'Ahmad Fauzi',
-          username: 'kasir2',
-          password: '123',
-          email: 'kasir2@istanabubur.com',
-          phone: '085211223344',
-          role: 'Kasir',
-          cabang: 'Cabang B',
-          isActive: true,
-          authCode: 'IB-AUTH-2026',
-          createdAt: new Date().toISOString()
-        }
-      ];
-      for (const u of defaultUsers) {
-        await setDoc(doc(db, COLLECTIONS.USERS, u.username.toLowerCase()), u);
+    // 1. Bersihkan dummy users lama kasir1 / kasir2 / cabang A, B, C jika ada
+    try {
+      const dummyK1 = doc(db, COLLECTIONS.USERS, 'kasir1');
+      const dummyK2 = doc(db, COLLECTIONS.USERS, 'kasir2');
+      const snapK1 = await getDoc(dummyK1);
+      if (snapK1.exists()) {
+        await deleteDoc(dummyK1);
       }
-      console.log('[Firestore] Default Users seeded successfully');
-    }
+      const snapK2 = await getDoc(dummyK2);
+      if (snapK2.exists()) {
+        await deleteDoc(dummyK2);
+      }
+    } catch (e) {}
 
     // 2. Check & Seed Products
     const prodSnap = await getDocs(collection(db, COLLECTIONS.PRODUCTS));
@@ -124,7 +104,7 @@ export async function seedInitialFirestoreData() {
           nama: 'Budi Santoso',
           gender: 'Laki-laki',
           posisi: 'Kasir',
-          cabang: 'Cabang A',
+          cabang: 'Pusat',
           noWa: '081234567890',
           gajiHarian: 90000,
           email: 'budi@istanabubur.com'
@@ -134,7 +114,7 @@ export async function seedInitialFirestoreData() {
           nama: 'Siti Rahma',
           gender: 'Perempuan',
           posisi: 'Dapur Bubur',
-          cabang: 'Cabang A',
+          cabang: 'Pusat',
           noWa: '081298765432',
           gajiHarian: 100000,
           email: 'siti@istanabubur.com'
@@ -687,5 +667,269 @@ export function subscribeToTransactions(callback: (transactions: any[]) => void)
     callback(list);
   }, (err) => {
     console.warn('[Firestore Transaction Listener Warning]:', err);
+  });
+}
+
+// -------------------------------------------------------------
+// CHAT BANTUAN CLOUD FIRESTORE FUNCTIONS
+// 1. Chat Admin (1-on-1 User ↔ Admin)
+// 2. Grup Pengguna (Obrolan Publik Seluruh Pengguna)
+// -------------------------------------------------------------
+
+export function subscribeToAdminChat(username: string, callback: (messages: any[]) => void): () => void {
+  if (!username) return () => {};
+  const normUser = String(username).trim().toLowerCase();
+  const messagesCol = collection(db, COLLECTIONS.ADMIN_CHATS, normUser, 'messages');
+  
+  return onSnapshot(messagesCol, (snapshot) => {
+    const msgs: any[] = [];
+    snapshot.forEach((d) => {
+      const data = d.data();
+      msgs.push({
+        id: data.id || d.id,
+        senderUsername: data.senderUsername || '',
+        senderName: data.senderName || data.senderUsername || 'Pengguna',
+        senderRole: data.senderRole || 'Kasir',
+        senderCabang: data.senderCabang || 'Pusat',
+        text: data.text || '',
+        imageUrl: data.imageUrl || '',
+        timestamp: data.timestamp || '',
+        createdAt: data.createdAt || 0
+      });
+    });
+    msgs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    callback(msgs);
+  }, (err) => {
+    console.warn('[Firestore Admin Chat Listener Warning]:', err);
+  });
+}
+
+export async function sendAdminChatMessage(payload: {
+  username: string;
+  senderUsername: string;
+  senderName: string;
+  senderRole: string;
+  senderCabang: string;
+  text: string;
+  imageUrl?: string;
+}) {
+  const normUser = String(payload.username).trim().toLowerCase();
+  const msgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+  const now = new Date();
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const year = now.getFullYear();
+  const formattedTimestamp = `${day}/${month}/${year} ${hours}:${minutes}`;
+
+  const messageDocData = {
+    id: msgId,
+    senderUsername: payload.senderUsername,
+    senderName: payload.senderName || payload.senderUsername,
+    senderRole: payload.senderRole,
+    senderCabang: payload.senderCabang || 'Pusat',
+    text: payload.text || '',
+    imageUrl: payload.imageUrl || '',
+    timestamp: formattedTimestamp,
+    createdAt: Date.now()
+  };
+
+  // 1. Simpan pesan ke subkoleksi chat
+  const msgRef = doc(db, COLLECTIONS.ADMIN_CHATS, normUser, 'messages', msgId);
+  await setDoc(msgRef, messageDocData);
+
+  // 2. Perbarui metadata percakapan untuk list thread Admin
+  try {
+    const convRef = doc(db, COLLECTIONS.ADMIN_CONVERSATIONS, normUser);
+    const existingSnap = await getDoc(convRef);
+    const prev = existingSnap.exists() ? existingSnap.data() : {};
+
+    const isFromAdmin = payload.senderRole === 'Admin';
+    const unreadForAdmin = isFromAdmin ? 0 : ((prev?.unreadForAdmin || 0) + 1);
+    const unreadForUser = isFromAdmin ? ((prev?.unreadForUser || 0) + 1) : 0;
+
+    await setDoc(convRef, {
+      id: normUser,
+      username: normUser,
+      fullName: (!isFromAdmin && payload.senderName) ? payload.senderName : (prev?.fullName || normUser),
+      role: (!isFromAdmin && payload.senderRole) ? payload.senderRole : (prev?.role || 'Kasir'),
+      cabang: (!isFromAdmin && payload.senderCabang) ? payload.senderCabang : (prev?.cabang || 'Pusat'),
+      lastMessage: payload.text || (payload.imageUrl ? '📷 [Foto Terlampir]' : ''),
+      lastTimestamp: formattedTimestamp,
+      unreadForAdmin: unreadForAdmin,
+      unreadForUser: unreadForUser,
+      updatedAt: now.toISOString(),
+      lastSender: payload.senderUsername
+    }, { merge: true });
+  } catch (err) {
+    console.warn('[Firestore update admin conversation metadata error]:', err);
+  }
+
+  return { success: true, message: messageDocData };
+}
+
+export async function deleteAdminChatMessage(username: string, messageId: string) {
+  const normUser = String(username).trim().toLowerCase();
+  const targetDoc = doc(db, COLLECTIONS.ADMIN_CHATS, normUser, 'messages', messageId);
+  await deleteDoc(targetDoc);
+  return { success: true, message: 'Pesan berhasil dihapus.' };
+}
+
+export function subscribeToAdminConversations(callback: (conversations: any[]) => void): () => void {
+  const colRef = collection(db, COLLECTIONS.ADMIN_CONVERSATIONS);
+  return onSnapshot(colRef, (snapshot) => {
+    const list: any[] = [];
+    snapshot.forEach((d) => {
+      const data = d.data();
+      list.push({
+        id: data.id || d.id,
+        username: data.username || d.id,
+        fullName: data.fullName || data.username || d.id,
+        role: data.role || 'Kasir',
+        cabang: data.cabang || 'Pusat',
+        lastMessage: data.lastMessage || '',
+        lastTimestamp: data.lastTimestamp || '',
+        unreadForAdmin: Number(data.unreadForAdmin || 0),
+        unreadForUser: Number(data.unreadForUser || 0),
+        updatedAt: data.updatedAt || '',
+        lastSender: data.lastSender || ''
+      });
+    });
+    list.sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+    callback(list);
+  }, (err) => {
+    console.warn('[Firestore Admin Conversations Listener Warning]:', err);
+  });
+}
+
+export async function markAdminConversationRead(username: string, role: string) {
+  try {
+    const normUser = String(username).trim().toLowerCase();
+    const convRef = doc(db, COLLECTIONS.ADMIN_CONVERSATIONS, normUser);
+    if (role === 'Admin') {
+      await setDoc(convRef, { unreadForAdmin: 0 }, { merge: true });
+    } else {
+      await setDoc(convRef, { unreadForUser: 0 }, { merge: true });
+    }
+  } catch (e) {}
+}
+
+// -------------------------------------------------------------
+// GRUP PENGGUNA (Obrolan Terbuka Seluruh Pengguna)
+// -------------------------------------------------------------
+
+export function subscribeToGroupChat(callback: (messages: any[]) => void): () => void {
+  const colRef = collection(db, COLLECTIONS.GROUP_MESSAGES);
+  return onSnapshot(colRef, (snapshot) => {
+    const msgs: any[] = [];
+    snapshot.forEach((d) => {
+      const data = d.data();
+      msgs.push({
+        id: data.id || d.id,
+        senderUsername: data.senderUsername || '',
+        senderName: data.senderName || data.senderUsername || 'Pengguna',
+        senderRole: data.senderRole || 'Kasir',
+        senderCabang: data.senderCabang || 'Pusat',
+        text: data.text || '',
+        imageUrl: data.imageUrl || '',
+        timestamp: data.timestamp || '',
+        createdAt: data.createdAt || 0
+      });
+    });
+    msgs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    callback(msgs);
+  }, (err) => {
+    console.warn('[Firestore Group Chat Listener Warning]:', err);
+  });
+}
+
+export async function sendGroupChatMessage(payload: {
+  senderUsername: string;
+  senderName: string;
+  senderRole: string;
+  senderCabang: string;
+  text: string;
+  imageUrl?: string;
+}) {
+  const msgId = 'grp-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+  const now = new Date();
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const year = now.getFullYear();
+  const formattedTimestamp = `${day}/${month}/${year} ${hours}:${minutes}`;
+
+  const messageDocData = {
+    id: msgId,
+    senderUsername: payload.senderUsername,
+    senderName: payload.senderName || payload.senderUsername,
+    senderRole: payload.senderRole,
+    senderCabang: payload.senderCabang || 'Pusat',
+    text: payload.text || '',
+    imageUrl: payload.imageUrl || '',
+    timestamp: formattedTimestamp,
+    createdAt: Date.now()
+  };
+
+  const msgRef = doc(db, COLLECTIONS.GROUP_MESSAGES, msgId);
+  await setDoc(msgRef, messageDocData);
+  return { success: true, message: messageDocData };
+}
+
+export async function deleteGroupChatMessage(messageId: string) {
+  const targetDoc = doc(db, COLLECTIONS.GROUP_MESSAGES, messageId);
+  await deleteDoc(targetDoc);
+  return { success: true, message: 'Pesan berhasil dihapus dari Grup Pengguna.' };
+}
+
+export async function clearGroupChatMessages() {
+  const snap = await getDocs(collection(db, COLLECTIONS.GROUP_MESSAGES));
+  for (const d of snap.docs) {
+    await deleteDoc(d.ref);
+  }
+  return { success: true, message: 'Seluruh riwayat grup berhasil dibersihkan.' };
+}
+
+// -------------------------------------------------------------
+// IMAGE COMPRESSOR HELPER (Mengoptimalkan gambar sebelum kirim)
+// -------------------------------------------------------------
+export function compressImageFile(file: File, maxWidth = 900, quality = 0.72): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type.startsWith('image/')) {
+      return reject(new Error('File bukan gambar yang valid'));
+    }
+
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          return resolve(e.target?.result as string);
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(dataUrl);
+      };
+      img.src = e.target?.result as string;
+    };
+    reader.readAsDataURL(file);
   });
 }
