@@ -676,6 +676,53 @@ export function subscribeToTransactions(callback: (transactions: any[]) => void)
 // 2. Grup Pengguna (Obrolan Publik Seluruh Pengguna)
 // -------------------------------------------------------------
 
+export function parseMessageTimestamp(m: any): number {
+  if (!m) return 0;
+  // 1. Cek Firestore Timestamp object (toMillis / seconds / _seconds)
+  if (m.createdAt && typeof m.createdAt.toMillis === 'function') {
+    return m.createdAt.toMillis();
+  }
+  if (m.createdAt && typeof m.createdAt.seconds === 'number') {
+    return m.createdAt.seconds * 1000;
+  }
+  if (m.createdAt && typeof m.createdAt._seconds === 'number') {
+    return m.createdAt._seconds * 1000;
+  }
+  // 2. Cek numeric createdAt
+  if (typeof m.createdAt === 'number' && m.createdAt > 0) {
+    return m.createdAt;
+  }
+  if (typeof m.createdAt === 'string' && /^\d+$/.test(m.createdAt.trim())) {
+    const parsed = parseInt(m.createdAt.trim(), 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  // 3. Cek ID yang mengandung milidetik (misal msg-1726567890123-xxx)
+  if (typeof m.id === 'string') {
+    const match = m.id.match(/\d{10,14}/);
+    if (match) {
+      const num = parseInt(match[0], 10);
+      if (!isNaN(num) && num > 0) return num;
+    }
+  }
+  // 4. Cek string timestamp
+  if (m.timestamp) {
+    const str = String(m.timestamp).trim();
+    const partsWithSec = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})/);
+    if (partsWithSec) {
+      const d = new Date(parseInt(partsWithSec[3], 10), parseInt(partsWithSec[2], 10) - 1, parseInt(partsWithSec[1], 10), parseInt(partsWithSec[4], 10), parseInt(partsWithSec[5], 10), parseInt(partsWithSec[6], 10));
+      if (!isNaN(d.getTime())) return d.getTime();
+    }
+    const parts = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})/);
+    if (parts) {
+      const d = new Date(parseInt(parts[3], 10), parseInt(parts[2], 10) - 1, parseInt(parts[1], 10), parseInt(parts[4], 10), parseInt(parts[5], 10));
+      if (!isNaN(d.getTime())) return d.getTime();
+    }
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) return d.getTime();
+  }
+  return 0;
+}
+
 export function subscribeToAdminChat(username: string, callback: (messages: any[]) => void): () => void {
   if (!username) return () => {};
   const normUser = String(username).trim().toLowerCase();
@@ -697,7 +744,10 @@ export function subscribeToAdminChat(username: string, callback: (messages: any[
         createdAt: data.createdAt || 0
       });
     });
-    msgs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    msgs.sort((a, b) => {
+      const diff = parseMessageTimestamp(a) - parseMessageTimestamp(b);
+      return diff !== 0 ? diff : String(a.id || '').localeCompare(String(b.id || ''));
+    });
     callback(msgs);
   }, (err) => {
     console.warn('[Firestore Admin Chat Listener Warning]:', err);
@@ -712,10 +762,18 @@ export async function sendAdminChatMessage(payload: {
   senderCabang: string;
   text: string;
   imageUrl?: string;
+  replyAfterTimestamp?: number;
 }) {
   const normUser = String(payload.username).trim().toLowerCase();
-  const msgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
-  const now = new Date();
+  
+  // Pastikan pesan balasan selalu memiliki timestamp lebih baru daripada pesan yang diterima
+  const minRequiredTime = (typeof payload.replyAfterTimestamp === 'number' && payload.replyAfterTimestamp > 0)
+    ? (payload.replyAfterTimestamp + 1000)
+    : 0;
+  const finalCreatedAt = Math.max(Date.now(), minRequiredTime);
+  const msgId = 'msg-' + finalCreatedAt + '-' + Math.random().toString(36).substring(2, 7);
+
+  const now = new Date(finalCreatedAt);
   const hours = String(now.getHours()).padStart(2, '0');
   const minutes = String(now.getMinutes()).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
@@ -732,7 +790,7 @@ export async function sendAdminChatMessage(payload: {
     text: payload.text || '',
     imageUrl: payload.imageUrl || '',
     timestamp: formattedTimestamp,
-    createdAt: Date.now()
+    createdAt: finalCreatedAt
   };
 
   // 1. Simpan pesan ke subkoleksi chat
@@ -774,6 +832,26 @@ export async function deleteAdminChatMessage(username: string, messageId: string
   const targetDoc = doc(db, COLLECTIONS.ADMIN_CHATS, normUser, 'messages', messageId);
   await deleteDoc(targetDoc);
   return { success: true, message: 'Pesan berhasil dihapus.' };
+}
+
+export async function deleteUserConversationHistory(username: string) {
+  const normUser = String(username).trim().toLowerCase();
+  
+  // 1. Hapus semua pesan dari subkoleksi messages
+  const messagesCol = collection(db, COLLECTIONS.ADMIN_CHATS, normUser, 'messages');
+  const snap = await getDocs(messagesCol);
+  const deletePromises = snap.docs.map(d => deleteDoc(d.ref));
+  await Promise.all(deletePromises);
+
+  // 2. Hapus dokumen ringkasan percakapan di admin_conversations
+  try {
+    const convDoc = doc(db, COLLECTIONS.ADMIN_CONVERSATIONS, normUser);
+    await deleteDoc(convDoc);
+  } catch (err) {
+    console.warn('[deleteUserConversationHistory convDoc warning]:', err);
+  }
+
+  return { success: true, message: 'Seluruh riwayat percakapan berhasil dihapus.' };
 }
 
 export function subscribeToAdminConversations(callback: (conversations: any[]) => void): () => void {
@@ -837,7 +915,10 @@ export function subscribeToGroupChat(callback: (messages: any[]) => void): () =>
         createdAt: data.createdAt || 0
       });
     });
-    msgs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    msgs.sort((a, b) => {
+      const diff = parseMessageTimestamp(a) - parseMessageTimestamp(b);
+      return diff !== 0 ? diff : String(a.id || '').localeCompare(String(b.id || ''));
+    });
     callback(msgs);
   }, (err) => {
     console.warn('[Firestore Group Chat Listener Warning]:', err);
@@ -851,9 +932,15 @@ export async function sendGroupChatMessage(payload: {
   senderCabang: string;
   text: string;
   imageUrl?: string;
+  replyAfterTimestamp?: number;
 }) {
-  const msgId = 'grp-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
-  const now = new Date();
+  const minRequiredTime = (typeof payload.replyAfterTimestamp === 'number' && payload.replyAfterTimestamp > 0)
+    ? (payload.replyAfterTimestamp + 1000)
+    : 0;
+  const finalCreatedAt = Math.max(Date.now(), minRequiredTime);
+  const msgId = 'grp-' + finalCreatedAt + '-' + Math.random().toString(36).substring(2, 7);
+
+  const now = new Date(finalCreatedAt);
   const hours = String(now.getHours()).padStart(2, '0');
   const minutes = String(now.getMinutes()).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
@@ -870,7 +957,7 @@ export async function sendGroupChatMessage(payload: {
     text: payload.text || '',
     imageUrl: payload.imageUrl || '',
     timestamp: formattedTimestamp,
-    createdAt: Date.now()
+    createdAt: finalCreatedAt
   };
 
   const msgRef = doc(db, COLLECTIONS.GROUP_MESSAGES, msgId);
@@ -886,9 +973,11 @@ export async function deleteGroupChatMessage(messageId: string) {
 
 export async function clearGroupChatMessages() {
   const snap = await getDocs(collection(db, COLLECTIONS.GROUP_MESSAGES));
-  for (const d of snap.docs) {
-    await deleteDoc(d.ref);
+  if (snap.empty) {
+    return { success: true, message: 'Grup obrolan sudah kosong.' };
   }
+  const deletePromises = snap.docs.map(d => deleteDoc(d.ref));
+  await Promise.all(deletePromises);
   return { success: true, message: 'Seluruh riwayat grup berhasil dibersihkan.' };
 }
 

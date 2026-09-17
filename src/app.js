@@ -27,6 +27,7 @@ import {
     subscribeToAdminChat,
     sendAdminChatMessage,
     deleteAdminChatMessage,
+    deleteUserConversationHistory,
     subscribeToAdminConversations,
     markAdminConversationRead,
     subscribeToGroupChat,
@@ -465,6 +466,40 @@ function closeModal(id) {
             }
         }
     }
+}
+
+function openModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('hidden-view');
+}
+
+function showCustomConfirmModal(title, message, confirmBtnText, onConfirm) {
+    const modal = document.getElementById('modal-confirm');
+    const titleEl = document.getElementById('confirm-title');
+    const msgEl = document.getElementById('confirm-message');
+    const btnAction = document.getElementById('btn-confirm-action');
+
+    if (!modal) {
+        if (typeof onConfirm === 'function') onConfirm();
+        return;
+    }
+
+    if (titleEl) titleEl.innerText = title;
+    if (msgEl) msgEl.innerText = message;
+    if (btnAction) {
+        btnAction.innerText = confirmBtnText || 'Hapus';
+        btnAction.onclick = async () => {
+            closeModal('modal-confirm');
+            if (typeof onConfirm === 'function') {
+                try {
+                    await onConfirm();
+                } catch (err) {
+                    console.error('Error executing confirmed action:', err);
+                }
+            }
+        };
+    }
+    openModal('modal-confirm');
 }
 
 function openGuideModal(tabName = 'login') {
@@ -6210,11 +6245,20 @@ let isUserScrolledUpAdmin = false;
 let isUserScrolledUpGroup = false;
 
 // Format Tanggal & Waktu lengkap: DD/MM/YYYY HH:mm
-function formatChatDateTime(isoString) {
-    if (!isoString) return '';
+function formatChatDateTime(raw) {
+    if (!raw) return '';
+    const str = String(raw).trim();
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(str)) {
+        return str;
+    }
     try {
-        const d = new Date(isoString);
-        if (isNaN(d.getTime())) return '';
+        let d;
+        if (typeof raw === 'number') {
+            d = new Date(raw);
+        } else {
+            d = new Date(str);
+        }
+        if (isNaN(d.getTime())) return str;
         const day = String(d.getDate()).padStart(2, '0');
         const month = String(d.getMonth() + 1).padStart(2, '0');
         const year = d.getFullYear();
@@ -6222,8 +6266,56 @@ function formatChatDateTime(isoString) {
         const mins = String(d.getMinutes()).padStart(2, '0');
         return `${day}/${month}/${year} ${hours}:${mins}`;
     } catch (e) {
-        return '';
+        return str;
     }
+}
+
+function parseMessageTimestamp(m) {
+    if (!m) return 0;
+    if (typeof m.createdAt === 'number' && m.createdAt > 0) return m.createdAt;
+    if (typeof m.id === 'string') {
+        const match = m.id.match(/\d{10,13}/);
+        if (match) {
+            const num = parseInt(match[0], 10);
+            if (!isNaN(num) && num > 0) return num;
+        }
+    }
+    if (m.timestamp) {
+        const parts = String(m.timestamp).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})/);
+        if (parts) {
+            const d = new Date(parseInt(parts[3], 10), parseInt(parts[2], 10) - 1, parseInt(parts[1], 10), parseInt(parts[4], 10), parseInt(parts[5], 10));
+            if (!isNaN(d.getTime())) return d.getTime();
+        }
+        const d = new Date(m.timestamp);
+        if (!isNaN(d.getTime())) return d.getTime();
+    }
+    return 0;
+}
+
+function isCurrentUserAdmin() {
+    if (!CURRENT_USER) return false;
+    const role = String(CURRENT_USER.role || '').trim().toLowerCase();
+    const username = String(CURRENT_USER.username || '').trim().toLowerCase();
+    return role === 'admin' || role === 'administrator' || username === 'admin';
+}
+
+function scrollChatBoxToBottom(elementId, smooth = false) {
+    const box = document.getElementById(elementId);
+    if (!box) return;
+    const doScroll = () => {
+        try {
+            box.scrollTo({
+                top: box.scrollHeight,
+                behavior: smooth ? 'smooth' : 'auto'
+            });
+        } catch(e) {
+            box.scrollTop = box.scrollHeight;
+        }
+    };
+    doScroll();
+    requestAnimationFrame(doScroll);
+    setTimeout(doScroll, 80);
+    setTimeout(doScroll, 250);
 }
 
 // Inisialisasi Sistem Chat Realtime Firestore
@@ -6235,7 +6327,7 @@ function initRealtimeChatSystem() {
     unsubscribeGroupChatListener = subscribeToGroupChat((messages) => {
         const previousLength = groupChatMessages.length;
         const oldLastId = groupChatMessages.length > 0 ? groupChatMessages[groupChatMessages.length - 1].id : null;
-        groupChatMessages = messages || [];
+        groupChatMessages = (messages || []).sort((a, b) => parseMessageTimestamp(a) - parseMessageTimestamp(b));
 
         // Deteksi jika ada pesan baru masuk dari user lain
         if (groupChatMessages.length > 0) {
@@ -6257,12 +6349,13 @@ function initRealtimeChatSystem() {
 
         if (currentTab === 'chat' && currentChatSubMode === 'group') {
             renderGroupChatMessages();
-            scrollGroupChatToBottom(!isUserScrolledUpGroup);
+            // Otomatis scroll ke pesan paling bawah saat pesan baru masuk
+            scrollGroupChatToBottom(true);
         }
     });
 
     // 2. Dengarkan Chat Admin
-    if (CURRENT_USER.role === 'Admin') {
+    if (isCurrentUserAdmin()) {
         // Admin mendengarkan seluruh ringkasan percakapan pengguna
         unsubscribeAdminConversationsListener = subscribeToAdminConversations((convs) => {
             adminConversationsList = convs || [];
@@ -6292,7 +6385,7 @@ function initRealtimeChatSystem() {
         unsubscribeKasirAdminChatListener = subscribeToAdminChat(CURRENT_USER.username, (messages) => {
             const previousLength = userAdminChatMessages.length;
             const oldLastId = userAdminChatMessages.length > 0 ? userAdminChatMessages[userAdminChatMessages.length - 1].id : null;
-            userAdminChatMessages = messages || [];
+            userAdminChatMessages = (messages || []).sort((a, b) => parseMessageTimestamp(a) - parseMessageTimestamp(b));
 
             if (userAdminChatMessages.length > 0) {
                 const latest = userAdminChatMessages[userAdminChatMessages.length - 1];
@@ -6313,7 +6406,8 @@ function initRealtimeChatSystem() {
 
             if (currentTab === 'chat' && currentChatSubMode === 'admin') {
                 renderUserAdminMessages();
-                scrollUserAdminChatToBottom(!isUserScrolledUpAdmin);
+                // Otomatis scroll ke pesan terbaru di bagian paling bawah
+                scrollUserAdminChatToBottom(true);
                 // Tandai dibaca
                 markAdminConversationRead(CURRENT_USER.username, 'Kasir');
                 unreadAdminCount = 0;
@@ -6355,7 +6449,25 @@ function openChatView() {
     if (!CURRENT_USER) return;
     initRealtimeChatSystem();
     updateChatSoundUI();
-    switchChatSubMode(currentChatSubMode);
+    switchChatSubMode(currentChatSubMode || 'admin');
+}
+
+// Segarkan tampilan chat saat tombol Segarkan diklik
+function refreshCurrentChatView() {
+    showToast('Menyegarkan percakapan...', 'info');
+    initRealtimeChatSystem();
+    if (currentChatSubMode === 'admin') {
+        if (isCurrentUserAdmin()) {
+            renderAdminConversationsSidebar();
+            if (currentSelectedAdminChatUser) {
+                renderAdminThreadMessages();
+            }
+        } else {
+            renderUserAdminMessages();
+        }
+    } else {
+        renderGroupChatMessages();
+    }
 }
 
 // Beralih Sub-Tab: 'admin' atau 'group'
@@ -6373,16 +6485,16 @@ function switchChatSubMode(mode) {
 
     if (mode === 'admin') {
         if (btnAdmin) {
-            btnAdmin.className = 'flex items-center gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold transition shadow-xs bg-red-600 text-white';
+            btnAdmin.className = 'flex-1 py-2.5 px-3 sm:px-5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition active:scale-98 bg-red-600 text-white shadow-xs';
         }
         if (btnGroup) {
-            btnGroup.className = 'flex items-center gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold transition text-gray-700 bg-white hover:bg-gray-100 border border-gray-200';
+            btnGroup.className = 'flex-1 py-2.5 px-3 sm:px-5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition active:scale-98 bg-gray-100 text-gray-700 hover:bg-gray-200';
         }
 
         if (containerAdmin) containerAdmin.classList.remove('hidden-view');
         if (containerGroup) containerGroup.classList.add('hidden-view');
 
-        if (CURRENT_USER.role === 'Admin') {
+        if (isCurrentUserAdmin()) {
             if (userAdminView) userAdminView.classList.add('hidden-view');
             if (adminAdminView) adminAdminView.classList.remove('hidden-view');
             renderAdminConversationsSidebar();
@@ -6402,10 +6514,10 @@ function switchChatSubMode(mode) {
     } else {
         // Mode Grup Pengguna
         if (btnGroup) {
-            btnGroup.className = 'flex items-center gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold transition shadow-xs bg-red-600 text-white';
+            btnGroup.className = 'flex-1 py-2.5 px-3 sm:px-5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition active:scale-98 bg-red-600 text-white shadow-xs';
         }
         if (btnAdmin) {
-            btnAdmin.className = 'flex items-center gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold transition text-gray-700 bg-white hover:bg-gray-100 border border-gray-200';
+            btnAdmin.className = 'flex-1 py-2.5 px-3 sm:px-5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition active:scale-98 bg-gray-100 text-gray-700 hover:bg-gray-200';
         }
 
         if (containerAdmin) containerAdmin.classList.add('hidden-view');
@@ -6418,7 +6530,7 @@ function switchChatSubMode(mode) {
         // Tampilkan tombol moderasi admin jika role Admin
         const modBadge = document.getElementById('admin-group-moderation-badge');
         const clearBtn = document.getElementById('btn-clear-group-chat');
-        if (CURRENT_USER.role === 'Admin') {
+        if (isCurrentUserAdmin()) {
             if (modBadge) modBadge.classList.remove('hidden-view');
             if (clearBtn) clearBtn.classList.remove('hidden-view');
         } else {
@@ -6437,7 +6549,10 @@ function switchChatSubMode(mode) {
 
 function renderUserAdminMessages() {
     const container = document.getElementById('user-admin-messages-box');
+    const countEl = document.getElementById('user-admin-chat-msg-count');
     if (!container || !CURRENT_USER) return;
+
+    if (countEl) countEl.innerText = `${userAdminChatMessages.length} pesan`;
 
     if (userAdminChatMessages.length === 0) {
         container.innerHTML = `
@@ -6454,13 +6569,15 @@ function renderUserAdminMessages() {
         return;
     }
 
+    userAdminChatMessages.sort((a, b) => parseMessageTimestamp(a) - parseMessageTimestamp(b));
+
     container.innerHTML = userAdminChatMessages.map(msg => {
         const isSelf = (msg.senderUsername === CURRENT_USER.username);
         const timeFormatted = formatChatDateTime(msg.timestamp);
 
         if (isSelf) {
             return `
-                <div class="flex flex-col items-end">
+                <div class="flex flex-col items-end group/msg">
                     <div class="max-w-[85%] sm:max-w-[70%] bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl rounded-tr-none p-3.5 shadow-sm">
                         <div class="flex items-center justify-between gap-3 mb-1 text-[10px] text-red-100 font-medium">
                             <span class="font-bold">${escapeHtml(msg.senderName || msg.senderUsername)} (Anda)</span>
@@ -6475,15 +6592,22 @@ function renderUserAdminMessages() {
                             </div>
                         ` : ''}
                         ${msg.text ? `<p class="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(msg.text)}</p>` : ''}
-                        <div class="flex items-center justify-end gap-1 mt-1 text-[10px] text-red-100">
-                            <i class="fas fa-check-double text-[9px]"></i>
+                        <div class="flex items-center justify-between gap-2 mt-1.5 pt-1.5 border-t border-white/20 text-[10px] text-red-100">
+                            <button type="button" onclick="confirmDeleteUserChatMessage('${msg.id}')" title="Hapus pesan ini" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/20 hover:bg-black/35 active:scale-95 text-red-100 hover:text-white transition text-xs font-semibold">
+                                <i class="fas fa-trash-alt text-[11px]"></i>
+                                <span>Hapus Pesan</span>
+                            </button>
+                            <span class="flex items-center gap-1 opacity-90 text-[10px]">
+                                <span>Terkirim</span>
+                                <i class="fas fa-check-double text-[10px]"></i>
+                            </span>
                         </div>
                     </div>
                 </div>
             `;
         } else {
             return `
-                <div class="flex flex-col items-start">
+                <div class="flex flex-col items-start group/msg">
                     <div class="max-w-[85%] sm:max-w-[70%] bg-white border border-gray-200 text-gray-900 rounded-2xl rounded-tl-none p-3.5 shadow-xs">
                         <div class="flex items-center justify-between gap-3 mb-1.5">
                             <div class="flex items-center gap-1.5">
@@ -6508,6 +6632,34 @@ function renderUserAdminMessages() {
     }).join('');
 }
 
+function confirmDeleteUserChatMessage(msgId) {
+    if (!CURRENT_USER) return;
+    const msg = userAdminChatMessages.find(m => m.id === msgId);
+    if (!msg) return;
+
+    if (msg.senderUsername !== CURRENT_USER.username && !isCurrentUserAdmin()) {
+        showToast('Anda hanya dapat menghapus pesan milik Anda sendiri', 'warning');
+        return;
+    }
+
+    showCustomConfirmModal(
+        'Hapus Pesan Anda?',
+        'Apakah Anda yakin ingin menghapus pesan ini? Pesan yang dihapus akan langsung hilang dari obrolan dan database.',
+        'Hapus Pesan',
+        async () => {
+            try {
+                await deleteAdminChatMessage(CURRENT_USER.username, msgId);
+                userAdminChatMessages = userAdminChatMessages.filter(m => m.id !== msgId);
+                renderUserAdminMessages();
+                showToast('Pesan berhasil dihapus', 'success');
+            } catch (err) {
+                console.error('Gagal menghapus pesan user:', err);
+                showToast('Gagal menghapus pesan. Periksa koneksi internet.', 'error');
+            }
+        }
+    );
+}
+
 async function handleSendUserAdminMessage(e) {
     if (e) e.preventDefault();
     if (!CURRENT_USER) return;
@@ -6528,6 +6680,11 @@ async function handleSendUserAdminMessage(e) {
     }
 
     try {
+        let lastMsgTs = 0;
+        if (userAdminChatMessages && userAdminChatMessages.length > 0) {
+            lastMsgTs = parseMessageTimestamp(userAdminChatMessages[userAdminChatMessages.length - 1]);
+        }
+
         await sendAdminChatMessage({
             username: CURRENT_USER.username,
             senderUsername: CURRENT_USER.username,
@@ -6535,7 +6692,8 @@ async function handleSendUserAdminMessage(e) {
             senderRole: CURRENT_USER.role || 'Kasir',
             senderCabang: CURRENT_USER.cabang || 'Pusat',
             text: text,
-            imageUrl: imageUrl || ''
+            imageUrl: imageUrl || '',
+            replyAfterTimestamp: lastMsgTs
         });
 
         if (input) input.value = '';
@@ -6553,13 +6711,7 @@ async function handleSendUserAdminMessage(e) {
 }
 
 function scrollUserAdminChatToBottom(smooth = true) {
-    const box = document.getElementById('user-admin-messages-box');
-    if (box) {
-        box.scrollTo({
-            top: box.scrollHeight,
-            behavior: smooth ? 'smooth' : 'auto'
-        });
-    }
+    scrollChatBoxToBottom('user-admin-messages-box', smooth);
 }
 
 function sendQuickPromptAdmin(text) {
@@ -6575,8 +6727,9 @@ function sendQuickPromptAdmin(text) {
 // ----------------------------------------------------
 
 function renderAdminConversationsSidebar() {
-    const container = document.getElementById('admin-conversations-list-container');
+    const container = document.getElementById('admin-user-conversation-list') || document.getElementById('admin-conversations-list-container');
     const searchInput = document.getElementById('admin-user-search-input');
+    const totalCountEl = document.getElementById('admin-total-user-count');
     if (!container) return;
 
     const searchQuery = (searchInput ? searchInput.value.trim().toLowerCase() : '');
@@ -6587,15 +6740,16 @@ function renderAdminConversationsSidebar() {
 
     // 1. Masukkan pengguna terdaftar
     allUsers.forEach(u => {
-        if (u.username.toLowerCase() !== 'admin') {
-            userMap.set(u.username, {
-                username: u.username,
+        if (u.username && u.username.toLowerCase() !== 'admin') {
+            const key = u.username.trim().toLowerCase();
+            userMap.set(key, {
+                username: u.username.trim(),
                 fullName: u.fullName || u.username,
                 role: u.role || 'Kasir',
                 cabang: u.cabang || 'Pusat',
                 lastMessage: 'Belum ada percakapan',
                 lastTimestamp: '',
-                unreadForAdmin: adminUnreadPerUser[u.username] || 0
+                unreadForAdmin: adminUnreadPerUser[u.username.trim()] || 0
             });
         }
     });
@@ -6603,27 +6757,32 @@ function renderAdminConversationsSidebar() {
     // 2. Terapkan data dari adminConversationsList (Firestore)
     adminConversationsList.forEach(c => {
         if (c.username && c.username.toLowerCase() !== 'admin') {
-            const existing = userMap.get(c.username) || {};
-            userMap.set(c.username, {
-                username: c.username,
+            const key = c.username.trim().toLowerCase();
+            const existing = userMap.get(key) || {};
+            userMap.set(key, {
+                username: c.username.trim(),
                 fullName: c.fullName || existing.fullName || c.username,
                 role: c.role || existing.role || 'Kasir',
                 cabang: c.cabang || existing.cabang || 'Pusat',
                 lastMessage: c.lastMessage || existing.lastMessage || 'Belum ada percakapan',
                 lastTimestamp: c.lastTimestamp || existing.lastTimestamp || '',
-                unreadForAdmin: c.unreadForAdmin || 0
+                unreadForAdmin: c.unreadForAdmin !== undefined ? c.unreadForAdmin : (existing.unreadForAdmin || 0)
             });
         }
     });
 
     let list = Array.from(userMap.values());
 
+    if (totalCountEl) {
+        totalCountEl.innerText = `${list.length} User`;
+    }
+
     // Filter pencarian
     if (searchQuery) {
         list = list.filter(u => 
-            u.username.toLowerCase().includes(searchQuery) ||
-            u.fullName.toLowerCase().includes(searchQuery) ||
-            u.cabang.toLowerCase().includes(searchQuery)
+            (u.username && u.username.toLowerCase().includes(searchQuery)) ||
+            (u.fullName && u.fullName.toLowerCase().includes(searchQuery)) ||
+            (u.cabang && u.cabang.toLowerCase().includes(searchQuery))
         );
     }
 
@@ -6647,68 +6806,306 @@ function renderAdminConversationsSidebar() {
         return;
     }
 
+    // Auto select first user on desktop if not yet selected
+    if (!currentSelectedAdminChatUser && list.length > 0 && window.innerWidth >= 768) {
+        selectAdminChatUser(list[0].username, list[0].fullName, list[0].role, list[0].cabang);
+        return;
+    }
+
     container.innerHTML = list.map(user => {
-        const isSelected = currentSelectedAdminChatUser && currentSelectedAdminChatUser.username === user.username;
+        const isSelected = currentSelectedAdminChatUser && currentSelectedAdminChatUser.username.toLowerCase() === user.username.toLowerCase();
         const unread = user.unreadForAdmin || 0;
         const timeFormatted = user.lastTimestamp ? formatChatDateTime(user.lastTimestamp).split(' ')[1] : '';
 
-        const activeClass = isSelected 
-            ? 'bg-red-50/80 border-red-200 shadow-xs' 
-            : 'bg-white hover:bg-gray-50 border-gray-100';
+        const activeCardStyle = isSelected 
+            ? 'bg-red-50/90 border-red-300 shadow-xs' 
+            : 'bg-white hover:bg-gray-50/80 border-gray-200';
 
         const initial = (user.fullName || user.username).charAt(0).toUpperCase();
+        const safeDomId = String(user.username).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const encodedUsername = encodeURIComponent(user.username);
+        const escapedFullName = escapeHtml(user.fullName);
 
         return `
-            <div onclick="selectAdminChatUser('${escapeHtml(user.username)}', '${escapeHtml(user.fullName)}', '${escapeHtml(user.role)}', '${escapeHtml(user.cabang)}')"
-                 class="p-3 rounded-2xl border transition-all cursor-pointer flex items-center gap-3 ${activeClass}">
-                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-gray-800 to-gray-700 text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-xs relative">
-                    ${initial}
-                    ${unread > 0 ? `<span class="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-600 rounded-full border-2 border-white animate-pulse"></span>` : ''}
-                </div>
-                <div class="flex-1 min-w-0">
-                    <div class="flex items-center justify-between gap-1 mb-0.5">
-                        <span class="text-xs font-bold text-gray-900 truncate">${escapeHtml(user.fullName)}</span>
-                        ${timeFormatted ? `<span class="text-[10px] text-gray-400 shrink-0 font-medium">${timeFormatted}</span>` : ''}
+            <div class="relative overflow-hidden rounded-2xl mb-2 bg-red-600 select-none group/swipe" id="user-swipe-container-${safeDomId}">
+                <!-- Background Action: Tombol Merah Hapus History (terungkap saat swipe ke kiri) -->
+                <button type="button"
+                        onclick="event.stopPropagation(); confirmDeleteConversationHistory('${encodedUsername}', '${escapedFullName}')"
+                        class="absolute inset-y-0 right-0 w-24 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white flex flex-col items-center justify-center gap-1 transition text-center px-1 z-0 cursor-pointer"
+                        title="Hapus seluruh riwayat obrolan dengan pengguna ini">
+                    <i class="fas fa-trash-alt text-sm"></i>
+                    <span class="text-[10px] font-bold leading-tight">Hapus History</span>
+                </button>
+
+                <!-- Foreground Card (Bisa digeser/swipe ke kiri) -->
+                <div id="swipe-card-${safeDomId}"
+                     data-username="${encodedUsername}"
+                     data-safeid="${safeDomId}"
+                     class="user-swipe-item relative p-3 rounded-2xl border transition-transform duration-200 ease-out cursor-pointer flex items-center gap-3 select-none ${activeCardStyle} z-10"
+                     style="transform: translateX(0px);"
+                     onclick="handleUserCardClick(event, '${encodedUsername}')">
+                    
+                    <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-gray-800 to-gray-700 text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-xs relative pointer-events-none">
+                        ${initial}
+                        ${unread > 0 ? `<span class="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-600 rounded-full border-2 border-white animate-pulse"></span>` : ''}
                     </div>
-                    <div class="flex items-center justify-between gap-1">
-                        <p class="text-[11px] text-gray-500 truncate max-w-[130px] sm:max-w-[170px]">${escapeHtml(user.lastMessage)}</p>
-                        ${unread > 0 ? `<span class="px-1.5 py-0.2 rounded-full bg-red-600 text-white text-[9px] font-black shrink-0 animate-bounce">${unread}</span>` : ''}
+                    
+                    <div class="flex-1 min-w-0 pointer-events-none">
+                        <div class="flex items-center justify-between gap-1 mb-0.5">
+                            <span class="text-xs font-bold text-gray-900 truncate">${escapedFullName}</span>
+                            ${timeFormatted ? `<span class="text-[10px] text-gray-400 shrink-0 font-medium">${timeFormatted}</span>` : ''}
+                        </div>
+                        <div class="flex items-center justify-between gap-1">
+                            <p class="text-[11px] text-gray-500 truncate max-w-[120px] sm:max-w-[150px]">${escapeHtml(user.lastMessage)}</p>
+                            ${unread > 0 ? `<span class="px-1.5 py-0.2 rounded-full bg-red-600 text-white text-[9px] font-black shrink-0 animate-bounce">${unread}</span>` : ''}
+                        </div>
+                    </div>
+
+                    <!-- Tombol Cepat Hapus History untuk Desktop Hover -->
+                    <button type="button" 
+                            onclick="event.stopPropagation(); confirmDeleteConversationHistory('${encodedUsername}', '${escapedFullName}')"
+                            class="hidden md:inline-flex items-center justify-center w-7 h-7 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 active:scale-95 transition shrink-0 opacity-0 group-hover/swipe:opacity-100"
+                            title="Hapus riwayat percakapan">
+                        <i class="fas fa-trash-alt text-xs"></i>
+                    </button>
+
+                    <!-- Indikator Swipe untuk Mobile -->
+                    <div class="md:hidden text-gray-300 pointer-events-none text-[10px]">
+                        <i class="fas fa-chevron-left"></i>
                     </div>
                 </div>
             </div>
         `;
     }).join('');
+
+    // Inisialisasi event listener touch & swipe gesture
+    initAdminUserSwipeListeners();
+}
+
+function initAdminUserSwipeListeners() {
+    const cards = document.querySelectorAll('.user-swipe-item');
+    cards.forEach(card => {
+        let startX = 0;
+        let startY = 0;
+        let currentX = 0;
+        let isTouching = false;
+        let isHorizontal = null;
+        let isOpen = (card.dataset.swipedOpen === 'true');
+        const maxSwipe = 96; // lebar area tombol merah (w-24)
+
+        const onTouchStart = (e) => {
+            const pt = e.touches ? e.touches[0] : e;
+            startX = pt.clientX;
+            startY = pt.clientY;
+            currentX = (card.dataset.swipedOpen === 'true') ? -maxSwipe : 0;
+            isTouching = true;
+            isHorizontal = null;
+            card.style.transition = 'none';
+        };
+
+        const onTouchMove = (e) => {
+            if (!isTouching) return;
+            const pt = e.touches ? e.touches[0] : e;
+            const diffX = pt.clientX - startX;
+            const diffY = pt.clientY - startY;
+
+            if (isHorizontal === null) {
+                if (Math.abs(diffX) > 6 || Math.abs(diffY) > 6) {
+                    isHorizontal = Math.abs(diffX) > Math.abs(diffY);
+                }
+            }
+
+            if (!isHorizontal) return;
+
+            let targetX = ((card.dataset.swipedOpen === 'true') ? -maxSwipe : 0) + diffX;
+            if (targetX > 0) targetX = 0;
+            if (targetX < -110) targetX = -110;
+
+            currentX = targetX;
+            card.style.transform = `translateX(${targetX}px)`;
+            if (e.cancelable) e.preventDefault();
+        };
+
+        const onTouchEnd = () => {
+            if (!isTouching) return;
+            isTouching = false;
+            card.style.transition = 'transform 0.2s cubic-bezier(0.25, 1, 0.5, 1)';
+
+            if (currentX < -38) {
+                // Swipe ke kiri tercapai -> Tampilkan tombol merah
+                card.style.transform = `translateX(-${maxSwipe}px)`;
+                card.dataset.swipedOpen = 'true';
+                closeOtherSwipedCards(card);
+            } else {
+                // Kembalikan ke posisi awal
+                card.style.transform = 'translateX(0px)';
+                delete card.dataset.swipedOpen;
+            }
+        };
+
+        card.addEventListener('touchstart', onTouchStart, { passive: true });
+        card.addEventListener('touchmove', onTouchMove, { passive: false });
+        card.addEventListener('touchend', onTouchEnd, { passive: true });
+        card.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    });
+}
+
+function closeOtherSwipedCards(exceptCard) {
+    const cards = document.querySelectorAll('.user-swipe-item');
+    cards.forEach(c => {
+        if (c !== exceptCard && c.dataset.swipedOpen === 'true') {
+            c.style.transition = 'transform 0.2s cubic-bezier(0.25, 1, 0.5, 1)';
+            c.style.transform = 'translateX(0px)';
+            delete c.dataset.swipedOpen;
+        }
+    });
+}
+
+function handleUserCardClick(event, encodedUsername) {
+    const username = decodeURIComponent(encodedUsername);
+    const safeDomId = String(username).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const card = document.getElementById(`swipe-card-${safeDomId}`);
+
+    // Jika sedang dalam kondisi terbuka karena swipe, klik kartu hanya menutupnya kembali
+    if (card && card.dataset.swipedOpen === 'true') {
+        card.style.transition = 'transform 0.2s cubic-bezier(0.25, 1, 0.5, 1)';
+        card.style.transform = 'translateX(0px)';
+        delete card.dataset.swipedOpen;
+        return;
+    }
+
+    closeOtherSwipedCards(null);
+
+    const allUsers = typeof getAllUsers === 'function' ? getAllUsers() : [];
+    const fromUsers = allUsers.find(u => u.username && u.username.toLowerCase() === username.toLowerCase());
+    const fromConvs = adminConversationsList.find(c => c.username && c.username.toLowerCase() === username.toLowerCase());
+
+    const fullName = (fromConvs && fromConvs.fullName) || (fromUsers && fromUsers.fullName) || username;
+    const role = (fromConvs && fromConvs.role) || (fromUsers && fromUsers.role) || 'Kasir';
+    const cabang = (fromConvs && fromConvs.cabang) || (fromUsers && fromUsers.cabang) || 'Pusat';
+
+    selectAdminChatUser(username, fullName, role, cabang);
+}
+
+function confirmDeleteConversationHistory(encodedUsername, fullName) {
+    const username = decodeURIComponent(encodedUsername);
+    if (!username) return;
+    const displayName = fullName ? decodeURIComponent(fullName) : username;
+
+    showCustomConfirmModal(
+        'Hapus Riwayat Percakapan?',
+        `Apakah Anda yakin ingin menghapus SELURUH riwayat percakapan dengan "${escapeHtml(displayName)}"?\n\nSemua pesan yang dikirim dan diterima akan dihapus secara permanen dari database.`,
+        'Hapus Riwayat',
+        async () => {
+            try {
+                showToast('Menghapus riwayat percakapan...', 'info');
+                await deleteUserConversationHistory(username);
+
+                // Bersihkan pesan jika user yang sedang aktif di chat adalah user ini
+                if (currentSelectedAdminChatUser && currentSelectedAdminChatUser.username.toLowerCase() === username.toLowerCase()) {
+                    currentAdminThreadMessages = [];
+                    renderAdminThreadMessages();
+                }
+
+                // Update list dan badge
+                adminConversationsList = adminConversationsList.filter(c => c.username.toLowerCase() !== username.toLowerCase());
+                if (adminUnreadPerUser[username]) {
+                    delete adminUnreadPerUser[username];
+                }
+                unreadAdminCount = Object.values(adminUnreadPerUser).reduce((a, b) => a + b, 0);
+                updateChatUnreadBadges();
+                renderAdminConversationsSidebar();
+
+                showToast(`Riwayat percakapan dengan "${displayName}" berhasil dihapus`, 'success');
+            } catch (err) {
+                console.error('Gagal menghapus riwayat percakapan:', err);
+                showToast('Gagal menghapus riwayat percakapan. Periksa koneksi internet.', 'error');
+            }
+        }
+    );
+}
+
+function confirmDeleteSelectedUserHistory() {
+    if (!currentSelectedAdminChatUser) {
+        showToast('Pilih pengguna terlebih dahulu', 'info');
+        return;
+    }
+    confirmDeleteConversationHistory(encodeURIComponent(currentSelectedAdminChatUser.username), currentSelectedAdminChatUser.fullName);
+}
+
+function selectAdminChatUserByData(el) {
+    if (!el || !el.dataset.user) return;
+    try {
+        const u = JSON.parse(el.dataset.user);
+        selectAdminChatUser(u.username, u.fullName, u.role, u.cabang);
+    } catch(err) {
+        console.error('Error selecting user data:', err);
+    }
+}
+
+function updateAdminChatHeaderUI(user) {
+    const nameEl = document.getElementById('admin-chat-target-name') || document.getElementById('selected-admin-chat-user-name');
+    const subEl = document.getElementById('admin-chat-target-info') || document.getElementById('selected-admin-chat-user-sub');
+    const avatarEl = document.getElementById('admin-chat-target-avatar') || document.getElementById('selected-admin-chat-user-avatar');
+    const badgeEl = document.getElementById('admin-chat-target-badge');
+    const deleteBtn = document.getElementById('btn-delete-selected-user-history');
+
+    if (nameEl) nameEl.innerText = user.fullName || user.username;
+    if (subEl) subEl.innerText = `@${user.username} • ${user.cabang || 'Pusat'} • ${user.role || 'Kasir'}`;
+    if (avatarEl) avatarEl.innerText = (user.fullName || user.username).charAt(0).toUpperCase();
+    if (badgeEl) {
+        badgeEl.innerText = user.role || 'Kasir';
+        badgeEl.classList.remove('hidden-view');
+    }
+    if (deleteBtn) {
+        deleteBtn.classList.remove('hidden-view');
+    }
 }
 
 function selectAdminChatUser(username, fullName, role, cabang) {
-    currentSelectedAdminChatUser = { username, fullName, role, cabang };
+    if (!username) return;
+    const cleanUser = String(username).trim();
+    currentSelectedAdminChatUser = {
+        username: cleanUser,
+        fullName: fullName || cleanUser,
+        role: role || 'Kasir',
+        cabang: cabang || 'Pusat'
+    };
 
-    const emptyState = document.getElementById('admin-chat-empty-state');
-    const activePanel = document.getElementById('admin-chat-active-panel');
-    const nameEl = document.getElementById('selected-admin-chat-user-name');
-    const subEl = document.getElementById('selected-admin-chat-user-sub');
-    const avatarEl = document.getElementById('selected-admin-chat-user-avatar');
-
-    if (emptyState) emptyState.classList.add('hidden-view');
-    if (activePanel) activePanel.classList.remove('hidden-view');
-
-    if (nameEl) nameEl.innerText = fullName || username;
-    if (subEl) subEl.innerText = `@${username} • ${cabang || 'Pusat'} • ${role || 'Kasir'}`;
-    if (avatarEl) avatarEl.innerText = (fullName || username).charAt(0).toUpperCase();
-
-    // Di HP, alihkan tampilan dari list ke thread
+    updateAdminChatHeaderUI(currentSelectedAdminChatUser);
     toggleAdminChatMobilePanel('chat');
-
     renderAdminConversationsSidebar();
-    subscribeAdminToUserThread(username);
-    markAdminConversationRead(username, 'Admin');
+    subscribeAdminToUserThread(cleanUser);
+    markAdminConversationRead(cleanUser, 'Admin');
 
-    // Kurangi hitungan lokal
-    if (adminUnreadPerUser[username]) {
-        adminUnreadPerUser[username] = 0;
+    if (adminUnreadPerUser[cleanUser]) {
+        adminUnreadPerUser[cleanUser] = 0;
     }
     unreadAdminCount = Object.values(adminUnreadPerUser).reduce((a, b) => a + b, 0);
     updateChatUnreadBadges();
+}
+
+function toggleAdminChatMobilePanel(panel) {
+    const userListPanel = document.getElementById('admin-chat-sidebar') || document.getElementById('admin-chat-user-list-panel');
+    const threadPanel = document.getElementById('admin-chat-main-area') || document.getElementById('admin-chat-thread-panel');
+
+    if (!userListPanel || !threadPanel) return;
+
+    if (panel === 'chat') {
+        userListPanel.classList.add('hidden');
+        userListPanel.classList.add('md:flex');
+        threadPanel.classList.remove('hidden');
+        threadPanel.classList.add('flex');
+    } else {
+        userListPanel.classList.remove('hidden');
+        userListPanel.classList.add('flex');
+        threadPanel.classList.add('hidden');
+        threadPanel.classList.add('md:flex');
+    }
+}
+
+function filterAdminUserList(e) {
+    renderAdminConversationsSidebar();
 }
 
 let currentAdminThreadMessages = [];
@@ -6720,9 +7117,9 @@ function subscribeAdminToUserThread(targetUsername) {
     }
 
     unsubscribeAdminChatListener = subscribeToAdminChat(targetUsername, (messages) => {
-        currentAdminThreadMessages = messages || [];
+        currentAdminThreadMessages = (messages || []).sort((a, b) => parseMessageTimestamp(a) - parseMessageTimestamp(b));
         renderAdminThreadMessages();
-        scrollAdminThreadToBottom(false);
+        scrollAdminThreadToBottom(true);
     });
 }
 
@@ -6745,15 +7142,11 @@ function renderAdminThreadMessages() {
         return;
     }
 
+    currentAdminThreadMessages.sort((a, b) => parseMessageTimestamp(a) - parseMessageTimestamp(b));
+
     container.innerHTML = currentAdminThreadMessages.map(msg => {
         const isSelf = (msg.senderUsername === CURRENT_USER.username || msg.senderRole === 'Admin');
         const timeFormatted = formatChatDateTime(msg.timestamp);
-
-        const deleteBtn = `
-            <button onclick="confirmDeleteAdminMessage('${currentSelectedAdminChatUser.username}', '${msg.id}')" title="Hapus pesan" class="text-gray-400 hover:text-red-600 p-1 rounded transition text-xs opacity-80 hover:opacity-100">
-                <i class="fas fa-trash-alt"></i>
-            </button>
-        `;
 
         if (isSelf) {
             return `
@@ -6772,9 +7165,12 @@ function renderAdminThreadMessages() {
                             </div>
                         ` : ''}
                         ${msg.text ? `<p class="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(msg.text)}</p>` : ''}
-                        <div class="flex items-center justify-between gap-2 mt-1 pt-1 border-t border-white/10 text-[10px] text-red-100">
-                            <div>${deleteBtn}</div>
-                            <i class="fas fa-check-double text-[9px]"></i>
+                        <div class="flex items-center justify-between gap-2 mt-1.5 pt-1.5 border-t border-white/20 text-[10px] text-red-100">
+                            <button type="button" onclick="confirmDeleteAdminMessage('${currentSelectedAdminChatUser.username}', '${msg.id}')" title="Hapus pesan" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/20 hover:bg-black/35 active:scale-95 text-red-100 hover:text-white transition text-xs font-semibold">
+                                <i class="fas fa-trash-alt text-[11px]"></i>
+                                <span>Hapus Pesan</span>
+                            </button>
+                            <i class="fas fa-check-double text-[10px] opacity-90"></i>
                         </div>
                     </div>
                 </div>
@@ -6789,7 +7185,10 @@ function renderAdminThreadMessages() {
                                 <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">🏪 ${escapeHtml(msg.senderCabang || 'Kasir')}</span>
                             </div>
                             <div class="flex items-center gap-1">
-                                ${deleteBtn}
+                                <button type="button" onclick="confirmDeleteAdminMessage('${currentSelectedAdminChatUser.username}', '${msg.id}')" title="Hapus pesan (Moderasi Admin)" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 active:scale-95 transition text-xs font-semibold">
+                                    <i class="fas fa-trash-alt text-[11px]"></i>
+                                    <span class="text-[11px]">Hapus</span>
+                                </button>
                                 <span class="text-[10px] text-gray-400 font-medium">${timeFormatted}</span>
                             </div>
                         </div>
@@ -6811,7 +7210,11 @@ function renderAdminThreadMessages() {
 
 async function handleSendAdminThreadMessage(e) {
     if (e) e.preventDefault();
-    if (!CURRENT_USER || !currentSelectedAdminChatUser) return;
+    if (!CURRENT_USER) return;
+    if (!currentSelectedAdminChatUser) {
+        showToast('Pilih pengguna terlebih dahulu dari daftar di sebelah kiri', 'info');
+        return;
+    }
 
     const input = document.getElementById('input-text-admin-thread');
     const text = input ? input.value.trim() : '';
@@ -6829,6 +7232,11 @@ async function handleSendAdminThreadMessage(e) {
     }
 
     try {
+        let lastMsgTs = 0;
+        if (currentAdminThreadMessages && currentAdminThreadMessages.length > 0) {
+            lastMsgTs = parseMessageTimestamp(currentAdminThreadMessages[currentAdminThreadMessages.length - 1]);
+        }
+
         await sendAdminChatMessage({
             username: currentSelectedAdminChatUser.username,
             senderUsername: CURRENT_USER.username,
@@ -6836,7 +7244,8 @@ async function handleSendAdminThreadMessage(e) {
             senderRole: 'Admin',
             senderCabang: 'Pusat',
             text: text,
-            imageUrl: imageUrl || ''
+            imageUrl: imageUrl || '',
+            replyAfterTimestamp: lastMsgTs
         });
 
         if (input) input.value = '';
@@ -6854,39 +7263,26 @@ async function handleSendAdminThreadMessage(e) {
 }
 
 function scrollAdminThreadToBottom(smooth = true) {
-    const box = document.getElementById('admin-thread-messages-box');
-    if (box) {
-        box.scrollTo({
-            top: box.scrollHeight,
-            behavior: smooth ? 'smooth' : 'auto'
-        });
-    }
+    scrollChatBoxToBottom('admin-thread-messages-box', smooth);
 }
 
-async function confirmDeleteAdminMessage(username, msgId) {
-    if (!confirm('Hapus pesan ini dari riwayat chat?')) return;
-    try {
-        await deleteAdminChatMessage(username, msgId);
-        showToast('Pesan berhasil dihapus', 'success');
-    } catch (err) {
-        console.error('Gagal menghapus pesan admin:', err);
-        showToast('Gagal menghapus pesan', 'error');
-    }
-}
-
-function toggleAdminChatMobilePanel(panel) {
-    const userListPanel = document.getElementById('admin-chat-user-list-panel');
-    const threadPanel = document.getElementById('admin-chat-thread-panel');
-
-    if (!userListPanel || !threadPanel) return;
-
-    if (panel === 'chat') {
-        userListPanel.classList.add('hidden', 'lg:flex');
-        threadPanel.classList.remove('hidden');
-    } else {
-        userListPanel.classList.remove('hidden');
-        threadPanel.classList.add('hidden');
-    }
+function confirmDeleteAdminMessage(username, msgId) {
+    showCustomConfirmModal(
+        'Hapus Pesan Chat?',
+        'Apakah Anda yakin ingin menghapus pesan ini dari riwayat chat? Pesan akan langsung terhapus permanen dari database.',
+        'Hapus Pesan',
+        async () => {
+            try {
+                await deleteAdminChatMessage(username, msgId);
+                currentAdminThreadMessages = currentAdminThreadMessages.filter(m => m.id !== msgId);
+                renderAdminThreadMessages();
+                showToast('Pesan berhasil dihapus', 'success');
+            } catch (err) {
+                console.error('Gagal menghapus pesan admin:', err);
+                showToast('Gagal menghapus pesan. Periksa koneksi internet.', 'error');
+            }
+        }
+    );
 }
 
 // ----------------------------------------------------
@@ -6915,18 +7311,13 @@ function renderGroupChatMessages() {
         return;
     }
 
-    const isAdmin = CURRENT_USER.role === 'Admin';
+    const isAdmin = isCurrentUserAdmin();
+    groupChatMessages.sort((a, b) => parseMessageTimestamp(a) - parseMessageTimestamp(b));
 
     container.innerHTML = groupChatMessages.map(msg => {
         const isSelf = (msg.senderUsername === CURRENT_USER.username);
         const isMsgAdmin = (msg.senderRole === 'Admin');
         const timeFormatted = formatChatDateTime(msg.timestamp);
-
-        const deleteButtonHtml = isAdmin ? `
-            <button onclick="confirmDeleteGroupMessage('${msg.id}')" title="Hapus pesan ini (Moderasi Admin)" class="text-gray-400 hover:text-red-600 p-1 rounded-md hover:bg-gray-100 transition text-xs">
-                <i class="fas fa-trash-alt"></i>
-            </button>
-        ` : '';
 
         if (isSelf) {
             return `
@@ -6948,10 +7339,13 @@ function renderGroupChatMessages() {
                             </div>
                         ` : ''}
                         ${msg.text ? `<p class="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(msg.text)}</p>` : ''}
-                        <div class="flex items-center justify-between gap-2 mt-1 pt-1 border-t border-white/10 text-[10px] text-red-100">
+                        <div class="flex items-center justify-between gap-2 mt-1.5 pt-1.5 border-t border-white/20 text-[10px] text-red-100">
                             <span class="text-[9px] opacity-85">🏪 ${escapeHtml(msg.senderCabang || 'Cabang')}</span>
                             <div class="flex items-center gap-2">
-                                ${deleteButtonHtml}
+                                <button type="button" onclick="confirmDeleteGroupMessage('${msg.id}')" title="Hapus pesan saya" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/20 hover:bg-black/35 active:scale-95 text-red-100 hover:text-white transition text-xs font-semibold">
+                                    <i class="fas fa-trash-alt text-[11px]"></i>
+                                    <span>Hapus Pesan</span>
+                                </button>
                                 <i class="fas fa-check-double text-[9px]"></i>
                             </div>
                         </div>
@@ -6963,6 +7357,14 @@ function renderGroupChatMessages() {
                 ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-800 border border-red-200">👑 Admin</span>'
                 : `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">🏪 ${escapeHtml(msg.senderCabang || 'Kasir')}</span>`;
 
+            // Admin dapat menghapus pesan pengguna lain (moderasi), sedangkan user biasa tidak dapat menghapus pesan orang lain
+            const adminModerationBtn = isAdmin ? `
+                <button type="button" onclick="confirmDeleteGroupMessage('${msg.id}')" title="Hapus pesan pengguna (Moderasi Admin)" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 active:scale-95 transition text-xs font-semibold">
+                    <i class="fas fa-trash-alt text-[11px]"></i>
+                    <span class="text-[11px]">Hapus</span>
+                </button>
+            ` : '';
+
             return `
                 <div class="flex flex-col items-start group/msg">
                     <div class="max-w-[85%] sm:max-w-[70%] bg-white border border-gray-200 text-gray-900 rounded-2xl rounded-tl-none p-3.5 shadow-xs">
@@ -6973,7 +7375,7 @@ function renderGroupChatMessages() {
                                 ${roleBadge}
                             </div>
                             <div class="flex items-center gap-1">
-                                ${deleteButtonHtml}
+                                ${adminModerationBtn}
                                 <span class="text-[10px] text-gray-400 font-medium">${timeFormatted}</span>
                             </div>
                         </div>
@@ -7013,13 +7415,19 @@ async function handleSendGroupChatMessage(e) {
     }
 
     try {
+        let lastMsgTs = 0;
+        if (groupChatMessages && groupChatMessages.length > 0) {
+            lastMsgTs = parseMessageTimestamp(groupChatMessages[groupChatMessages.length - 1]);
+        }
+
         await sendGroupChatMessage({
             senderUsername: CURRENT_USER.username,
             senderName: CURRENT_USER.fullName || CURRENT_USER.username,
-            senderRole: CURRENT_USER.role || 'Kasir',
+            senderRole: isCurrentUserAdmin() ? 'Admin' : (CURRENT_USER.role || 'Kasir'),
             senderCabang: CURRENT_USER.cabang || 'Pusat',
             text: text,
-            imageUrl: imageUrl || ''
+            imageUrl: imageUrl || '',
+            replyAfterTimestamp: lastMsgTs
         });
 
         if (input) input.value = '';
@@ -7037,40 +7445,77 @@ async function handleSendGroupChatMessage(e) {
 }
 
 function scrollGroupChatToBottom(smooth = true) {
-    const box = document.getElementById('group-chat-messages-box');
-    if (box) {
-        box.scrollTo({
-            top: box.scrollHeight,
-            behavior: smooth ? 'smooth' : 'auto'
-        });
-    }
+    scrollChatBoxToBottom('group-chat-messages-box', smooth);
 }
 
-async function confirmDeleteGroupMessage(msgId) {
-    if (CURRENT_USER.role !== 'Admin') return;
-    if (!confirm('Apakah Anda yakin ingin menghapus pesan ini dari Grup Pengguna?')) return;
+function confirmDeleteGroupMessage(msgId) {
+    if (!CURRENT_USER) return;
+    const msg = groupChatMessages.find(m => m.id === msgId);
+    if (!msg) return;
 
-    try {
-        await deleteGroupChatMessage(msgId);
-        showToast('Pesan grup berhasil dihapus (Moderasi Admin)', 'success');
-    } catch (err) {
-        console.error('Gagal menghapus pesan grup:', err);
-        showToast('Gagal menghapus pesan grup', 'error');
+    const isSelf = (msg.senderUsername === CURRENT_USER.username);
+    const isAdmin = isCurrentUserAdmin();
+
+    if (!isSelf && !isAdmin) {
+        showToast('Anda hanya dapat menghapus pesan milik Anda sendiri', 'warning');
+        return;
     }
+
+    const modalTitle = isSelf ? 'Hapus Pesan Anda?' : 'Hapus Pesan Grup (Moderasi)?';
+    const modalDesc = isSelf
+        ? 'Apakah Anda yakin ingin menghapus pesan ini? Pesan yang dihapus akan langsung hilang dari obrolan grup dan database.'
+        : `Apakah Anda yakin ingin menghapus pesan dari "${escapeHtml(msg.senderName || msg.senderUsername)}"? Pesan akan langsung hilang dari obrolan grup dan database.`;
+
+    showCustomConfirmModal(
+        modalTitle,
+        modalDesc,
+        'Hapus Pesan',
+        async () => {
+            try {
+                await deleteGroupChatMessage(msgId);
+                groupChatMessages = groupChatMessages.filter(m => m.id !== msgId);
+                renderGroupChatMessages();
+                showToast('Pesan grup berhasil dihapus', 'success');
+            } catch (err) {
+                console.error('Gagal menghapus pesan grup:', err);
+                showToast('Gagal menghapus pesan grup. Periksa koneksi internet.', 'error');
+            }
+        }
+    );
 }
 
-async function confirmClearGroupChat() {
-    if (CURRENT_USER.role !== 'Admin') return;
-    const confirmClear = confirm('PERINGATAN MODERASI:\nApakah Anda yakin ingin membersihkan/menghapus seluruh pesan dalam Grup Pengguna? Tindakan ini tidak dapat dibatalkan.');
-    if (!confirmClear) return;
-
-    try {
-        await clearGroupChatMessages();
-        showToast('Seluruh pesan grup berhasil dibersihkan', 'success');
-    } catch (err) {
-        console.error('Gagal membersihkan grup:', err);
-        showToast('Gagal membersihkan riwayat pesan grup', 'error');
+function confirmClearGroupChat() {
+    if (!isCurrentUserAdmin()) {
+        showToast('Hanya Admin yang berhak membersihkan riwayat obrolan grup', 'warning');
+        return;
     }
+
+    showCustomConfirmModal(
+        'Bersihkan Seluruh Obrolan Grup?',
+        'PERINGATAN MODERASI:\nApakah Anda yakin ingin menghapus SEMUA pesan dalam Grup Pengguna? Tindakan ini permanen dan menghapus seluruh riwayat obrolan dari database Cloud Firestore.',
+        'Bersihkan Semua',
+        async () => {
+            const clearBtn = document.getElementById('btn-clear-group-chat');
+            if (clearBtn) {
+                clearBtn.disabled = true;
+                clearBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Membersihkan...';
+            }
+            try {
+                await clearGroupChatMessages();
+                groupChatMessages = [];
+                renderGroupChatMessages();
+                showToast('Seluruh obrolan grup berhasil dibersihkan', 'success');
+            } catch (err) {
+                console.error('Gagal membersihkan grup:', err);
+                showToast('Gagal membersihkan obrolan grup. Periksa koneksi internet.', 'error');
+            } finally {
+                if (clearBtn) {
+                    clearBtn.disabled = false;
+                    clearBtn.innerHTML = '<i class="fas fa-trash-alt mr-1"></i> Bersihkan Chat';
+                }
+            }
+        }
+    );
 }
 
 // ----------------------------------------------------
@@ -7436,13 +7881,22 @@ window.syncChatMessagesFromServer = () => {};
 window.startChatPolling = () => {};
 window.updateChatPollingFrequency = () => {};
 window.openChatView = openChatView;
+window.refreshCurrentChatView = refreshCurrentChatView;
 window.switchChatSubMode = switchChatSubMode;
 window.renderUserAdminMessages = renderUserAdminMessages;
 window.handleSendUserAdminMessage = handleSendUserAdminMessage;
+window.confirmDeleteUserChatMessage = confirmDeleteUserChatMessage;
 window.sendQuickPromptAdmin = sendQuickPromptAdmin;
 window.scrollUserAdminChatToBottom = scrollUserAdminChatToBottom;
 window.renderAdminConversationsSidebar = renderAdminConversationsSidebar;
+window.initAdminUserSwipeListeners = initAdminUserSwipeListeners;
+window.closeOtherSwipedCards = closeOtherSwipedCards;
+window.handleUserCardClick = handleUserCardClick;
+window.confirmDeleteConversationHistory = confirmDeleteConversationHistory;
+window.confirmDeleteSelectedUserHistory = confirmDeleteSelectedUserHistory;
 window.selectAdminChatUser = selectAdminChatUser;
+window.selectAdminChatUserByData = selectAdminChatUserByData;
+window.filterAdminUserList = filterAdminUserList;
 window.subscribeAdminToUserThread = subscribeAdminToUserThread;
 window.renderAdminThreadMessages = renderAdminThreadMessages;
 window.handleSendAdminThreadMessage = handleSendAdminThreadMessage;
