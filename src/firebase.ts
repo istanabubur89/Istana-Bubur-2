@@ -54,6 +54,7 @@ export const COLLECTIONS = {
   TRANSACTIONS: 'transactions',
   EMPLOYEES: 'employees',
   PAYROLL: 'payroll',
+  BRANCHES: 'branches',
   REFERRAL_CODES: 'referralCodes',
   ADMIN_CONVERSATIONS: 'admin_conversations',
   ADMIN_CHATS: 'admin_chats',
@@ -134,6 +135,19 @@ export async function seedInitialFirestoreData() {
         await setDoc(doc(db, COLLECTIONS.EMPLOYEES, e.id), e);
       }
       console.log('[Firestore] Default Employees seeded successfully');
+    }
+
+    // 4. Check & Seed Branches (Sempajak & M Yamin)
+    const branchSnap = await getDocs(collection(db, COLLECTIONS.BRANCHES));
+    if (branchSnap.empty) {
+      const defaultBranches = [
+        { id: 'sempajak', name: 'Sempajak', createdAt: Date.now() },
+        { id: 'm_yamin', name: 'M Yamin', createdAt: Date.now() }
+      ];
+      for (const b of defaultBranches) {
+        await setDoc(doc(db, COLLECTIONS.BRANCHES, b.id), b);
+      }
+      console.log('[Firestore] Default Branches (Sempajak, M Yamin) seeded successfully');
     }
   } catch (err) {
     console.warn('[Firestore Seed Warning]:', err);
@@ -510,7 +524,7 @@ export async function firestoreGetHistoriTransaksi() {
     list.push({
       'ID Transaksi': data.id || docSnap.id,
       'Tanggal': data.tanggal || '',
-      'Cabang': data.cabang || 'Pusat',
+      'Cabang': data.cabang || 'Sempajak',
       'Kasir': data.kasir || 'Kasir',
       'Total Belanja': Number(data.total || 0),
       'Nama Pelanggan': data.namaPelanggan || 'Umum',
@@ -539,7 +553,7 @@ export async function firestoreProcessTransaksiKasir(trx: any) {
   const payload = {
     id: trxId,
     tanggal: tanggalFormatted,
-    cabang: trx.cabang || 'Pusat',
+    cabang: trx.cabang || 'Sempajak',
     kasir: trx.kasir || 'Kasir',
     total: Number(trx.total || 0),
     namaPelanggan: namaPelanggan,
@@ -651,7 +665,7 @@ export function subscribeToTransactions(callback: (transactions: any[]) => void)
       list.push({
         'ID Transaksi': data.id || d.id,
         'Tanggal': data.tanggal || '',
-        'Cabang': data.cabang || 'Pusat',
+        'Cabang': data.cabang || 'Sempajak',
         'Kasir': data.kasir || 'Kasir',
         'Total Belanja': Number(data.total || 0),
         'Nama Pelanggan': data.namaPelanggan || 'Umum',
@@ -835,23 +849,40 @@ export async function deleteAdminChatMessage(username: string, messageId: string
 }
 
 export async function deleteUserConversationHistory(username: string) {
-  const normUser = String(username).trim().toLowerCase();
+  const rawUser = String(username).trim();
+  const normUser = rawUser.toLowerCase();
   
-  // 1. Hapus semua pesan dari subkoleksi messages
-  const messagesCol = collection(db, COLLECTIONS.ADMIN_CHATS, normUser, 'messages');
-  const snap = await getDocs(messagesCol);
-  const deletePromises = snap.docs.map(d => deleteDoc(d.ref));
-  await Promise.all(deletePromises);
+  const targets = new Set<string>();
+  if (normUser) targets.add(normUser);
+  if (rawUser) targets.add(rawUser);
 
-  // 2. Hapus dokumen ringkasan percakapan di admin_conversations
-  try {
-    const convDoc = doc(db, COLLECTIONS.ADMIN_CONVERSATIONS, normUser);
-    await deleteDoc(convDoc);
-  } catch (err) {
-    console.warn('[deleteUserConversationHistory convDoc warning]:', err);
+  // 1. Hapus semua pesan dari subkoleksi messages untuk semua variasi username
+  for (const targetUser of targets) {
+    try {
+      const messagesCol = collection(db, COLLECTIONS.ADMIN_CHATS, targetUser, 'messages');
+      const snap = await getDocs(messagesCol);
+      if (!snap.empty) {
+        const deletePromises = snap.docs.map(d => deleteDoc(d.ref));
+        await Promise.all(deletePromises);
+      }
+      // Hapus parent chat document jika ada
+      try {
+        await deleteDoc(doc(db, COLLECTIONS.ADMIN_CHATS, targetUser));
+      } catch (_) {}
+    } catch (err) {
+      console.warn(`[deleteUserConversationHistory admin_chats error for ${targetUser}]:`, err);
+    }
+
+    // 2. Hapus dokumen ringkasan percakapan di admin_conversations
+    try {
+      const convDoc = doc(db, COLLECTIONS.ADMIN_CONVERSATIONS, targetUser);
+      await deleteDoc(convDoc);
+    } catch (err) {
+      console.warn(`[deleteUserConversationHistory convDoc warning for ${targetUser}]:`, err);
+    }
   }
 
-  return { success: true, message: 'Seluruh riwayat percakapan berhasil dihapus.' };
+  return { success: true, message: 'Seluruh riwayat percakapan berhasil dihapus dari database.' };
 }
 
 export function subscribeToAdminConversations(callback: (conversations: any[]) => void): () => void {
@@ -1021,4 +1052,89 @@ export function compressImageFile(file: File, maxWidth = 900, quality = 0.72): P
     };
     reader.readAsDataURL(file);
   });
+}
+
+// -------------------------------------------------------------
+// BRANCHES & ALL USERS FUNCTIONS
+// -------------------------------------------------------------
+export async function firestoreGetAllUsers(): Promise<any[]> {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.USERS));
+    const list: any[] = [];
+    snap.docs.forEach((d) => {
+      const u = d.data();
+      list.push({
+        username: u.username || d.id,
+        fullName: u.fullName || u.username || d.id,
+        email: u.email || '',
+        phone: u.phone || '',
+        role: u.role || 'Kasir',
+        cabang: u.cabang || 'Sempajak',
+        isActive: u.isActive !== false
+      });
+    });
+    return list;
+  } catch (err) {
+    console.warn('[firestoreGetAllUsers Error]:', err);
+    return [];
+  }
+}
+
+export async function firestoreGetBranches(): Promise<string[]> {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.BRANCHES));
+    const list: string[] = [];
+    snap.docs.forEach((d) => {
+      const data = d.data();
+      const name = (data.name || d.id || '').trim();
+      if (name && !list.includes(name)) {
+        list.push(name);
+      }
+    });
+    if (!list.includes('Sempajak')) list.unshift('Sempajak');
+    if (!list.includes('M Yamin')) list.push('M Yamin');
+    return list;
+  } catch (err) {
+    console.warn('[firestoreGetBranches Error]:', err);
+    return ['Sempajak', 'M Yamin'];
+  }
+}
+
+export async function firestoreSaveBranch(branchName: string): Promise<{ success: boolean; message: string; branch: string }> {
+  const cleanName = String(branchName || '').trim();
+  if (!cleanName || cleanName.length < 2) {
+    throw new Error('Nama cabang minimal 2 karakter!');
+  }
+  const branchId = cleanName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const bRef = doc(db, COLLECTIONS.BRANCHES, branchId);
+  await setDoc(bRef, {
+    id: branchId,
+    name: cleanName,
+    createdAt: Date.now()
+  }, { merge: true });
+  return { success: true, message: `Cabang ${cleanName} berhasil disimpan`, branch: cleanName };
+}
+
+export function subscribeToBranches(callback: (branches: string[]) => void): () => void {
+  try {
+    const colRef = collection(db, COLLECTIONS.BRANCHES);
+    const unsub = onSnapshot(colRef, (snap) => {
+      const list: string[] = [];
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        const name = (data.name || d.id || '').trim();
+        if (name && !list.includes(name)) list.push(name);
+      });
+      if (!list.includes('Sempajak')) list.unshift('Sempajak');
+      if (!list.includes('M Yamin')) list.push('M Yamin');
+      callback(list);
+    }, (err) => {
+      console.warn('[Firestore subscribeBranches Warning]:', err);
+      callback(['Sempajak', 'M Yamin']);
+    });
+    return unsub;
+  } catch (e) {
+    callback(['Sempajak', 'M Yamin']);
+    return () => {};
+  }
 }

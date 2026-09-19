@@ -132,9 +132,24 @@
         "createdAt": { "type": "number", "description": "Epoch timestamp" }
       },
       "required": ["senderUsername", "senderRole"]
+    },
+    "Branch": {
+      "title": "Branch",
+      "description": "Daftar cabang operasional Istana Bubur",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 50, "description": "ID atau nama cabang" },
+        "name": { "type": "string", "maxLength": 100, "description": "Nama cabang operasional" },
+        "createdAt": { "type": "number", "description": "Waktu pembuatan cabang" }
+      },
+      "required": ["name"]
     }
   },
   "firestore": {
+    "/branches/{branchId}": {
+      "schema": "Branch",
+      "description": "Daftar cabang operasional toko yang aktif"
+    },
     "/users/{userId}": {
       "schema": "User",
       "description": "Profil dan akun pengguna sistem"

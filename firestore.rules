@@ -38,6 +38,12 @@ service cloud.firestore {
       allow read, write: if true;
     }
     // -------------------------------------------------------------
+    // KOLEKSI: BRANCHES (Daftar Cabang Operasional)
+    // -------------------------------------------------------------
+    match /branches/{branchId} {
+      allow read, write: if true;
+    }
+    // -------------------------------------------------------------
     // KOLEKSI: SETTINGS (Pengaturan Sistem & Kunci Autentikasi Admin)
     // -------------------------------------------------------------
     match /settings/{settingId} {

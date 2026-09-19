@@ -290,45 +290,142 @@
                     </div>
 
                     <!-- DASHBOARD PENJUALAN ADMIN -->
-                    <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-                        <div class="mb-4 space-y-3">
-                            <div class="flex justify-between items-center">
-                                <div>
-                                    <h3 class="text-xs font-bold text-gray-800">Laporan Penjualan</h3>
-                                    <p class="text-[9px] text-gray-400 mt-0.5">Filter Data Transaksi</p>
+                    <div class="bg-white rounded-3xl p-4 sm:p-5 shadow-sm border border-gray-100">
+                        <!-- Header & Real-time Live Badge -->
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3.5 border-b border-gray-100">
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <h3 class="text-sm sm:text-base font-black text-gray-800 tracking-tight">Laporan Penjualan Outlet</h3>
+                                    <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                                        Realtime Firebase
+                                    </span>
                                 </div>
-                                <select id="filter-cabang-dashboard" class="text-[10px] border border-gray-200 rounded px-2 py-1.5 bg-gray-50 focus:outline-none focus:ring-1 focus:ring-red-400" onchange="updateDashboardCharts()">
+                                <p class="text-[11px] text-gray-400 mt-0.5" id="dashboard-last-sync-time">Menampilkan transaksi hari ini secara otomatis tanpa refresh</p>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button type="button" onclick="syncRealtimeDashboardNow()" class="inline-flex items-center gap-1.5 text-xs font-bold text-gray-700 hover:text-red-600 bg-gray-50 hover:bg-red-50 border border-gray-200 rounded-xl px-3 py-2 transition active:scale-95 cursor-pointer shadow-xs" title="Perbarui data Firebase sekarang">
+                                    <i class="fas fa-rotate text-red-600" id="icon-sync-dashboard"></i>
+                                    <span>Sinkron Realtime</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Filter Controls: Periode Tanggal, Cabang, Kasir Terdaftar -->
+                        <div class="py-3.5 space-y-3.5">
+                            <!-- Toggle Periode: Hari Ini (Default), Semua Waktu, Rentang Tanggal -->
+                            <div>
+                                <div class="flex items-center justify-between mb-1.5">
+                                    <label class="block text-[11px] font-bold text-gray-600 uppercase tracking-wider">
+                                        <i class="fas fa-clock text-red-600 mr-1"></i> Periode Tampil
+                                    </label>
+                                    <span class="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full" id="dashboard-active-period-label">Hari Ini (Real-time)</span>
+                                </div>
+                                <div class="flex items-center gap-1.5 overflow-x-auto hide-scrollbar pb-1">
+                                    <button type="button" id="btn-period-today" onclick="setDashboardPeriodMode('today')" class="px-3 py-2 rounded-xl text-xs font-black transition-all bg-red-600 text-white shadow-sm flex items-center gap-1.5 shrink-0 cursor-pointer">
+                                        <i class="fas fa-circle text-[8px] text-emerald-300 animate-pulse"></i> Hari Ini (Live)
+                                    </button>
+                                    <button type="button" id="btn-period-all" onclick="setDashboardPeriodMode('all')" class="px-3 py-2 rounded-xl text-xs font-bold transition-all bg-gray-100 hover:bg-gray-200 text-gray-700 hover:text-gray-900 shrink-0 cursor-pointer">
+                                        <i class="fas fa-calendar-alt text-gray-400"></i> Semua Waktu
+                                    </button>
+                                    <button type="button" id="btn-period-custom" onclick="setDashboardPeriodMode('custom')" class="px-3 py-2 rounded-xl text-xs font-bold transition-all bg-gray-100 hover:bg-gray-200 text-gray-700 hover:text-gray-900 shrink-0 cursor-pointer">
+                                        <i class="fas fa-calendar-week text-gray-400"></i> Rentang Tanggal
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Custom Date Pickers (Muncul hanya ketika klik 'Rentang Tanggal') -->
+                            <div id="dashboard-custom-date-range" class="hidden-view flex items-center justify-between bg-gray-50 p-2.5 rounded-2xl border border-gray-200 animate-scale-in">
+                                <div class="flex gap-2 w-full mr-2">
+                                    <div class="flex-1">
+                                        <p class="text-[9px] text-gray-500 font-bold mb-1 uppercase">Dari Tanggal</p>
+                                        <input type="date" id="filter-start-date" class="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-red-400" onchange="updateDashboardCharts()">
+                                    </div>
+                                    <div class="flex-1">
+                                        <p class="text-[9px] text-gray-500 font-bold mb-1 uppercase">Sampai Tanggal</p>
+                                        <input type="date" id="filter-end-date" class="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-red-400" onchange="updateDashboardCharts()">
+                                    </div>
+                                </div>
+                                <button onclick="resetDateFilter()" class="mt-4 bg-red-100 text-red-600 hover:bg-red-200 p-2 rounded-xl text-xs transition cursor-pointer" title="Reset Filter Tanggal"><i class="fas fa-sync-alt"></i></button>
+                            </div>
+
+                            <!-- Filter Cabang Outlet -->
+                            <div class="space-y-1.5">
+                                <div class="flex items-center justify-between">
+                                    <label class="block text-[11px] font-bold text-gray-700 flex items-center gap-1.5">
+                                        <i class="fas fa-store text-red-600"></i>
+                                        <span>Pilihan Cabang Outlet</span>
+                                    </label>
+                                    <span class="text-[10px] text-red-600 font-black bg-red-50 border border-red-200 px-2 py-0.5 rounded-full" id="dashboard-active-branch-label">Semua Cabang</span>
+                                </div>
+                                <!-- Interactive chips for fast tapping on Android/WebView/Desktop -->
+                                <div class="flex items-center gap-1.5 flex-wrap pt-0.5" id="dashboard-cabang-chips">
+                                    <!-- Injected dynamically: Semua Cabang, Sempajak, M Yamin, etc. -->
+                                </div>
+                                <select id="filter-cabang-dashboard" class="hidden-view" onchange="onCabangDashboardSelectChange()">
                                     <option value="Semua">Semua Cabang</option>
                                 </select>
                             </div>
-                            
-                            <div class="flex items-center justify-between bg-gray-50 p-2 rounded-lg border border-gray-100">
-                                <div class="flex gap-2 w-full mr-2">
-                                    <div class="flex-1">
-                                        <p class="text-[8px] text-gray-500 font-bold mb-0.5 uppercase">Dari Tanggal</p>
-                                        <input type="date" id="filter-start-date" class="w-full text-[10px] border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-red-400" onchange="updateDashboardCharts()">
-                                    </div>
-                                    <div class="flex-1">
-                                        <p class="text-[8px] text-gray-500 font-bold mb-0.5 uppercase">Sampai Tanggal</p>
-                                        <input type="date" id="filter-end-date" class="w-full text-[10px] border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-red-400" onchange="updateDashboardCharts()">
-                                    </div>
+
+                            <!-- Filter Kasir yang Didaftarkan -->
+                            <div class="space-y-1.5">
+                                <div class="flex items-center justify-between">
+                                    <label class="block text-[11px] font-bold text-gray-700 flex items-center gap-1.5">
+                                        <i class="fas fa-user-tag text-red-600"></i>
+                                        <span>Kasir yang Didaftarkan</span>
+                                    </label>
+                                    <span class="text-[10px] text-gray-500 font-bold" id="dashboard-active-kasir-label">Semua Kasir</span>
                                 </div>
-                                <button onclick="resetDateFilter()" class="mt-3.5 bg-red-100 text-red-600 hover:bg-red-200 px-2.5 py-1.5 rounded-lg text-[10px] transition" title="Reset Filter Tanggal"><i class="fas fa-sync-alt"></i></button>
+                                <div class="relative">
+                                    <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400 text-xs">
+                                        <i class="fas fa-cash-register"></i>
+                                    </div>
+                                    <select id="filter-kasir-dashboard" class="w-full text-xs font-semibold border border-gray-200 rounded-xl py-2.5 pl-9 pr-4 bg-gray-50/80 focus:outline-none focus:ring-2 focus:ring-red-500 cursor-pointer" onchange="updateDashboardCharts()">
+                                        <option value="Semua">Semua Kasir Terdaftar</option>
+                                    </select>
+                                </div>
                             </div>
                         </div>
                         
-                        <div class="flex gap-4 overflow-x-auto hide-scrollbar pb-2 pt-1 -mx-4 px-4 snap-x">
-                            <div class="bg-gradient-to-br from-green-500 to-green-600 text-white rounded-2xl p-4 min-w-[150px] flex-1 shadow-md">
-                                <span class="text-[11px] font-semibold opacity-90">Total Pendapatan</span>
-                                <h3 class="text-xl sm:text-2xl font-extrabold mb-1 mt-1" id="stat-penjualan">Rp 0</h3>
-                                <p class="text-[10px] opacity-80" id="stat-trx-count">0 Transaksi</p>
+                        <!-- Statistik Kartu Omset & Transaksi -->
+                        <div class="grid grid-cols-2 gap-3 pt-2">
+                            <div class="bg-gradient-to-br from-emerald-500 to-emerald-600 text-white rounded-2xl p-4 shadow-md shadow-emerald-600/20">
+                                <span class="text-[10px] font-bold opacity-90 uppercase tracking-wider">Total Pendapatan</span>
+                                <h3 class="text-xl sm:text-2xl font-black mt-1 tracking-tight" id="stat-penjualan">Rp 0</h3>
+                                <p class="text-[11px] opacity-90 mt-0.5 font-medium" id="stat-trx-count">0 Transaksi Selesai</p>
+                            </div>
+                            <div class="bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-2xl p-4 shadow-md shadow-blue-600/20">
+                                <span class="text-[10px] font-bold opacity-90 uppercase tracking-wider">Rata-Rata / Nota</span>
+                                <h3 class="text-xl sm:text-2xl font-black mt-1 tracking-tight" id="stat-avg-penjualan">Rp 0</h3>
+                                <p class="text-[11px] opacity-90 mt-0.5 font-medium" id="stat-active-kasir-count">0 Kasir Bertransaksi</p>
                             </div>
                         </div>
                         
-                        <div class="mt-4">
-                            <h3 class="text-[10px] font-bold text-gray-600 mb-2">Penjualan per Cabang</h3>
+                        <!-- Grafik Penjualan -->
+                        <div class="mt-4 pt-3 border-t border-gray-100">
+                            <div class="flex items-center justify-between mb-2">
+                                <h3 class="text-xs font-bold text-gray-700" id="chart-penjualan-title">Penjualan per Cabang</h3>
+                                <span class="text-[10px] text-gray-400 font-medium" id="chart-penjualan-subtitle">Grafik Omset</span>
+                            </div>
                             <div class="relative h-48 w-full flex justify-center">
                                 <canvas id="chart-penjualan"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- DAFTAR TRANSAKSI LIVE REALTIME (HARI INI / TERFILTER) -->
+                        <div class="mt-4 pt-3 border-t border-gray-100">
+                            <div class="flex items-center justify-between mb-2.5">
+                                <div class="flex items-center gap-2">
+                                    <h4 class="text-xs font-black text-gray-800">Daftar Transaksi Realtime</h4>
+                                    <span class="inline-flex items-center gap-1 text-[9px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-bold border border-emerald-200">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                        Live
+                                    </span>
+                                </div>
+                                <span class="text-[11px] text-gray-500 font-bold" id="dashboard-trx-items-count">0 transaksi</span>
+                            </div>
+                            <div id="dashboard-recent-trx-list" class="space-y-2 max-h-72 overflow-y-auto hide-scrollbar">
+                                <!-- Rendered dynamically with realtime transactions -->
                             </div>
                         </div>
                     </div>
@@ -1512,7 +1609,10 @@
                 <input type="text" id="k-nama" required placeholder="Nama Lengkap" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
                 <select id="k-gender" required class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none"><option value="Laki-laki">Laki-laki</option><option value="Perempuan">Perempuan</option></select>
                 <select id="k-jabatan" required class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none"><option value="Driver">Driver</option><option value="Jaga Outlet">Jaga Outlet</option><option value="Dapur Bubur">Dapur Bubur</option><option value="Dapur Kue">Dapur Kue</option></select> 
-                <input type="text" id="k-cabang" required placeholder="Cabang" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
+                <select id="k-cabang" required class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
+                    <option value="Sempajak">Sempajak</option>
+                    <option value="M Yamin">M Yamin</option>
+                </select>
                 <input type="number" id="k-wa" required placeholder="No WA" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
                 <input type="number" id="k-gaji" required placeholder="Gaji Harian" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
                 <input type="email" id="k-email" placeholder="Email (Ops)" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
@@ -1616,15 +1716,26 @@
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-2 gap-2.5 text-left">
-                        <div class="space-y-1">
-                            <label class="block text-xs font-bold text-gray-700">No. WhatsApp <span class="text-red-500">*</span></label>
-                            <input type="tel" id="reg-wa" required placeholder="081234567890" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                    <div class="space-y-1 text-left">
+                        <label class="block text-xs font-bold text-gray-700">No. WhatsApp <span class="text-red-500">*</span></label>
+                        <input type="tel" id="reg-wa" required placeholder="081234567890" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                    </div>
+
+                    <!-- Penempatan Cabang dengan Tombol Sempajak, M Yamin, dan Tambah Cabang (+) -->
+                    <div class="space-y-1.5 text-left bg-gray-50/80 p-3 rounded-2xl border border-gray-200">
+                        <div class="flex items-center justify-between">
+                            <label class="block text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                                <i class="fas fa-store text-red-600"></i>
+                                <span>Penempatan Cabang</span>
+                                <span class="text-red-500">*</span>
+                            </label>
+                            <span class="text-[10px] text-red-600 font-extrabold bg-red-50 border border-red-200 px-2 py-0.5 rounded-full" id="reg-selected-cabang-label">Sempajak</span>
                         </div>
-                        <div class="space-y-1">
-                            <label class="block text-xs font-bold text-gray-700">Penempatan Cabang <span class="text-red-500">*</span></label>
-                            <input type="text" id="reg-cabang" required placeholder="Ketik nama cabang..." class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                        <p class="text-[10px] text-gray-500">Pilih cabang yang ditentukan atau tambahkan cabang baru dengan tombol (+):</p>
+                        <div class="flex items-center gap-1.5 flex-wrap pt-0.5" id="register-branch-chips">
+                            <!-- Injected dynamically: Sempajak, M Yamin, + button -->
                         </div>
+                        <input type="text" id="reg-cabang" value="Sempajak" required placeholder="Nama cabang terpilih..." class="w-full border border-gray-200 rounded-xl p-2.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-red-600 font-bold text-gray-800">
                     </div>
 
                     <div class="grid grid-cols-2 gap-2.5 text-left">
@@ -1781,7 +1892,52 @@
         </div>
     </div>
 
-    <!-- MODAL LUPA USERNAME -->
+    <!-- MODAL TAMBAH CABANG BARU (Sempajak, M Yamin, + Cabang Baru) -->
+    <div id="modal-add-branch" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden-view flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl border border-gray-100 flex flex-col animate-scale-in">
+            <!-- Header Modal -->
+            <div class="bg-gradient-to-r from-red-600 to-red-700 px-5 py-4 text-white flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center">
+                        <i class="fas fa-store text-sm"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-black text-sm text-white leading-tight">Tambah Cabang Baru</h3>
+                        <p class="text-[10px] text-red-100 font-medium">Sinkronisasi Cloud Firestore</p>
+                    </div>
+                </div>
+                <button type="button" onclick="closeModal('modal-add-branch')" class="w-8 h-8 rounded-xl bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition">
+                    <i class="fas fa-times text-sm"></i>
+                </button>
+            </div>
+            
+            <form onsubmit="handleAddNewBranchSubmit(event)" class="p-5 space-y-4 text-left">
+                <p class="text-xs text-gray-500 leading-relaxed">
+                    Masukkan nama cabang baru (contoh: <strong>Sempajak</strong>, <strong>M Yamin</strong>, atau cabang lainnya). Cabang baru akan langsung disinkronkan ke Firebase dan tersedia di pilihan kasir serta laporan penjualan.
+                </p>
+
+                <div class="space-y-1.5">
+                    <label class="block text-xs font-bold text-gray-700">Nama Cabang Baru <span class="text-red-500">*</span></label>
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400 text-xs">
+                            <i class="fas fa-store"></i>
+                        </div>
+                        <input type="text" id="input-new-branch-name" required placeholder="Contoh: Sempajak / M Yamin" class="w-full border border-gray-200 rounded-xl py-3 pl-10 pr-4 text-xs font-semibold bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2 pt-2">
+                    <button type="button" onclick="closeModal('modal-add-branch')" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-bold text-xs transition cursor-pointer">
+                        Batal
+                    </button>
+                    <button type="submit" id="btn-save-new-branch" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-xs shadow-md shadow-red-600/20 active:scale-95 transition flex items-center justify-center gap-1.5 cursor-pointer">
+                        <i class="fas fa-check"></i>
+                        <span>Simpan Cabang</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
     <div id="modal-forgot-username" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden-view flex items-center justify-center p-4">
         <div class="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl border border-gray-100 p-6 space-y-4 text-center">
             <div class="w-12 h-12 rounded-2xl bg-red-50 text-red-600 mx-auto flex items-center justify-center text-xl shadow-inner">

@@ -34,17 +34,40 @@ import {
     sendGroupChatMessage,
     deleteGroupChatMessage,
     clearGroupChatMessages,
-    compressImageFile
+    compressImageFile,
+    firestoreGetAllUsers,
+    firestoreGetBranches,
+    firestoreSaveBranch,
+    subscribeToBranches
 } from './firebase.ts';
 
 // Global Cache & State
 let CURRENT_USER = null;
 let KARYAWAN_CACHE = [];
+let KARYAWAN_DATA = [];
 let PRODUK_CACHE = [];
 let HISTORI_GAJI_CACHE = [];
 let HISTORI_TRX_CACHE = [];
 let CART = [];
 let LAST_TRX_DATA = null;
+
+// Cabang & Real-time State
+let BRANCHES_CACHE = ['Sempajak', 'M Yamin'];
+let FIRESTORE_USERS_CACHE = [];
+let activeLoginCabang = 'Sempajak';
+let activeRegisterCabang = 'Sempajak';
+let activeDashboardCabang = 'Semua';
+let activeDashboardKasir = 'Semua';
+let dashboardPeriodMode = 'today';
+let targetBranchModalSource = 'login';
+let unsubscribeTransactions = null;
+let unsubscribeBranches = null;
+
+if (typeof window !== 'undefined') {
+    window.KARYAWAN_DATA = KARYAWAN_DATA;
+    window.KARYAWAN_CACHE = KARYAWAN_CACHE;
+    window.BRANCHES_CACHE = BRANCHES_CACHE;
+}
 
 let tabHistory = [];
 let currentTab = 'profil';
@@ -195,31 +218,24 @@ function setActiveMasterAuthKey(newKey) {
 const VALID_AUTH_CODES = ['IB-AUTH-2026', 'ADMIN-IB-889', 'IB-PUSAT-99'];
 
 
-// Akun Bawaan (Hanya Kasir bawaan tanpa hardcode cabang, admin bawaan telah dihapus)
-const DEFAULT_USERS = [
-    {
-        username: 'kasir1',
-        password: '123',
-        fullName: 'Siti Rahmawati',
-        email: 'kasir1@istanabubur.com',
-        phone: '082198765432',
-        role: 'Kasir',
-        cabang: '',
-        isActive: true,
-        authCode: 'IB-AUTH-2026'
-    },
-    {
-        username: 'kasir2',
-        password: '123',
-        fullName: 'Ahmad Fauzi',
-        email: 'kasir2@istanabubur.com',
-        phone: '085211223344',
-        role: 'Kasir',
-        cabang: '',
-        isActive: true,
-        authCode: 'IB-AUTH-2026'
-    }
-];
+// Daftar nama cabang tidak valid / dilarang (dummy / testing / role / kota yang bukan outlet)
+const INVALID_BRANCH_NAMES = new Set([
+    'admin', 'pusat', 'samarinda', 'semua', 'cabang a', 'cabang b', 'cabang c', 'undefined', 'null', ''
+]);
+
+function normalizeBranchName(name) {
+    if (!name) return '';
+    const trimmed = String(name).trim();
+    if (INVALID_BRANCH_NAMES.has(trimmed.toLowerCase())) return '';
+    if (trimmed.toUpperCase() === 'SEMPAJAK') return 'Sempajak';
+    if (trimmed.toUpperCase() === 'M YAMIN' || trimmed.toUpperCase() === 'M_YAMIN') return 'M Yamin';
+    // Format ke Title Case
+    return trimmed.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+}
+window.normalizeBranchName = normalizeBranchName;
+
+// Akun Bawaan (Hanya akun yang sah terdaftar; dummy kasir1/kasir2 dihapus)
+const DEFAULT_USERS = [];
 
 function getAllUsers() {
     try {
@@ -227,75 +243,75 @@ function getAllUsers() {
         if (saved) {
             let parsed = JSON.parse(saved);
             if (Array.isArray(parsed)) {
-                // Filter hapus akun bawaan admin/123456 jika masih tersimpan di storage lokal lama
-                parsed = parsed.filter(u => !(u.username && u.username.toLowerCase() === 'admin' && (u.password === '123456' || u.password === '123')));
-                // Hapus nama cabang hardcode Cabang A, B, C dari data lama
+                // Filter hapus akun bawaan admin/123456 dan dummy kasir1/kasir2/kasir yang tidak terdaftar
+                parsed = parsed.filter(u => {
+                    const uname = (u.username || '').toLowerCase();
+                    if (uname === 'admin' && (u.password === '123456' || u.password === '123')) return false;
+                    if (uname === 'kasir1' || uname === 'kasir2' || uname === 'kasir') return false;
+                    return true;
+                });
+                // Normalisasi nama cabang pengguna
                 parsed = parsed.map(u => {
-                    if (u.cabang && ['Cabang A', 'Cabang B', 'Cabang C'].includes(u.cabang.trim())) {
-                        return { ...u, cabang: '' };
-                    }
-                    return u;
+                    const norm = normalizeBranchName(u.cabang);
+                    return { ...u, cabang: norm || 'Sempajak' };
                 });
                 localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(parsed));
-                const combined = [...DEFAULT_USERS];
-                parsed.forEach(p => {
-                    const idx = combined.findIndex(u => u.username.toLowerCase() === p.username.toLowerCase());
-                    if (idx >= 0) {
-                        combined[idx] = { ...combined[idx], ...p };
-                    } else {
-                        combined.push(p);
-                    }
-                });
-                return combined.filter(u => !(u.username && u.username.toLowerCase() === 'admin' && (u.password === '123456' || u.password === '123')));
+                return parsed;
             }
         }
     } catch(e) {}
-    return [...DEFAULT_USERS];
+    return [];
 }
 
-// Ambil seluruh daftar cabang yang benar-benar terdaftar di sistem (tanpa Cabang A, B, C hardcode)
+// Ambil seluruh daftar cabang yang benar-benar terdaftar di sistem (hanya outlet resmi: Sempajak, M Yamin, dsb)
 function getAllRegisteredBranches() {
     const branchSet = new Set();
+
+    // 0. Cabang dasar resmi selalu ada
+    branchSet.add('Sempajak');
+    branchSet.add('M Yamin');
+
+    // 1. Cabang tersimpan di BRANCHES_CACHE
+    if (typeof BRANCHES_CACHE !== 'undefined' && Array.isArray(BRANCHES_CACHE)) {
+        BRANCHES_CACHE.forEach(b => {
+            const norm = normalizeBranchName(b);
+            if (norm) branchSet.add(norm);
+        });
+    }
     
-    // 1. Ambil dari akun pengguna yang terdaftar di sistem
+    // 2. Ambil dari akun pengguna kasir yang terdaftar di Firestore
+    if (typeof FIRESTORE_USERS_CACHE !== 'undefined' && Array.isArray(FIRESTORE_USERS_CACHE)) {
+        FIRESTORE_USERS_CACHE.forEach(u => {
+            const role = (u.role || '').toLowerCase();
+            if (role === 'kasir') {
+                const norm = normalizeBranchName(u.cabang);
+                if (norm) branchSet.add(norm);
+            }
+        });
+    }
+
+    // 3. Ambil dari akun pengguna lokal yang terdaftar
     const users = getAllUsers();
     if (Array.isArray(users)) {
         users.forEach(u => {
-            const c = (u.cabang || '').trim();
-            if (c && c !== 'Pusat' && c !== 'Semua' && !['Cabang A', 'Cabang B', 'Cabang C'].includes(c)) {
-                branchSet.add(c);
+            const role = (u.role || '').toLowerCase();
+            if (role === 'kasir') {
+                const norm = normalizeBranchName(u.cabang);
+                if (norm) branchSet.add(norm);
             }
         });
     }
 
-    // 2. Ambil dari penempatan cabang data karyawan terdaftar
-    const karyawanList = Array.isArray(KARYAWAN_DATA) && KARYAWAN_DATA.length > 0 ? KARYAWAN_DATA : (KARYAWAN_CACHE || []);
+    // 4. Ambil dari data karyawan terdaftar (hanya cabang yang valid/terdaftar)
+    const karyawanList = (typeof KARYAWAN_CACHE !== 'undefined' && Array.isArray(KARYAWAN_CACHE) && KARYAWAN_CACHE.length > 0)
+        ? KARYAWAN_CACHE
+        : ((typeof KARYAWAN_DATA !== 'undefined' && Array.isArray(KARYAWAN_DATA) && KARYAWAN_DATA.length > 0)
+            ? KARYAWAN_DATA : []);
     if (Array.isArray(karyawanList)) {
         karyawanList.forEach(k => {
             const loc = (k['Lokasi Cabang'] || k['Cabang'] || k.cabang || '').trim();
-            if (loc && loc !== 'Pusat' && loc !== 'Semua' && !['Cabang A', 'Cabang B', 'Cabang C'].includes(loc)) {
-                branchSet.add(loc);
-            }
-        });
-    }
-
-    // 3. Ambil dari cabang transaksi yang tercatat
-    if (Array.isArray(HISTORI_TRX_CACHE)) {
-        HISTORI_TRX_CACHE.forEach(t => {
-            const c = (t['Cabang'] || t.cabang || '').trim();
-            if (c && c !== 'Pusat' && c !== 'Semua' && !['Cabang A', 'Cabang B', 'Cabang C'].includes(c)) {
-                branchSet.add(c);
-            }
-        });
-    }
-
-    // 4. Ambil dari riwayat percakapan chat aktif
-    if (Array.isArray(CHAT_MESSAGES)) {
-        CHAT_MESSAGES.forEach(m => {
-            const mc = (m.cabang || '').trim();
-            if (mc && mc !== 'Pusat' && mc !== 'Semua' && !['Cabang A', 'Cabang B', 'Cabang C'].includes(mc)) {
-                branchSet.add(mc);
-            }
+            const norm = normalizeBranchName(loc);
+            if (norm) branchSet.add(norm);
         });
     }
 
@@ -364,7 +380,7 @@ const DEFAULT_HISTORI_GAJI = [
         'Bonus': 100000, 
         'Potongan': 50000, 
         'Total Gaji': 2550000, 
-        'Cabang': 'Pusat', 
+        'Cabang': 'Sempajak', 
         'Jabatan': 'Dapur Bubur', 
         'No WA': '081298765432', 
         'Keterangan Libur': 'Izin 1 hari', 
@@ -380,7 +396,7 @@ const DEFAULT_HISTORI_GAJI = [
         'Bonus': 100000, 
         'Potongan': 0, 
         'Total Gaji': 2310000, 
-        'Cabang': 'Pusat', 
+        'Cabang': 'M Yamin', 
         'Jabatan': 'Driver', 
         'No WA': '081345678901', 
         'Keterangan Libur': '', 
@@ -389,9 +405,9 @@ const DEFAULT_HISTORI_GAJI = [
 ];
 
 const DEFAULT_KARYAWAN = [
-    { rowIndex: 1, 'ID Karyawan': 'KRY-001', 'Nama': 'Budi Santoso', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Kasir', 'Lokasi Cabang': 'Pusat', 'No WA': '081234567890', 'Gaji Harian': 90000, 'Email': 'budi@istanabubur.com' },
-    { rowIndex: 2, 'ID Karyawan': 'KRY-002', 'Nama': 'Siti Rahma', 'Jenis Kelamin': 'Perempuan', 'Jabatan': 'Dapur Bubur', 'Lokasi Cabang': 'Pusat', 'No WA': '081298765432', 'Gaji Harian': 100000, 'Email': 'siti@istanabubur.com' },
-    { rowIndex: 3, 'ID Karyawan': 'KRY-003', 'Nama': 'Agus Prayogo', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Driver', 'Lokasi Cabang': 'Pusat', 'No WA': '081345678901', 'Gaji Harian': 85000, 'Email': 'agus@istanabubur.com' }
+    { rowIndex: 1, 'ID Karyawan': 'KRY-001', 'Nama': 'Budi Santoso', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Kasir', 'Lokasi Cabang': 'Sempajak', 'No WA': '081234567890', 'Gaji Harian': 90000, 'Email': 'budi@istanabubur.com' },
+    { rowIndex: 2, 'ID Karyawan': 'KRY-002', 'Nama': 'Siti Rahma', 'Jenis Kelamin': 'Perempuan', 'Jabatan': 'Dapur Bubur', 'Lokasi Cabang': 'Sempajak', 'No WA': '081298765432', 'Gaji Harian': 100000, 'Email': 'siti@istanabubur.com' },
+    { rowIndex: 3, 'ID Karyawan': 'KRY-003', 'Nama': 'Agus Prayogo', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Driver', 'Lokasi Cabang': 'M Yamin', 'No WA': '081345678901', 'Gaji Harian': 85000, 'Email': 'agus@istanabubur.com' }
 ];
 
 function getSampleTransactions() {
@@ -400,8 +416,8 @@ function getSampleTransactions() {
         {
             'ID Transaksi': 'TRX-882101',
             'Tanggal': `${today} 08:30`,
-            'Cabang': 'Pusat',
-            'Kasir': 'kasir1',
+            'Cabang': 'Sempajak',
+            'Kasir': 'Riezzz_Kas',
             'Total Belanja': 45000,
             'Nama Pelanggan': 'Pak Joko [Dine In - Sambal dipisah]',
             'No WA': '081234567890',
@@ -417,8 +433,8 @@ function getSampleTransactions() {
         {
             'ID Transaksi': 'TRX-882102',
             'Tanggal': `${today} 09:15`,
-            'Cabang': 'Pusat',
-            'Kasir': 'kasir1',
+            'Cabang': 'M Yamin',
+            'Kasir': 'Ummu_kas',
             'Total Belanja': 20000,
             'Nama Pelanggan': 'Ibu Dewi [Takeaway - Kerupuk banyak]',
             'No WA': '081398765432',
@@ -1243,6 +1259,11 @@ async function handleLogin(e) {
         const res = await callBackend('loginUser', user, pass, currentLoginRole);
         if (res.success) {
             CURRENT_USER = res.user;
+
+            // Pastikan user memiliki cabang yang valid (menggunakan cabang dari akun terdaftar)
+            if (!CURRENT_USER.cabang) {
+                CURRENT_USER.cabang = 'Sempajak';
+            }
             if (isRememberMe) {
                 localStorage.setItem(SESSION_KEY, 'true');
                 localStorage.setItem(USER_DATA_KEY, JSON.stringify(CURRENT_USER));
@@ -1343,11 +1364,14 @@ function openRegisterModal() {
     document.getElementById('reg-email').value = '';
     document.getElementById('reg-wa').value = '';
     document.getElementById('reg-role').value = currentLoginRole || 'Kasir';
-    document.getElementById('reg-cabang').value = '';
     document.getElementById('reg-pass').value = '';
     document.getElementById('reg-pass-conf').value = '';
     document.getElementById('reg-input-referral').value = '';
     document.getElementById('reg-auth-code').value = '';
+
+    // Siapkan pilihan cabang pendaftaran (Sempajak, M Yamin, dan tambah baru)
+    selectRegisterBranch(activeRegisterCabang || 'Sempajak');
+    renderRegisterBranchChips();
 
     const m = document.getElementById('modal-register');
     if (m) m.classList.remove('hidden-view');
@@ -1399,7 +1423,7 @@ async function submitRegisterStep1() {
     const email = (document.getElementById('reg-email').value || '').trim();
     const wa = (document.getElementById('reg-wa').value || '').trim();
     const role = document.getElementById('reg-role').value;
-    const cabang = document.getElementById('reg-cabang').value;
+    const cabang = (document.getElementById('reg-cabang')?.value || activeRegisterCabang || 'Sempajak').trim();
     const pass = (document.getElementById('reg-pass').value || '').trim();
     const passConf = (document.getElementById('reg-pass-conf').value || '').trim();
 
@@ -1798,6 +1822,19 @@ async function activateAccountStep3() {
         console.log('[Firestore] Akun berhasil didaftarkan ke Firestore:', tempRegistration.username);
     } catch (fsErr) {
         console.warn('[Firestore Direct Register Warning]:', fsErr);
+    }
+
+    // Pastikan cabang pengguna tersinkronisasi ke daftar cabang
+    if (tempRegistration.cabang) {
+        const cName = tempRegistration.cabang.trim();
+        if (cName && !BRANCHES_CACHE.includes(cName)) {
+            BRANCHES_CACHE.push(cName);
+            try { localStorage.setItem('ib_saved_branches_list', JSON.stringify(BRANCHES_CACHE)); } catch(e){}
+            firestoreSaveBranch(cName).catch(() => {});
+            renderLoginBranchChips();
+            renderRegisterBranchChips();
+            populateCabangFilterDashboard();
+        }
     }
 
     // 3. Simpan juga melalui backend API (redundansi sinkronisasi cloud)
@@ -2574,12 +2611,18 @@ function loginSuccessLogic() {
     
     applyRoleRestrictions();
     initRealtimeChatSystem();
+    initBranchSystem();
+    initRealtimeTransactionsListener();
 
     const now = new Date();
     const monthDash = document.getElementById('filter-month-dashboard');
     if (monthDash) monthDash.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2, '0')}`;
     
-    if (CURRENT_USER.role !== 'Admin') {
+    if (CURRENT_USER.role === 'Admin') {
+        populateCabangFilterDashboard();
+        populateKasirFilterDashboard();
+        updateDashboardCharts();
+    } else {
         loadHistoriTransaksi().then(() => updateKasirDashboard());
     }
 
@@ -2904,6 +2947,8 @@ async function initDashboardCharts() {
     try { 
         const resKaryawan = await callBackend('getKaryawan'); 
         KARYAWAN_CACHE = parseDataArray(resKaryawan); 
+        KARYAWAN_DATA = KARYAWAN_CACHE;
+        if (typeof window !== 'undefined') window.KARYAWAN_DATA = KARYAWAN_DATA;
     } catch(e){}
 
     try { 
@@ -2915,25 +2960,364 @@ async function initDashboardCharts() {
     updateDashboardCharts();
 }
 
+// =========================================================================
+// SISTEM MANAJEMEN CABANG (SEMPAJAK, M YAMIN, + CABANG BARU) & REAL-TIME DASHBOARD
+// =========================================================================
+
+async function initBranchSystem() {
+    // 1. Muat dari local storage jika ada, bersihkan dari nama cabang tidak valid
+    try {
+        const saved = localStorage.getItem('ib_saved_branches_list');
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                parsed.forEach(b => {
+                    const norm = normalizeBranchName(b);
+                    if (norm && !BRANCHES_CACHE.includes(norm)) BRANCHES_CACHE.push(norm);
+                });
+            }
+        }
+    } catch(e){}
+
+    // Bersihkan nama yang tidak valid dari cache lokal
+    BRANCHES_CACHE = Array.from(new Set(
+        BRANCHES_CACHE
+            .map(b => normalizeBranchName(b))
+            .filter(b => Boolean(b))
+    ));
+
+    // Pastikan Sempajak dan M Yamin selalu ada
+    ['Sempajak', 'M Yamin'].forEach(b => {
+        if (!BRANCHES_CACHE.includes(b)) BRANCHES_CACHE.push(b);
+    });
+    try { localStorage.setItem('ib_saved_branches_list', JSON.stringify(BRANCHES_CACHE)); } catch(e){}
+
+    // 2. Muat cabang terdaftar dari Cloud Firestore
+    try {
+        const fsBranches = await firestoreGetBranches();
+        if (Array.isArray(fsBranches) && fsBranches.length > 0) {
+            fsBranches.forEach(b => {
+                const norm = normalizeBranchName(b);
+                if (norm && !BRANCHES_CACHE.includes(norm)) BRANCHES_CACHE.push(norm);
+            });
+            localStorage.setItem('ib_saved_branches_list', JSON.stringify(BRANCHES_CACHE));
+        }
+    } catch(e) {
+        console.warn('[Firestore GetBranches Info]:', e);
+    }
+
+    // 3. Pasang listener realtime Firestore untuk penambahan cabang baru di perangkat lain
+    try {
+        if (unsubscribeBranches) unsubscribeBranches();
+        unsubscribeBranches = subscribeToBranches((branches) => {
+            if (Array.isArray(branches) && branches.length > 0) {
+                let hasNew = false;
+                branches.forEach(b => {
+                    const norm = normalizeBranchName(b);
+                    if (norm && !BRANCHES_CACHE.includes(norm)) {
+                        BRANCHES_CACHE.push(norm);
+                        hasNew = true;
+                    }
+                });
+                if (hasNew) {
+                    try {
+                        localStorage.setItem('ib_saved_branches_list', JSON.stringify(BRANCHES_CACHE));
+                    } catch(e){}
+                    renderLoginBranchChips();
+                    renderRegisterBranchChips();
+                    populateCabangFilterDashboard();
+                }
+            }
+        });
+    } catch(e){}
+
+    // 4. Render tampilan awal
+    renderLoginBranchChips();
+    renderRegisterBranchChips();
+    populateCabangFilterDashboard();
+    populateKasirFilterDashboard();
+}
+
+function selectLoginBranch(branchName) {
+    activeLoginCabang = branchName;
+    const label = document.getElementById('login-selected-cabang-label');
+    const input = document.getElementById('login-selected-cabang');
+    if (label) label.innerText = branchName;
+    if (input) input.value = branchName;
+    renderLoginBranchChips();
+}
+
+function renderLoginBranchChips() {
+    const container = document.getElementById('login-branch-chips');
+    if (!container) return;
+
+    const uniqueBranches = Array.from(new Set(['Sempajak', 'M Yamin', ...BRANCHES_CACHE]));
+    if (!activeLoginCabang || !uniqueBranches.includes(activeLoginCabang)) {
+        activeLoginCabang = 'Sempajak';
+    }
+
+    let html = '';
+    uniqueBranches.forEach(b => {
+        const isSelected = (activeLoginCabang === b);
+        const cls = isSelected
+            ? 'px-3 py-1.5 rounded-xl text-xs font-black transition-all bg-red-600 text-white shadow-xs border border-red-600 cursor-pointer flex items-center gap-1.5 active:scale-95'
+            : 'px-3 py-1.5 rounded-xl text-xs font-semibold transition-all bg-white text-gray-700 hover:bg-gray-100 border border-gray-200 hover:border-gray-300 cursor-pointer flex items-center gap-1.5 active:scale-95';
+        const icon = isSelected ? '<i class="fas fa-check text-[10px]"></i>' : '<i class="fas fa-store text-gray-400 text-[10px]"></i>';
+        html += `<button type="button" onclick="selectLoginBranch('${escapeHtml(b)}')" class="${cls}">${icon} <span>${escapeHtml(b)}</span></button>`;
+    });
+
+    html += `
+        <button type="button" onclick="openAddBranchModal('login')" class="px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all bg-red-50 hover:bg-red-100 text-red-600 border border-dashed border-red-300 hover:border-red-400 cursor-pointer flex items-center gap-1 active:scale-95" title="Tambah Cabang Baru">
+            <i class="fas fa-plus text-[10px]"></i>
+            <span>Cabang Baru</span>
+        </button>
+    `;
+
+    container.innerHTML = html;
+}
+
+function selectRegisterBranch(branchName) {
+    activeRegisterCabang = branchName;
+    const label = document.getElementById('reg-selected-cabang-label');
+    const input = document.getElementById('reg-cabang');
+    if (label) label.innerText = branchName;
+    if (input) input.value = branchName;
+    renderRegisterBranchChips();
+}
+
+function renderRegisterBranchChips() {
+    const container = document.getElementById('register-branch-chips');
+    if (!container) return;
+
+    const uniqueBranches = Array.from(new Set(['Sempajak', 'M Yamin', ...BRANCHES_CACHE]));
+    if (!activeRegisterCabang || !uniqueBranches.includes(activeRegisterCabang)) {
+        activeRegisterCabang = 'Sempajak';
+    }
+
+    let html = '';
+    uniqueBranches.forEach(b => {
+        const isSelected = (activeRegisterCabang === b);
+        const cls = isSelected
+            ? 'px-3 py-1.5 rounded-xl text-xs font-black transition-all bg-red-600 text-white shadow-xs border border-red-600 cursor-pointer flex items-center gap-1.5 active:scale-95'
+            : 'px-3 py-1.5 rounded-xl text-xs font-semibold transition-all bg-white text-gray-700 hover:bg-gray-100 border border-gray-200 hover:border-gray-300 cursor-pointer flex items-center gap-1.5 active:scale-95';
+        const icon = isSelected ? '<i class="fas fa-check text-[10px]"></i>' : '<i class="fas fa-store text-gray-400 text-[10px]"></i>';
+        html += `<button type="button" onclick="selectRegisterBranch('${escapeHtml(b)}')" class="${cls}">${icon} <span>${escapeHtml(b)}</span></button>`;
+    });
+
+    html += `
+        <button type="button" onclick="openAddBranchModal('register')" class="px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all bg-red-50 hover:bg-red-100 text-red-600 border border-dashed border-red-300 hover:border-red-400 cursor-pointer flex items-center gap-1 active:scale-95" title="Tambah Cabang Baru">
+            <i class="fas fa-plus text-[10px]"></i>
+            <span>Cabang Baru</span>
+        </button>
+    `;
+
+    container.innerHTML = html;
+}
+
+function openAddBranchModal(source = 'login') {
+    targetBranchModalSource = source;
+    const modal = document.getElementById('modal-add-branch');
+    const input = document.getElementById('input-new-branch-name');
+    if (modal) modal.classList.remove('hidden-view');
+    if (input) {
+        input.value = '';
+        setTimeout(() => input.focus(), 120);
+    }
+}
+
+async function handleAddNewBranchSubmit(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    const input = document.getElementById('input-new-branch-name');
+    const branchName = (input ? input.value : '').trim();
+    if (!branchName) {
+        showToast('Nama cabang tidak boleh kosong!', 'warning');
+        return;
+    }
+
+    const exists = BRANCHES_CACHE.find(b => b.toLowerCase() === branchName.toLowerCase());
+    const finalBranchName = exists || branchName;
+
+    if (!exists) {
+        BRANCHES_CACHE.push(finalBranchName);
+        try {
+            localStorage.setItem('ib_saved_branches_list', JSON.stringify(BRANCHES_CACHE));
+        } catch(err){}
+
+        // Simpan ke Firestore
+        try {
+            await firestoreSaveBranch(finalBranchName);
+            console.log('[Firestore] Cabang baru berhasil disimpan ke Cloud Firestore:', finalBranchName);
+        } catch (fsErr) {
+            console.warn('[Firestore Save Branch Warning]:', fsErr);
+        }
+    }
+
+    renderLoginBranchChips();
+    renderRegisterBranchChips();
+    populateCabangFilterDashboard();
+
+    if (targetBranchModalSource === 'register') {
+        selectRegisterBranch(finalBranchName);
+    } else if (targetBranchModalSource === 'dashboard') {
+        selectDashboardBranch(finalBranchName);
+    } else {
+        selectLoginBranch(finalBranchName);
+    }
+
+    closeModal('modal-add-branch');
+    showToast(`Cabang "${finalBranchName}" berhasil ditambahkan & disinkronkan!`, 'success');
+}
+
+function selectDashboardBranch(branchName) {
+    activeDashboardCabang = branchName;
+    const selectEl = document.getElementById('filter-cabang-dashboard');
+    const labelEl = document.getElementById('dashboard-active-branch-label');
+    if (selectEl) selectEl.value = branchName;
+    if (labelEl) labelEl.innerText = branchName;
+
+    renderDashboardBranchChips();
+    populateKasirFilterDashboard();
+    updateDashboardCharts();
+}
+
+function renderDashboardBranchChips() {
+    const chipsContainer = document.getElementById('dashboard-cabang-chips');
+    if (!chipsContainer) return;
+
+    const registered = typeof getAllRegisteredBranches === 'function' ? getAllRegisteredBranches() : [];
+    const allBranches = Array.from(new Set(['Semua', 'Sempajak', 'M Yamin', ...registered]));
+
+    let html = '';
+    allBranches.forEach(c => {
+        const isSelected = (activeDashboardCabang === c);
+        const cls = isSelected
+            ? 'px-3 py-1.5 rounded-xl text-xs font-bold transition-all bg-red-600 text-white shadow-xs border border-red-600 cursor-pointer flex items-center gap-1.5'
+            : 'px-3 py-1.5 rounded-xl text-xs font-semibold transition-all bg-white text-gray-700 hover:bg-gray-100 border border-gray-200 hover:border-gray-300 cursor-pointer flex items-center gap-1.5';
+        const icon = c === 'Semua' ? '<i class="fas fa-layer-group text-[10px]"></i>' : '<i class="fas fa-store text-[10px]"></i>';
+        html += `<button type="button" onclick="selectDashboardBranch('${escapeHtml(c)}')" class="${cls}">${icon} <span>${escapeHtml(c)}</span></button>`;
+    });
+
+    html += `
+        <button type="button" onclick="openAddBranchModal('dashboard')" class="px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all bg-red-50 hover:bg-red-100 text-red-600 border border-dashed border-red-300 hover:border-red-400 cursor-pointer flex items-center gap-1 active:scale-95" title="Tambah Cabang Baru">
+            <i class="fas fa-plus text-[10px]"></i>
+            <span>Cabang Baru</span>
+        </button>
+    `;
+
+    chipsContainer.innerHTML = html;
+}
+
 function populateCabangFilterDashboard() {
     const filter = document.getElementById('filter-cabang-dashboard');
+    if (filter) {
+        const currentVal = activeDashboardCabang || filter.value || 'Semua';
+        const registered = typeof getAllRegisteredBranches === 'function' ? getAllRegisteredBranches() : [];
+        const validBranches = Array.from(new Set(registered.map(c => normalizeBranchName(c)).filter(Boolean)));
+
+        let html = '<option value="Semua">Semua Cabang (Outlet)</option>';
+        validBranches.forEach(c => {
+            html += `<option value="${c}" ${c === currentVal ? 'selected' : ''}>${c}</option>`;
+        });
+        filter.innerHTML = html;
+    }
+
+    renderDashboardBranchChips();
+}
+
+async function populateKasirFilterDashboard() {
+    const filter = document.getElementById('filter-kasir-dashboard');
     if (!filter) return;
-    const currentVal = filter.value || 'Semua';
-    const registered = typeof getAllRegisteredBranches === 'function' ? getAllRegisteredBranches() : [];
-    let html = '<option value="Semua">Semua Cabang</option>';
-    registered.forEach(c => {
-        html += `<option value="${c}" ${c === currentVal ? 'selected' : ''}>${c}</option>`;
+
+    // Ambil semua kasir yang sah terdaftar di Firestore users
+    try {
+        if (FIRESTORE_USERS_CACHE.length === 0) {
+            const fsUsers = await firestoreGetAllUsers();
+            if (Array.isArray(fsUsers)) FIRESTORE_USERS_CACHE = fsUsers;
+        }
+    } catch(e){}
+
+    const currentVal = activeDashboardKasir || filter.value || 'Semua';
+    const cashiersMap = new Map();
+    const disallowedUsernames = new Set(['admin', 'kasir', 'kasir1', 'kasir2', 'aris_dev']);
+
+    // 1. Dari Firestore users (Hanya akun Kasir resmi yang terdaftar)
+    if (Array.isArray(FIRESTORE_USERS_CACHE)) {
+        FIRESTORE_USERS_CACHE.forEach(u => {
+            const role = (u.role || '').toLowerCase();
+            const uname = (u.username || '').trim();
+            if (role === 'kasir' && uname && !disallowedUsernames.has(uname.toLowerCase())) {
+                const normCabang = normalizeBranchName(u.cabang) || 'Sempajak';
+                cashiersMap.set(uname.toLowerCase(), {
+                    username: uname,
+                    name: u.fullName || uname,
+                    cabang: normCabang
+                });
+            }
+        });
+    }
+
+    // 2. Dari local storage users (Hanya yang terdaftar secara sah sebagai Kasir)
+    const localUsers = getAllUsers();
+    if (Array.isArray(localUsers)) {
+        localUsers.forEach(u => {
+            const role = (u.role || '').toLowerCase();
+            const uname = (u.username || '').trim();
+            if (role === 'kasir' && uname && !disallowedUsernames.has(uname.toLowerCase())) {
+                if (!cashiersMap.has(uname.toLowerCase())) {
+                    const normCabang = normalizeBranchName(u.cabang) || 'Sempajak';
+                    cashiersMap.set(uname.toLowerCase(), {
+                        username: uname,
+                        name: u.fullName || uname,
+                        cabang: normCabang
+                    });
+                }
+            }
+        });
+    }
+
+    let cashiersList = Array.from(cashiersMap.values());
+    if (activeDashboardCabang && activeDashboardCabang !== 'Semua') {
+        // Urutkan yang cabangnya cocok lebih dulu
+        cashiersList.sort((a, b) => {
+            const matchA = a.cabang.toLowerCase() === activeDashboardCabang.toLowerCase() ? -1 : 1;
+            const matchB = b.cabang.toLowerCase() === activeDashboardCabang.toLowerCase() ? -1 : 1;
+            return matchA - matchB;
+        });
+    }
+
+    let html = '<option value="Semua">Semua Kasir Terdaftar</option>';
+    cashiersList.forEach(k => {
+        const isMatchCabang = (activeDashboardCabang === 'Semua' || k.cabang.toLowerCase() === activeDashboardCabang.toLowerCase());
+        const prefix = isMatchCabang ? '🟢 ' : '⚪ ';
+        html += `<option value="${escapeHtml(k.username)}" ${k.username.toLowerCase() === currentVal.toLowerCase() ? 'selected' : ''}>${prefix}${escapeHtml(k.name)} (${escapeHtml(k.cabang)})</option>`;
     });
+
     filter.innerHTML = html;
 }
 
-function parseTrxDate(dateStr) {
-    if (!dateStr) return null;
-    const parts = dateStr.split(' ');
-    if (parts.length === 0) return null;
-    const dateParts = parts[0].split('/');
-    if (dateParts.length !== 3) return null;
-    return new Date(dateParts[2], dateParts[1] - 1, dateParts[0]);
+function setDashboardPeriodMode(mode) {
+    dashboardPeriodMode = mode;
+    const btnToday = document.getElementById('dashboard-period-today');
+    const btnAll = document.getElementById('dashboard-period-all');
+    const btnCustom = document.getElementById('dashboard-period-custom');
+    const customRangeBox = document.getElementById('dashboard-custom-date-range');
+
+    const activeCls = 'px-3 py-1.5 rounded-xl text-xs font-black transition-all bg-emerald-600 text-white shadow-xs border border-emerald-600 flex items-center gap-1.5';
+    const normalCls = 'px-3 py-1.5 rounded-xl text-xs font-semibold transition-all bg-white text-gray-600 hover:bg-gray-100 border border-gray-200 flex items-center gap-1.5';
+
+    if (btnToday) btnToday.className = mode === 'today' ? activeCls : normalCls;
+    if (btnAll) btnAll.className = mode === 'all' ? activeCls : normalCls;
+    if (btnCustom) btnCustom.className = mode === 'custom' ? activeCls : normalCls;
+
+    if (customRangeBox) {
+        if (mode === 'custom') {
+            customRangeBox.classList.remove('hidden-view');
+        } else {
+            customRangeBox.classList.add('hidden-view');
+        }
+    }
+
+    updateDashboardCharts();
 }
 
 function resetDateFilter() {
@@ -2942,19 +3326,94 @@ function resetDateFilter() {
     const eDate = document.getElementById('filter-end-date');
     if (sDate) sDate.value = todayStr;
     if (eDate) eDate.value = todayStr;
-    updateDashboardCharts();
+    setDashboardPeriodMode('today');
+}
+
+async function syncRealtimeDashboardNow() {
+    const icon = document.getElementById('icon-sync-dash');
+    if (icon) icon.classList.add('fa-spin');
+
+    try {
+        await loadHistoriTransaksi();
+        await initBranchSystem();
+        showToast('Data penjualan real-time berhasil disinkronkan dari Cloud Firestore!', 'success');
+    } catch(e) {
+        showToast('Sinkronisasi selesai (menggunakan cache lokal & cloud)', 'info');
+    }
+
+    if (icon) {
+        setTimeout(() => icon.classList.remove('fa-spin'), 600);
+    }
+}
+
+// Pasang Listener Real-time Firestore untuk Transaksi Otomatis
+function initRealtimeTransactionsListener() {
+    if (unsubscribeTransactions) {
+        try { unsubscribeTransactions(); } catch(e){}
+        unsubscribeTransactions = null;
+    }
+
+    try {
+        unsubscribeTransactions = subscribeToTransactions((transactions) => {
+            if (Array.isArray(transactions) && transactions.length > 0) {
+                HISTORI_TRX_CACHE = transactions;
+                try {
+                    localStorage.setItem(TRX_STORAGE_KEY, JSON.stringify(transactions));
+                } catch(e){}
+
+                // Perbarui dashboard seketika jika admin sedang membuka tab profil / dashboard
+                if (CURRENT_USER && CURRENT_USER.role === 'Admin') {
+                    populateCabangFilterDashboard();
+                    populateKasirFilterDashboard();
+                    updateDashboardCharts();
+                } else if (CURRENT_USER && CURRENT_USER.role === 'Kasir') {
+                    updateKasirDashboard();
+                }
+
+                if (currentTab === 'histori-trx') {
+                    renderHistoriTransaksi();
+                }
+            }
+        });
+    } catch(err) {
+        console.warn('[Realtime Transactions Listener Warning]:', err);
+    }
+}
+
+function parseTrxDate(dateStr) {
+    if (!dateStr) return null;
+    const parts = String(dateStr).split(' ');
+    if (parts.length === 0) return null;
+    const dateParts = parts[0].split('/');
+    if (dateParts.length !== 3) {
+        // Coba ISO format YYYY-MM-DD
+        const isoParts = parts[0].split('-');
+        if (isoParts.length === 3) {
+            return new Date(Number(isoParts[0]), Number(isoParts[1]) - 1, Number(isoParts[2]));
+        }
+        return null;
+    }
+    return new Date(Number(dateParts[2]), Number(dateParts[1]) - 1, Number(dateParts[0]));
 }
 
 function updateDashboardCharts() {
     if (!CURRENT_USER || CURRENT_USER.role !== 'Admin') return;
+    
     const filterVal = document.getElementById('filter-month-dashboard')?.value;
-    const filterCabang = document.getElementById('filter-cabang-dashboard')?.value || 'Semua';
+    const filterCabang = activeDashboardCabang || document.getElementById('filter-cabang-dashboard')?.value || 'Semua';
+    const filterKasir = document.getElementById('filter-kasir-dashboard')?.value || 'Semua';
     const filterStartDate = document.getElementById('filter-start-date')?.value;
     const filterEndDate = document.getElementById('filter-end-date')?.value;
     
+    // Label cabang aktif
+    const labelCabang = document.getElementById('dashboard-active-branch-label');
+    if (labelCabang) labelCabang.innerText = filterCabang;
+
+    // Sinkronisasi Karyawan
     const statKaryawan = document.getElementById('stat-karyawan');
     if (statKaryawan) statKaryawan.innerText = KARYAWAN_CACHE ? KARYAWAN_CACHE.length : 0;
 
+    // Filter Gaji
     let filteredGaji = HISTORI_GAJI_CACHE || [];
     if (filterVal) filteredGaji = filteredGaji.filter(g => g['Bulan'] === filterVal);
     
@@ -2970,8 +3429,9 @@ function updateDashboardCharts() {
     const statGaji = document.getElementById('stat-gaji');
     if (statGaji) statGaji.innerText = 'Rp ' + formatRupiah(totalBersih);
 
+    // Chart Donut Penggajian
     const canvasDonut = document.getElementById('chart-penggajian');
-    if (canvasDonut) {
+    if (canvasDonut && typeof Chart !== 'undefined') {
         const ctxDonut = canvasDonut.getContext('2d');
         if (chartPenggajian) chartPenggajian.destroy();
         let donutData = [totalPokok, totalBonus, totalPotongan];
@@ -2989,6 +3449,7 @@ function updateDashboardCharts() {
         });
     }
 
+    // Chart Karyawan per Cabang
     const branchCounts = {};
     (KARYAWAN_CACHE || []).forEach(k => { 
         const branch = k['Lokasi Cabang'] || 'Pusat'; 
@@ -2996,7 +3457,7 @@ function updateDashboardCharts() {
     });
 
     const canvasBar = document.getElementById('chart-karyawan');
-    if (canvasBar) {
+    if (canvasBar && typeof Chart !== 'undefined') {
         const ctxBar = canvasBar.getContext('2d');
         if (chartKaryawan) chartKaryawan.destroy();
         chartKaryawan = new Chart(ctxBar, { 
@@ -3006,48 +3467,228 @@ function updateDashboardCharts() {
         });
     }
 
-    let filteredTrx = HISTORI_TRX_CACHE || [];
-    if (filterCabang !== 'Semua') filteredTrx = filteredTrx.filter(t => t['Cabang'] === filterCabang);
-    if (filterStartDate || filterEndDate) {
-        let start = filterStartDate ? new Date(filterStartDate) : null;
-        let end = filterEndDate ? new Date(filterEndDate) : null;
-        if (start) start.setHours(0, 0, 0, 0); 
-        if (end) end.setHours(23, 59, 59, 999);
+    // =========================================================================
+    // FILTER TRANSAKSI PENJUALAN DASHBOARD (HARI INI / SEMUA / KUSTOM & CABANG & KASIR)
+    // =========================================================================
+    let rawTrx = HISTORI_TRX_CACHE || [];
+    let filteredTrx = rawTrx;
+
+    // 1. Filter Periode (Hari Ini / Semua / Kustom)
+    if (dashboardPeriodMode === 'today') {
+        filteredTrx = filteredTrx.filter(t => isDateTrxToday(t['Tanggal'], t._timestamp));
+    } else if (dashboardPeriodMode === 'custom') {
+        if (filterStartDate || filterEndDate) {
+            let start = filterStartDate ? new Date(filterStartDate) : null;
+            let end = filterEndDate ? new Date(filterEndDate) : null;
+            if (start) start.setHours(0, 0, 0, 0); 
+            if (end) end.setHours(23, 59, 59, 999);
+            filteredTrx = filteredTrx.filter(t => {
+                const trxDate = parseTrxDate(t['Tanggal']); 
+                if (!trxDate) return false;
+                let isValid = true;
+                if (start && trxDate < start) isValid = false; 
+                if (end && trxDate > end) isValid = false;
+                return isValid;
+            });
+        }
+    }
+
+    // 2. Filter Cabang
+    if (filterCabang && filterCabang !== 'Semua') {
+        filteredTrx = filteredTrx.filter(t => (t['Cabang'] || t.cabang || 'Sempajak') === filterCabang);
+    }
+
+    // 3. Filter Kasir Terdaftar
+    if (filterKasir && filterKasir !== 'Semua') {
         filteredTrx = filteredTrx.filter(t => {
-            const trxDate = parseTrxDate(t['Tanggal']); 
-            if (!trxDate) return false;
-            let isValid = true;
-            if (start && trxDate < start) isValid = false; 
-            if (end && trxDate > end) isValid = false;
-            return isValid;
+            const kName = (t['Kasir'] || t.kasir || '').toLowerCase();
+            return kName === filterKasir.toLowerCase();
         });
     }
-    
+
+    // Hitung Metrik Penjualan
     let totalPenjualan = 0; 
     let trxCount = filteredTrx.length; 
     const penjualanPerCabang = {};
+    const penjualanPerKasir = {};
+    const activeKasirSet = new Set();
+
     filteredTrx.forEach(t => { 
-        const cabang = t['Cabang'] || 'Pusat'; 
-        const omset = Number(t['Total Belanja']) || 0; 
+        const cabang = t['Cabang'] || t.cabang || 'Sempajak'; 
+        const kasir = t['Kasir'] || t.kasir || 'Kasir';
+        const omset = Number(t['Total Belanja'] || t.total || 0); 
         totalPenjualan += omset; 
         penjualanPerCabang[cabang] = (penjualanPerCabang[cabang] || 0) + omset; 
+        penjualanPerKasir[kasir] = (penjualanPerKasir[kasir] || 0) + omset;
+        activeKasirSet.add(kasir);
     });
 
+    const avgPenjualan = trxCount > 0 ? Math.round(totalPenjualan / trxCount) : 0;
+
+    // Tampilkan pada Kartu Metrik
     const statPenjualan = document.getElementById('stat-penjualan');
     const statTrxCount = document.getElementById('stat-trx-count');
-    if (statPenjualan) statPenjualan.innerText = 'Rp ' + formatRupiah(totalPenjualan); 
-    if (statTrxCount) statTrxCount.innerText = `${trxCount} Transaksi Selesai`;
+    const statAvg = document.getElementById('stat-avg-penjualan');
+    const statKasirAktif = document.getElementById('stat-active-kasir-count');
+    const syncTimeEl = document.getElementById('dashboard-last-sync-time');
 
+    if (statPenjualan) statPenjualan.innerText = 'Rp ' + formatRupiah(totalPenjualan); 
+    if (statTrxCount) {
+        const periodText = dashboardPeriodMode === 'today' ? 'Hari Ini' : (dashboardPeriodMode === 'all' ? 'Seluruh Waktu' : 'Rentang Tanggal');
+        statTrxCount.innerText = `${trxCount} Transaksi (${periodText})`;
+    }
+    if (statAvg) statAvg.innerText = 'Rp ' + formatRupiah(avgPenjualan);
+    if (statKasirAktif) statKasirAktif.innerText = `${activeKasirSet.size} Kasir Aktif`;
+
+    if (syncTimeEl) {
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        syncTimeEl.innerText = `Terakhir sinkron: ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())} WIB`;
+    }
+
+    // Render Grafik Penjualan (Sesuai Cabang atau Per Kasir)
     const canvasPenjualan = document.getElementById('chart-penjualan');
-    if (canvasPenjualan) {
+    if (canvasPenjualan && typeof Chart !== 'undefined') {
         const ctxPenjualan = canvasPenjualan.getContext('2d');
-        if (chartPenjualan) chartPenjualan.destroy();
+        if (chartPenjualan) {
+            chartPenjualan.destroy();
+            chartPenjualan = null;
+        }
+
+        let chartLabels = [];
+        let chartData = [];
+        let datasetLabel = 'Total Penjualan (Rp)';
+
+        if (filterCabang === 'Semua') {
+            // Tampilkan perbandingan omset antar cabang (Sempajak, M Yamin, dll)
+            const registered = typeof getAllRegisteredBranches === 'function' ? getAllRegisteredBranches() : [];
+            const branchesToDisplay = Array.from(new Set(['Sempajak', 'M Yamin', ...registered]));
+            chartLabels = branchesToDisplay;
+            chartData = branchesToDisplay.map(c => penjualanPerCabang[c] || 0);
+            datasetLabel = 'Omset Penjualan per Cabang';
+        } else {
+            // Tampilkan perbandingan kasir di cabang terpilih
+            chartLabels = Object.keys(penjualanPerKasir);
+            if (chartLabels.length === 0) {
+                chartLabels = [filterCabang];
+                chartData = [totalPenjualan];
+            } else {
+                chartData = chartLabels.map(k => penjualanPerKasir[k]);
+            }
+            datasetLabel = `Omset Penjualan Cabang ${filterCabang} per Kasir`;
+        }
+
         chartPenjualan = new Chart(ctxPenjualan, { 
             type: 'bar', 
-            data: { labels: Object.keys(penjualanPerCabang).length ? Object.keys(penjualanPerCabang) : ['Belum Ada Data'], datasets: [{ label: 'Total Penjualan', data: Object.values(penjualanPerCabang).length ? Object.values(penjualanPerCabang) : [0], backgroundColor: '#10b981', borderRadius: 4 }] }, 
-            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { callback: function(value) { return 'Rp ' + (value/1000) + 'k'; }, font: {size: 10} } }, x: { ticks: { font: {size: 10} } } }, plugins: { legend: { display: false } } } 
+            data: { 
+                labels: chartLabels.length ? chartLabels : ['Belum Ada Transaksi'], 
+                datasets: [{ 
+                    label: datasetLabel, 
+                    data: chartData.length ? chartData : [0], 
+                    backgroundColor: filterCabang === 'Semua' ? '#10b981' : '#f59e0b', 
+                    borderRadius: 6,
+                    maxBarThickness: 45
+                }] 
+            }, 
+            options: { 
+                responsive: true, 
+                maintainAspectRatio: false, 
+                scales: { 
+                    y: { 
+                        beginAtZero: true, 
+                        ticks: { 
+                            callback: function(value) { 
+                                if (value >= 1000000) return 'Rp ' + (value/1000000) + 'jt';
+                                if (value >= 1000) return 'Rp ' + (value/1000) + 'rb';
+                                return 'Rp ' + value; 
+                            }, 
+                            font: {size: 10} 
+                        } 
+                    }, 
+                    x: { 
+                        ticks: { font: {size: 10, weight: 'bold'} } 
+                    } 
+                }, 
+                plugins: { 
+                    legend: { display: false } 
+                } 
+            } 
         });
     }
+
+    // Render Riwayat Transaksi Real-Time Langsung di Dashboard
+    renderDashboardRecentTrxList(filteredTrx);
+}
+
+function renderDashboardRecentTrxList(trxList) {
+    const listContainer = document.getElementById('dashboard-recent-trx-list');
+    if (!listContainer) return;
+
+    if (!Array.isArray(trxList) || trxList.length === 0) {
+        listContainer.innerHTML = `
+            <div class="text-center py-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                <i class="fas fa-receipt text-3xl text-gray-300 mb-2"></i>
+                <p class="text-xs font-bold text-gray-600">Belum ada transaksi pada cabang / filter ini</p>
+                <p class="text-[10px] text-gray-400 mt-0.5">Transaksi kasir yang masuk di Firebase akan tampil otomatis di sini</p>
+            </div>
+        `;
+        return;
+    }
+
+    // Tampilkan 15 transaksi terbaru
+    const recent = trxList.slice(0, 15);
+    let html = '';
+
+    recent.forEach(t => {
+        const id = t['ID Transaksi'] || t.id || 'TRX-?';
+        const tgl = t['Tanggal'] || '-';
+        const cabang = t['Cabang'] || t.cabang || 'Sempajak';
+        const kasir = t['Kasir'] || t.kasir || 'Kasir';
+        const total = Number(t['Total Belanja'] || t.total || 0);
+        const pelanggan = t['Nama Pelanggan'] || t.namaPelanggan || 'Pelanggan Umum';
+        const metode = t['Metode'] || t.metode || 'Cash';
+
+        let itemsSummary = '';
+        try {
+            const rawItems = t['Items JSON'] || t.items;
+            const items = typeof rawItems === 'string' ? JSON.parse(rawItems) : (rawItems || []);
+            if (Array.isArray(items) && items.length > 0) {
+                itemsSummary = items.map(it => `${it.qty || 1}x ${it.nama || it.name}`).join(', ');
+            }
+        } catch(e){}
+
+        html += `
+            <div class="bg-gray-50/70 hover:bg-white p-3 sm:p-3.5 rounded-2xl border border-gray-100 hover:border-gray-200 transition-all shadow-2xs space-y-1.5">
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <div class="flex items-center gap-2">
+                        <span class="font-mono text-xs font-black text-gray-900 bg-white border border-gray-200 px-2 py-0.5 rounded-lg shadow-2xs">${escapeHtml(id)}</span>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md ${cabang.toLowerCase().includes('yamin') ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800'}">
+                            <i class="fas fa-store mr-1 text-[9px]"></i>${escapeHtml(cabang)}
+                        </span>
+                        <span class="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-md font-semibold">
+                            <i class="fas fa-user-tag mr-1 text-[9px]"></i>Kasir: ${escapeHtml(kasir)}
+                        </span>
+                    </div>
+                    <div class="text-right">
+                        <span class="font-black text-sm text-emerald-600">Rp ${formatRupiah(total)}</span>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between text-xs text-gray-600 pt-0.5">
+                    <div class="flex items-center gap-1.5 truncate max-w-[70%]">
+                        <i class="fas fa-user text-gray-400 text-[10px]"></i>
+                        <span class="font-medium truncate">${escapeHtml(pelanggan)}</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-[11px] text-gray-400 shrink-0">
+                        <span class="px-1.5 py-0.2 bg-gray-200 text-gray-700 rounded text-[10px] font-bold">${escapeHtml(metode)}</span>
+                        <span><i class="far fa-clock mr-1 text-[10px]"></i>${escapeHtml(tgl)}</span>
+                    </div>
+                </div>
+                ${itemsSummary ? `<p class="text-[10px] text-gray-500 italic truncate"><i class="fas fa-utensils text-gray-400 mr-1 text-[9px]"></i>${escapeHtml(itemsSummary)}</p>` : ''}
+            </div>
+        `;
+    });
+
+    listContainer.innerHTML = html;
 }
 
 function renderDashboardSalesCharts() {
@@ -3063,6 +3704,8 @@ async function loadKaryawan() {
     try {
         const res = await callBackend('getKaryawan'); 
         KARYAWAN_CACHE = parseDataArray(res); 
+        KARYAWAN_DATA = KARYAWAN_CACHE;
+        if (typeof window !== 'undefined') window.KARYAWAN_DATA = KARYAWAN_DATA; 
         if (KARYAWAN_CACHE.length === 0) { 
             list.innerHTML = `<div class="text-center text-gray-400 py-10"><i class="fas fa-users-slash text-4xl mb-3"></i><p class="text-sm">Belum ada karyawan</p></div>`; 
         } else { 
@@ -3090,6 +3733,14 @@ function openFormKaryawan() {
     document.getElementById('form-karyawan').reset(); 
     document.getElementById('k-rowIndex').value = ''; 
     document.getElementById('modal-title').innerHTML = 'Tambah Karyawan <button onclick="closeModal(\'modal-karyawan\')"><i class="fas fa-times text-gray-400"></i></button>'; 
+    
+    // Isi pilihan cabang karyawan hanya dengan cabang resmi terdaftar
+    const kCabangSelect = document.getElementById('k-cabang');
+    if (kCabangSelect) {
+        const branches = typeof getAllRegisteredBranches === 'function' ? getAllRegisteredBranches() : ['Sempajak', 'M Yamin'];
+        kCabangSelect.innerHTML = branches.map(b => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
+    }
+
     document.getElementById('modal-karyawan').classList.remove('hidden-view'); 
 }
 
@@ -3100,7 +3751,20 @@ function editKaryawan(k) {
     document.getElementById('k-nama').value = k['Nama'] || ''; 
     document.getElementById('k-gender').value = k['Jenis Kelamin'] || 'Laki-laki'; 
     document.getElementById('k-jabatan').value = k['Jabatan'] || 'Kasir'; 
-    document.getElementById('k-cabang').value = k['Lokasi Cabang'] || ''; 
+    
+    const kCabangSelect = document.getElementById('k-cabang');
+    const branchVal = normalizeBranchName(k['Lokasi Cabang'] || k['Cabang'] || k.cabang) || 'Sempajak';
+    if (kCabangSelect) {
+        // Pastikan opsi cabang ada
+        let exists = Array.from(kCabangSelect.options).some(o => o.value.toLowerCase() === branchVal.toLowerCase());
+        if (!exists) {
+            const opt = document.createElement('option');
+            opt.value = branchVal;
+            opt.textContent = branchVal;
+            kCabangSelect.appendChild(opt);
+        }
+        kCabangSelect.value = branchVal;
+    }
     document.getElementById('k-wa').value = k['No WA'] || ''; 
     document.getElementById('k-gaji').value = k['Gaji Harian'] || ''; 
     document.getElementById('k-email').value = k['Email'] || ''; 
@@ -3159,6 +3823,8 @@ async function loadKaryawanForSlip() {
         try { 
             const res = await callBackend('getKaryawan'); 
             KARYAWAN_CACHE = parseDataArray(res); 
+            KARYAWAN_DATA = KARYAWAN_CACHE;
+            if (typeof window !== 'undefined') window.KARYAWAN_DATA = KARYAWAN_DATA; 
         } catch(e) {} 
     } 
     const select = document.getElementById('s-karyawan'); 
@@ -6818,8 +7484,8 @@ function renderAdminConversationsSidebar() {
         const timeFormatted = user.lastTimestamp ? formatChatDateTime(user.lastTimestamp).split(' ')[1] : '';
 
         const activeCardStyle = isSelected 
-            ? 'bg-red-50/90 border-red-300 shadow-xs' 
-            : 'bg-white hover:bg-gray-50/80 border-gray-200';
+            ? 'bg-red-50 border-red-300 shadow-xs' 
+            : 'bg-white hover:bg-gray-50 border-gray-200';
 
         const initial = (user.fullName || user.username).charAt(0).toUpperCase();
         const safeDomId = String(user.username).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -6828,20 +7494,24 @@ function renderAdminConversationsSidebar() {
 
         return `
             <div class="relative overflow-hidden rounded-2xl mb-2 bg-red-600 select-none group/swipe" id="user-swipe-container-${safeDomId}">
-                <!-- Background Action: Tombol Merah Hapus History (terungkap saat swipe ke kiri) -->
-                <button type="button"
-                        onclick="event.stopPropagation(); confirmDeleteConversationHistory('${encodedUsername}', '${escapedFullName}')"
-                        class="absolute inset-y-0 right-0 w-24 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white flex flex-col items-center justify-center gap-1 transition text-center px-1 z-0 cursor-pointer"
-                        title="Hapus seluruh riwayat obrolan dengan pengguna ini">
-                    <i class="fas fa-trash-alt text-sm"></i>
-                    <span class="text-[10px] font-bold leading-tight">Hapus History</span>
-                </button>
+                <!-- Background Action: Tombol Merah Hapus History (Z-Index Tinggi agar tidak pernah terhalang) -->
+                <div class="absolute inset-y-0 right-0 w-28 flex items-center justify-center z-10">
+                    <button type="button"
+                            id="btn-swipe-delete-${safeDomId}"
+                            onclick="event.stopPropagation(); confirmDeleteConversationHistory('${encodedUsername}', '${escapedFullName}')"
+                            ontouchend="event.stopPropagation(); confirmDeleteConversationHistory('${encodedUsername}', '${escapedFullName}')"
+                            class="w-full h-full bg-red-600 hover:bg-red-700 active:bg-red-800 text-white flex flex-col items-center justify-center gap-1.5 transition text-center px-2 cursor-pointer font-sans"
+                            title="Hapus seluruh riwayat obrolan dengan pengguna ini">
+                        <i class="fas fa-trash-alt text-base"></i>
+                        <span class="text-[11px] font-black leading-tight tracking-tight">Hapus History</span>
+                    </button>
+                </div>
 
-                <!-- Foreground Card (Bisa digeser/swipe ke kiri) -->
+                <!-- Foreground Card (Bisa digeser/swipe ke kiri lewat touch maupun mouse drag) -->
                 <div id="swipe-card-${safeDomId}"
                      data-username="${encodedUsername}"
                      data-safeid="${safeDomId}"
-                     class="user-swipe-item relative p-3 rounded-2xl border transition-transform duration-200 ease-out cursor-pointer flex items-center gap-3 select-none ${activeCardStyle} z-10"
+                     class="user-swipe-item relative p-3 rounded-2xl border transition-transform duration-200 ease-out cursor-pointer flex items-center gap-3 select-none ${activeCardStyle} z-20"
                      style="transform: translateX(0px);"
                      onclick="handleUserCardClick(event, '${encodedUsername}')">
                     
@@ -6861,11 +7531,11 @@ function renderAdminConversationsSidebar() {
                         </div>
                     </div>
 
-                    <!-- Tombol Cepat Hapus History untuk Desktop Hover -->
+                    <!-- Tombol Cepat Hapus History untuk Desktop -->
                     <button type="button" 
                             onclick="event.stopPropagation(); confirmDeleteConversationHistory('${encodedUsername}', '${escapedFullName}')"
-                            class="hidden md:inline-flex items-center justify-center w-7 h-7 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 active:scale-95 transition shrink-0 opacity-0 group-hover/swipe:opacity-100"
-                            title="Hapus riwayat percakapan">
+                            class="inline-flex items-center justify-center w-7 h-7 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 active:scale-95 transition shrink-0"
+                            title="Hapus riwayat obrolan pengguna">
                         <i class="fas fa-trash-alt text-xs"></i>
                     </button>
 
@@ -6888,29 +7558,26 @@ function initAdminUserSwipeListeners() {
         let startX = 0;
         let startY = 0;
         let currentX = 0;
-        let isTouching = false;
+        let isDragging = false;
         let isHorizontal = null;
-        let isOpen = (card.dataset.swipedOpen === 'true');
-        const maxSwipe = 96; // lebar area tombol merah (w-24)
+        const maxSwipe = 112; // lebar area tombol merah (w-28)
 
-        const onTouchStart = (e) => {
-            const pt = e.touches ? e.touches[0] : e;
-            startX = pt.clientX;
-            startY = pt.clientY;
+        const startAction = (clientX, clientY) => {
+            startX = clientX;
+            startY = clientY;
             currentX = (card.dataset.swipedOpen === 'true') ? -maxSwipe : 0;
-            isTouching = true;
+            isDragging = true;
             isHorizontal = null;
             card.style.transition = 'none';
         };
 
-        const onTouchMove = (e) => {
-            if (!isTouching) return;
-            const pt = e.touches ? e.touches[0] : e;
-            const diffX = pt.clientX - startX;
-            const diffY = pt.clientY - startY;
+        const moveAction = (clientX, clientY, e) => {
+            if (!isDragging) return;
+            const diffX = clientX - startX;
+            const diffY = clientY - startY;
 
             if (isHorizontal === null) {
-                if (Math.abs(diffX) > 6 || Math.abs(diffY) > 6) {
+                if (Math.abs(diffX) > 5 || Math.abs(diffY) > 5) {
                     isHorizontal = Math.abs(diffX) > Math.abs(diffY);
                 }
             }
@@ -6919,34 +7586,62 @@ function initAdminUserSwipeListeners() {
 
             let targetX = ((card.dataset.swipedOpen === 'true') ? -maxSwipe : 0) + diffX;
             if (targetX > 0) targetX = 0;
-            if (targetX < -110) targetX = -110;
+            if (targetX < -130) targetX = -130;
 
             currentX = targetX;
             card.style.transform = `translateX(${targetX}px)`;
-            if (e.cancelable) e.preventDefault();
+            if (e && e.cancelable) e.preventDefault();
         };
 
-        const onTouchEnd = () => {
-            if (!isTouching) return;
-            isTouching = false;
-            card.style.transition = 'transform 0.2s cubic-bezier(0.25, 1, 0.5, 1)';
+        const endAction = () => {
+            if (!isDragging) return;
+            isDragging = false;
+            card.style.transition = 'transform 0.25s cubic-bezier(0.25, 1, 0.5, 1)';
 
-            if (currentX < -38) {
-                // Swipe ke kiri tercapai -> Tampilkan tombol merah
+            if (currentX < -40) {
+                // Swipe ke kiri berhasil -> Buka tombol merah
                 card.style.transform = `translateX(-${maxSwipe}px)`;
                 card.dataset.swipedOpen = 'true';
                 closeOtherSwipedCards(card);
             } else {
-                // Kembalikan ke posisi awal
+                // Kembali ke posisi awal
                 card.style.transform = 'translateX(0px)';
                 delete card.dataset.swipedOpen;
             }
         };
 
-        card.addEventListener('touchstart', onTouchStart, { passive: true });
-        card.addEventListener('touchmove', onTouchMove, { passive: false });
-        card.addEventListener('touchend', onTouchEnd, { passive: true });
-        card.addEventListener('touchcancel', onTouchEnd, { passive: true });
+        // Touch event handlers
+        card.addEventListener('touchstart', (e) => {
+            const pt = e.touches ? e.touches[0] : e;
+            startAction(pt.clientX, pt.clientY);
+        }, { passive: true });
+
+        card.addEventListener('touchmove', (e) => {
+            const pt = e.touches ? e.touches[0] : e;
+            moveAction(pt.clientX, pt.clientY, e);
+        }, { passive: false });
+
+        card.addEventListener('touchend', endAction, { passive: true });
+        card.addEventListener('touchcancel', endAction, { passive: true });
+
+        // Mouse drag handlers untuk desktop
+        card.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return; // hanya klik kiri
+            startAction(e.clientX, e.clientY);
+
+            const onMouseMove = (moveEvt) => {
+                moveAction(moveEvt.clientX, moveEvt.clientY, moveEvt);
+            };
+
+            const onMouseUp = () => {
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+                endAction();
+            };
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
     });
 }
 
@@ -6954,7 +7649,7 @@ function closeOtherSwipedCards(exceptCard) {
     const cards = document.querySelectorAll('.user-swipe-item');
     cards.forEach(c => {
         if (c !== exceptCard && c.dataset.swipedOpen === 'true') {
-            c.style.transition = 'transform 0.2s cubic-bezier(0.25, 1, 0.5, 1)';
+            c.style.transition = 'transform 0.25s cubic-bezier(0.25, 1, 0.5, 1)';
             c.style.transform = 'translateX(0px)';
             delete c.dataset.swipedOpen;
         }
@@ -6968,7 +7663,7 @@ function handleUserCardClick(event, encodedUsername) {
 
     // Jika sedang dalam kondisi terbuka karena swipe, klik kartu hanya menutupnya kembali
     if (card && card.dataset.swipedOpen === 'true') {
-        card.style.transition = 'transform 0.2s cubic-bezier(0.25, 1, 0.5, 1)';
+        card.style.transition = 'transform 0.25s cubic-bezier(0.25, 1, 0.5, 1)';
         card.style.transform = 'translateX(0px)';
         delete card.dataset.swipedOpen;
         return;
@@ -6991,35 +7686,41 @@ function confirmDeleteConversationHistory(encodedUsername, fullName) {
     const username = decodeURIComponent(encodedUsername);
     if (!username) return;
     const displayName = fullName ? decodeURIComponent(fullName) : username;
+    const normUser = username.trim().toLowerCase();
 
     showCustomConfirmModal(
         'Hapus Riwayat Percakapan?',
-        `Apakah Anda yakin ingin menghapus SELURUH riwayat percakapan dengan "${escapeHtml(displayName)}"?\n\nSemua pesan yang dikirim dan diterima akan dihapus secara permanen dari database.`,
+        `Apakah Anda yakin ingin menghapus SELURUH riwayat percakapan dengan "${escapeHtml(displayName)}"?\n\nSemua pesan yang dikirim dan diterima akan dihapus secara permanen dari database Firebase.`,
         'Hapus Riwayat',
         async () => {
             try {
-                showToast('Menghapus riwayat percakapan...', 'info');
+                showToast('Menghapus riwayat percakapan dari database...', 'info');
                 await deleteUserConversationHistory(username);
 
-                // Bersihkan pesan jika user yang sedang aktif di chat adalah user ini
-                if (currentSelectedAdminChatUser && currentSelectedAdminChatUser.username.toLowerCase() === username.toLowerCase()) {
+                // 1. Bersihkan array pesan memori
+                if (currentSelectedAdminChatUser && currentSelectedAdminChatUser.username.toLowerCase() === normUser) {
                     currentAdminThreadMessages = [];
                     renderAdminThreadMessages();
+                    // Re-subscribe agar sync Firestore bersih
+                    subscribeAdminToUserThread(username);
                 }
 
-                // Update list dan badge
-                adminConversationsList = adminConversationsList.filter(c => c.username.toLowerCase() !== username.toLowerCase());
-                if (adminUnreadPerUser[username]) {
-                    delete adminUnreadPerUser[username];
-                }
+                // 2. Hapus dari riwayat adminConversationsList lokal
+                adminConversationsList = adminConversationsList.filter(c => c.username.toLowerCase() !== normUser);
+
+                // 3. Reset unread counter
+                if (adminUnreadPerUser[username]) delete adminUnreadPerUser[username];
+                if (adminUnreadPerUser[normUser]) delete adminUnreadPerUser[normUser];
                 unreadAdminCount = Object.values(adminUnreadPerUser).reduce((a, b) => a + b, 0);
                 updateChatUnreadBadges();
+
+                // 4. Render ulang daftar pengguna (status pesan terakhir otomatis kembali menjadi "Belum ada percakapan")
                 renderAdminConversationsSidebar();
 
-                showToast(`Riwayat percakapan dengan "${displayName}" berhasil dihapus`, 'success');
+                showToast(`Riwayat percakapan dengan "${displayName}" berhasil dihapus bersih dari database`, 'success');
             } catch (err) {
                 console.error('Gagal menghapus riwayat percakapan:', err);
-                showToast('Gagal menghapus riwayat percakapan. Periksa koneksi internet.', 'error');
+                showToast('Gagal menghapus riwayat percakapan. Periksa koneksi database.', 'error');
             }
         }
     );
@@ -7059,6 +7760,7 @@ function updateAdminChatHeaderUI(user) {
     }
     if (deleteBtn) {
         deleteBtn.classList.remove('hidden-view');
+        deleteBtn.classList.add('inline-flex');
     }
 }
 
@@ -7975,4 +8677,40 @@ window.loadProduk = loadProduk;
 window.renderListProduk = renderListProduk;
 window.loadProdukKasir = loadProdukKasir;
 window.renderKasirProdukList = renderKasirProdukList;
+
+// Cabang & Real-Time Dashboard Bindings
+window.selectLoginBranch = selectLoginBranch;
+window.renderLoginBranchChips = renderLoginBranchChips;
+window.selectRegisterBranch = selectRegisterBranch;
+window.renderRegisterBranchChips = renderRegisterBranchChips;
+window.selectDashboardBranch = selectDashboardBranch;
+window.renderDashboardBranchChips = renderDashboardBranchChips;
+window.openAddBranchModal = openAddBranchModal;
+window.handleAddNewBranchSubmit = handleAddNewBranchSubmit;
+window.populateCabangFilterDashboard = populateCabangFilterDashboard;
+window.populateKasirFilterDashboard = populateKasirFilterDashboard;
+window.setDashboardPeriodMode = setDashboardPeriodMode;
+window.resetDateFilter = resetDateFilter;
+window.syncRealtimeDashboardNow = syncRealtimeDashboardNow;
+window.initBranchSystem = initBranchSystem;
+window.initRealtimeTransactionsListener = initRealtimeTransactionsListener;
+window.updateDashboardCharts = updateDashboardCharts;
+window.renderDashboardSalesCharts = renderDashboardSalesCharts;
+
+// Inisialisasi awal saat dokumen siap
+if (typeof document !== 'undefined') {
+    const startInitialFlow = () => {
+        initBranchSystem();
+        checkAutoLogin();
+        // Inisialisasi listener transaksi real-time
+        initRealtimeTransactionsListener();
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', startInitialFlow);
+    } else {
+        startInitialFlow();
+    }
+}
+
 
