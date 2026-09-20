@@ -3909,6 +3909,13 @@ async function generateSlip(e) {
                 'Link PDF': res.pdfUrl || '#'
             };
 
+            LAST_ACTIVE_SLIP = slipObj;
+
+            const btnPreviewSlip = document.getElementById('btn-preview-slip');
+            if (btnPreviewSlip) {
+                btnPreviewSlip.onclick = () => previewSlipGajiModal(slipObj);
+            }
+
             const linkPdf = document.getElementById('link-pdf');
             if (linkPdf) {
                 linkPdf.onclick = (ev) => {
@@ -3926,6 +3933,10 @@ async function generateSlip(e) {
 
             showToast(res.message, 'success'); 
             HISTORI_GAJI_CACHE = []; 
+            // Tampilkan pratinjau modal slip gaji secara otomatis
+            setTimeout(() => {
+                previewSlipGajiModal(slipObj);
+            }, 300); 
         } else { 
             showToast(res.message, 'error'); 
         } 
@@ -4733,89 +4744,306 @@ function resetCart() {
 }
 
 // ==========================================
-// FEATURE: CETAK / LIHAT NOTA PDF
+// FEATURE: CETAK / LIHAT NOTA PENJUALAN RESMI (PERSIS SEPERTI GAMBAR REFERENSI)
 // ==========================================
 function generateReceiptHTML(trx) {
-    const itemsHtml = (trx.items || []).map(it => `
-        <tr style="border-bottom: 1px dashed #e5e7eb;">
-            <td style="padding: 4px 0; font-weight: bold; color: #1f2937;">${it.nama}</td>
-            <td style="padding: 4px 0; text-align: center; color: #4b5563;">${it.qty}</td>
-            <td style="padding: 4px 0; text-align: right; color: #4b5563;">${formatRupiah(it.harga)}</td>
-            <td style="padding: 4px 0; text-align: right; font-weight: bold; color: #111827;">${formatRupiah(it.qty * it.harga)}</td>
+    const items = trx.items || [];
+    const logoUrl = '/assets/logo-istana-bubur.png';
+    const fallbackLogo = 'https://lh3.googleusercontent.com/d/1raKw_On7XyxlT5Oqz45gAIDmb0eUinMc';
+
+    // Format TRX ID: "TRX-670231"
+    let idStr = String(trx.id || '');
+    if (!idStr.startsWith('TRX')) {
+        idStr = 'TRX-' + idStr.replace(/^#/, '');
+    }
+
+    // Format Tanggal: "17/9/2026 12:17"
+    let tglStr = trx.tanggal || '';
+    if (!tglStr) {
+        const now = new Date();
+        tglStr = `${now.getDate()}/${now.getMonth()+1}/${now.getFullYear()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    }
+
+    const kasirStr = trx.kasir || (CURRENT_USER ? CURRENT_USER.nama : 'Admin');
+    const pelangganStr = trx.nama_pelanggan || 'Umum';
+
+    const itemsRowsHtml = items.map(it => `
+        <tr style="border-bottom: 1px solid #e5e7eb; page-break-inside: avoid; break-inside: avoid;">
+            <td style="padding: 8px 6px; font-weight: 600; color: #111827; text-align: left; vertical-align: middle; word-break: break-word;">${it.nama || 'Produk'}</td>
+            <td style="padding: 8px 6px; text-align: center; color: #111827; font-weight: 500; vertical-align: middle; white-space: nowrap;">${it.qty || 1}</td>
+            <td style="padding: 8px 6px; text-align: right; color: #111827; font-weight: 500; vertical-align: middle; white-space: nowrap;">Rp ${formatRupiah(it.harga || 0)}</td>
+            <td style="padding: 8px 6px; text-align: right; font-weight: 700; color: #111827; vertical-align: middle; white-space: nowrap;">Rp ${formatRupiah((it.qty || 1) * (it.harga || 0))}</td>
         </tr>
     `).join('');
 
+    // Optional Ongkir row jika ada
+    let ongkirRowHtml = '';
+    if (trx.ongkir && Number(trx.ongkir) > 0) {
+        ongkirRowHtml = `
+        <tr style="border-bottom: 1px solid #e5e7eb; page-break-inside: avoid; break-inside: avoid;">
+            <td style="padding: 8px 6px; font-weight: 600; color: #111827; text-align: left; vertical-align: middle;">Ongkir</td>
+            <td style="padding: 8px 6px; text-align: center; color: #111827; font-weight: 500; vertical-align: middle; white-space: nowrap;">1</td>
+            <td style="padding: 8px 6px; text-align: right; color: #111827; font-weight: 500; vertical-align: middle; white-space: nowrap;">Rp ${formatRupiah(trx.ongkir)}</td>
+            <td style="padding: 8px 6px; text-align: right; font-weight: 700; color: #111827; vertical-align: middle; white-space: nowrap;">Rp ${formatRupiah(trx.ongkir)}</td>
+        </tr>`;
+    }
+
+    const totalVal = Number(trx.total || 0);
+    const bayarVal = (trx.bayar !== undefined && trx.bayar !== null && trx.bayar !== '') ? Number(trx.bayar) : totalVal;
+    const kembaliVal = (trx.kembali !== undefined && trx.kembali !== null && trx.kembali !== '') ? Number(trx.kembali) : Math.max(0, bayarVal - totalVal);
+
     return `
-        <div id="pdf-receipt-content" style="width: 320px; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #ffffff; padding: 20px; box-sizing: border-box; color: #1f2937; line-height: 1.4;">
-            <div style="text-align: center; margin-bottom: 12px; border-bottom: 2px dashed #9ca3af; padding-bottom: 12px;">
-                <h1 style="font-size: 20px; font-weight: 800; margin: 0; color: #dc2626; letter-spacing: 1px;">ISTANA BUBUR</h1>
-                <p style="font-size: 11px; font-weight: 600; color: #4b5563; margin: 2px 0;">Sistem Manajemen & Kasir</p>
-                <p style="font-size: 10px; color: #6b7280; margin: 2px 0;">Outlet: ${trx.cabang || 'Pusat'}</p>
+        <div id="pdf-receipt-content" style="width: 760px; max-width: 100%; min-height: 1040px; font-family: -apple-system, BlinkMacSystemFont, Arial, sans-serif; background: #ffffff; padding: 36px 42px 32px 42px; box-sizing: border-box; color: #111827; line-height: 1.4; border: 1px solid #e5e7eb; position: relative; margin: 0 auto; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border-radius: 4px;">
+            
+            <!-- WATERMARK LOGO DI TENGAH SESUAI GAMBAR REFERENSI -->
+            <div style="position: absolute; top: 480px; left: 50%; transform: translate(-50%, -50%); width: 420px; height: 420px; opacity: 0.06; pointer-events: none; z-index: 0; display: flex; align-items: center; justify-content: center;">
+                <img src="${logoUrl}" onerror="this.src='${fallbackLogo}'" style="max-width: 100%; max-height: 100%; object-fit: contain;" alt="Watermark Istana Bubur">
             </div>
 
-            <div style="font-size: 11px; margin-bottom: 12px; border-bottom: 1px dashed #d1d5db; padding-bottom: 8px;">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                    <span style="color: #6b7280;">No. Trx:</span>
-                    <span style="font-weight: 700; color: #111827;">#${trx.id}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                    <span style="color: #6b7280;">Tanggal:</span>
-                    <span>${trx.tanggal || getTodayStringFormatted()}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                    <span style="color: #6b7280;">Kasir:</span>
-                    <span>${trx.kasir || '-'}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                    <span style="color: #6b7280;">Pelanggan:</span>
-                    <span style="font-weight: 600;">${trx.nama_pelanggan || 'Umum'}</span>
-                </div>
-                ${trx.no_wa ? `<div style="display: flex; justify-content: space-between; margin-bottom: 2px;"><span style="color: #6b7280;">No. WA:</span><span>${trx.no_wa}</span></div>` : ''}
-                ${trx.jenis_pesanan ? `<div style="display: flex; justify-content: space-between; margin-bottom: 2px;"><span style="color: #6b7280;">Tipe:</span><span style="background: #fef2f2; color: #b91c1c; padding: 1px 6px; border-radius: 4px; font-weight: 600;">${trx.jenis_pesanan}</span></div>` : ''}
-                ${trx.keterangan ? `<div style="display: flex; justify-content: space-between; margin-bottom: 2px;"><span style="color: #6b7280;">Catatan:</span><span>${trx.keterangan}</span></div>` : ''}
-            </div>
+            <!-- KONTEN UTAMA DOKUMEN (z-index: 1) -->
+            <div style="position: relative; z-index: 1;">
 
-            <table style="width: 100%; font-size: 11px; border-collapse: collapse; margin-bottom: 12px;">
-                <thead>
-                    <tr style="border-bottom: 1px solid #9ca3af; color: #6b7280; font-size: 10px; text-transform: uppercase;">
-                        <th style="text-align: left; padding-bottom: 4px;">Item</th>
-                        <th style="text-align: center; padding-bottom: 4px;">Qty</th>
-                        <th style="text-align: right; padding-bottom: 4px;">Harga</th>
-                        <th style="text-align: right; padding-bottom: 4px;">Subtotal</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${itemsHtml}
-                </tbody>
-            </table>
+                <!-- HEADER RESMI: LOGO KIRI, IDENTITAS KANAN PERSIS GAMBAR -->
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; page-break-inside: avoid; break-inside: avoid;">
+                    <!-- Logo Istana Bubur Kiri -->
+                    <div style="width: 160px; height: 90px; display: flex; align-items: center;">
+                        <img src="${logoUrl}" onerror="this.src='${fallbackLogo}'" style="max-width: 155px; max-height: 85px; object-fit: contain;" alt="Logo Istana Bubur">
+                    </div>
 
-            <div style="border-top: 2px dashed #9ca3af; padding-top: 8px; margin-bottom: 14px; font-size: 11px;">
-                <div style="display: flex; justify-content: space-between; font-size: 14px; font-weight: 800; margin-bottom: 6px; color: #111827;">
-                    <span>TOTAL</span>
-                    <span style="color: #16a34a;">Rp ${formatRupiah(trx.total)}</span>
+                    <!-- Info Brand Kanan -->
+                    <div style="text-align: right;">
+                        <h1 style="font-family: Arial, Helvetica, sans-serif; font-size: 28px; font-weight: 900; color: #a11d20; letter-spacing: 0.5px; margin: 0 0 4px 0; text-transform: uppercase; line-height: 1.1;">ISTANA BUBUR</h1>
+                        <div style="font-size: 12px; color: #374151; margin-top: 2px; line-height: 1.4;">Jln. Ki Hajar Dewantoro 1 No.27 Kel. Gunung Kelua</div>
+                        <div style="font-size: 12px; color: #374151; line-height: 1.4;">Kecamatan Samarinda Ulu, Samarinda, Kalimantan Timur</div>
+                        
+                        <!-- Social Media & Kontak Icons -->
+                        <div style="display: flex; justify-content: flex-end; align-items: center; gap: 14px; margin-top: 8px; font-size: 11.5px; color: #374151; flex-wrap: wrap;">
+                            <span style="display: inline-flex; align-items: center; gap: 5px;">
+                                <i class="fab fa-whatsapp" style="color: #25d366; font-size: 14px;"></i> 0857-5408-7689
+                            </span>
+                            <span style="display: inline-flex; align-items: center; gap: 5px;">
+                                <i class="fab fa-instagram" style="color: #e1306c; font-size: 14px;"></i> @istanabuburr_
+                            </span>
+                            <span style="display: inline-flex; align-items: center; gap: 5px;">
+                                <i class="fab fa-tiktok" style="color: #000000; font-size: 13px;"></i> @istanabubur
+                            </span>
+                            <span style="display: inline-flex; align-items: center; gap: 5px;">
+                                <i class="fab fa-facebook" style="color: #1877f2; font-size: 14px;"></i> Mila
+                            </span>
+                        </div>
+                    </div>
                 </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 3px; color: #4b5563;">
-                    <span>Metode Pembayaran:</span>
-                    <span style="font-weight: 600;">${trx.metode || 'Cash'}</span>
-                </div>
-                ${trx.bayar ? `
-                <div style="display: flex; justify-content: space-between; margin-bottom: 3px; color: #4b5563;">
-                    <span>Bayar / Tunai:</span>
-                    <span>Rp ${formatRupiah(trx.bayar)}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; color: #4b5563;">
-                    <span>Kembalian:</span>
-                    <span style="font-weight: 600;">Rp ${formatRupiah(trx.kembali)}</span>
-                </div>` : ''}
-            </div>
 
-            <div style="text-align: center; border-top: 1px dashed #d1d5db; padding-top: 12px; font-size: 11px; color: #4b5563;">
-                <p style="margin: 2px 0; font-weight: 700; color: #111827;">TERIMA KASIH ATAS KUNJUNGAN ANDA</p>
-                <p style="margin: 2px 0; font-size: 10px; color: #6b7280;">Selamat Menikmati Hidangan Istana Bubur</p>
+                <!-- GARIS HORIZONTAL MERAH TEBAL PEMBATAS KOP NOTA -->
+                <div style="border-bottom: 4px solid #a11d20; margin-top: 12px; margin-bottom: 22px;"></div>
+
+                <!-- JUDUL DOKUMEN: NOTA PENJUALAN -->
+                <div style="text-align: center; margin-bottom: 22px; page-break-inside: avoid; break-inside: avoid;">
+                    <h2 style="font-family: Arial, Helvetica, sans-serif; font-size: 22px; font-weight: 900; color: #a11d20; letter-spacing: 3px; margin: 0; text-transform: uppercase;">NOTA PENJUALAN</h2>
+                </div>
+
+                <!-- METADATA TRANSAKSI (2 KOLOM: KIRI NO TRX & TANGGAL, KANAN KASIR & PELANGGAN) -->
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; font-size: 13px; color: #111827; page-break-inside: avoid; break-inside: avoid;">
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <div style="display: flex; gap: 10px;">
+                            <span style="min-width: 105px; color: #4b5563;">No. Transaksi</span>
+                            <span>:</span>
+                            <span style="font-weight: 700; color: #111827;">${idStr}</span>
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <span style="min-width: 105px; color: #4b5563;">Tanggal</span>
+                            <span>:</span>
+                            <span style="color: #111827;">${tglStr}</span>
+                        </div>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 6px; text-align: right;">
+                        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                            <span style="color: #4b5563;">Kasir</span>
+                            <span>:</span>
+                            <span style="font-weight: 700; color: #111827;">${kasirStr}</span>
+                        </div>
+                        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                            <span style="color: #4b5563;">Pelanggan</span>
+                            <span>:</span>
+                            <span style="font-weight: 700; color: #111827;">${pelangganStr}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TABEL DAFTAR PESANAN DENGAN GARIS TEBAL ATAS & BAWAH HEADER -->
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 13px;">
+                    <thead>
+                        <tr style="border-top: 2.5px solid #000000; border-bottom: 2.5px solid #000000; font-size: 12px; font-weight: 800; color: #000000; text-transform: uppercase; letter-spacing: 0.4px; page-break-inside: avoid; break-inside: avoid;">
+                            <th style="text-align: left; padding: 9px 8px;">NAMA PRODUK</th>
+                            <th style="text-align: center; padding: 9px 8px; width: 70px;">QTY</th>
+                            <th style="text-align: right; padding: 9px 8px; width: 130px;">HARGA</th>
+                            <th style="text-align: right; padding: 9px 8px; width: 140px;">SUBTOTAL</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${itemsRowsHtml}
+                        ${ongkirRowHtml}
+                    </tbody>
+                </table>
+
+                <!-- GARIS PEMISAH BAWAH TABEL -->
+                <div style="border-bottom: 1.5px solid #111827; margin-bottom: 16px;"></div>
+
+                <!-- BLOK RINGKASAN TOTAL & INFORMASI PEMBAYARAN: DIPROTEKSI DARI TUMPANG TINDIH & PAGE BREAK -->
+                <div style="page-break-inside: avoid; break-inside: avoid; margin-top: 8px;">
+
+                    <!-- RINGKASAN TOTAL BELANJA & PEMBAYARAN DI SISI KANAN -->
+                    <div style="display: flex; justify-content: flex-end; margin-bottom: 22px;">
+                        <div style="width: 320px; font-size: 13px;">
+                            <div style="display: flex; justify-content: space-between; padding: 4px 0; font-weight: 700; color: #111827;">
+                                <span>Total Belanja</span>
+                                <span>Rp ${formatRupiah(totalVal)}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; padding: 4px 0; color: #4b5563;">
+                                <span>Tunai / Bayar</span>
+                                <span>Rp ${formatRupiah(bayarVal)}</span>
+                            </div>
+                            <!-- Garis Hitam Tebal Di Atas Kembalian -->
+                            <div style="border-top: 2.5px solid #000000; margin: 6px 0;"></div>
+                            <div style="display: flex; justify-content: space-between; padding: 4px 0; font-weight: 900; font-size: 16px; color: #a11d20;">
+                                <span>Kembalian</span>
+                                <span>Rp ${formatRupiah(kembaliVal)}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- INFORMASI PEMBAYARAN (TRANSFER): FORMAT KARTU KOLOM BERSIH & RAPI PAS DI UKURAN A4 -->
+                    <div style="border: 1.5px solid #d1d5db; border-radius: 8px; padding: 14px 18px; margin-bottom: 22px; background: #ffffff;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px dashed #e5e7eb; padding-bottom: 6px;">
+                            <span style="font-weight: 800; color: #111827; font-size: 12.5px; letter-spacing: 0.3px; text-transform: uppercase;">
+                                <i class="fas fa-money-bill-wave" style="color: #a11d20; margin-right: 6px;"></i> INFORMASI PEMBAYARAN (Transfer)
+                            </span>
+                            <span style="font-size: 11px; color: #6b7280; font-weight: 500;">Silakan transfer sesuai total transaksi</span>
+                        </div>
+
+                        <!-- 2 Kolom Grid Kartu Rekening Presisi -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px;">
+                            <!-- Bank BCA -->
+                            <div style="border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 12px; background: #fbfbfb; display: flex; align-items: center; justify-content: space-between;">
+                                <div>
+                                    <div style="font-size: 10.5px; color: #6b7280; font-weight: 600; text-transform: uppercase;">A.N : JAMILAH</div>
+                                    <div style="font-size: 12px; font-weight: 800; color: #111827; margin-top: 1px;">BANK BCA</div>
+                                </div>
+                                <div style="font-family: 'Courier New', Courier, monospace; font-size: 13px; font-weight: 800; color: #003399; letter-spacing: 0.5px; background: #eef4ff; padding: 4px 8px; border-radius: 4px; border: 1px solid #d0e1fd;">
+                                    0842-5029-91
+                                </div>
+                            </div>
+
+                            <!-- Bank Mandiri -->
+                            <div style="border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 12px; background: #fbfbfb; display: flex; align-items: center; justify-content: space-between;">
+                                <div>
+                                    <div style="font-size: 10.5px; color: #6b7280; font-weight: 600; text-transform: uppercase;">A.N : JAMILAH</div>
+                                    <div style="font-size: 12px; font-weight: 800; color: #111827; margin-top: 1px;">BANK MANDIRI</div>
+                                </div>
+                                <div style="font-family: 'Courier New', Courier, monospace; font-size: 13px; font-weight: 800; color: #925800; letter-spacing: 0.5px; background: #fff8e8; padding: 4px 8px; border-radius: 4px; border: 1px solid #fae8b4;">
+                                    1220-0116-1259-8
+                                </div>
+                            </div>
+
+                            <!-- Bank BRI -->
+                            <div style="border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 12px; background: #fbfbfb; display: flex; align-items: center; justify-content: space-between;">
+                                <div>
+                                    <div style="font-size: 10.5px; color: #6b7280; font-weight: 600; text-transform: uppercase;">A.N : JAMILAH</div>
+                                    <div style="font-size: 12px; font-weight: 800; color: #111827; margin-top: 1px;">BANK BRI</div>
+                                </div>
+                                <div style="font-family: 'Courier New', Courier, monospace; font-size: 13px; font-weight: 800; color: #00529b; letter-spacing: 0.5px; background: #e8f4fc; padding: 4px 8px; border-radius: 4px; border: 1px solid #bde1f8;">
+                                    1195-0101-8099-504
+                                </div>
+                            </div>
+
+                            <!-- Bank BNI -->
+                            <div style="border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 12px; background: #fbfbfb; display: flex; align-items: center; justify-content: space-between;">
+                                <div>
+                                    <div style="font-size: 10.5px; color: #6b7280; font-weight: 600; text-transform: uppercase;">A.N : JAMILAH</div>
+                                    <div style="font-size: 12px; font-weight: 800; color: #111827; margin-top: 1px;">BANK BNI</div>
+                                </div>
+                                <div style="font-family: 'Courier New', Courier, monospace; font-size: 13px; font-weight: 800; color: #c44000; letter-spacing: 0.5px; background: #fff0eb; padding: 4px 8px; border-radius: 4px; border: 1px solid #ffd8c7;">
+                                    0711-2345-89
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- UCAPAN TERIMA KASIH & SLOGAN PERSIS GAMBAR REFERENSI -->
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <div style="font-size: 14.5px; font-weight: 800; font-style: italic; color: #111827; margin-bottom: 4px;">Terima Kasih Atas Kunjungan Anda</div>
+                        <div style="font-size: 12.5px; font-weight: 700; font-style: italic; color: #111827; margin-bottom: 6px;">Jangan lupa datang kembali &amp; nikmati menu favorit Anda bersama keluarga dan teman</div>
+                        <div style="font-size: 11px; color: #4b5563;">Kritik &amp; Saran : Email: istanabubur89@gmail.com | WhatsApp: 0857-5408-7689</div>
+                    </div>
+
+                    <!-- FOOTER DOKUMEN ELEKTRONIK RESMI PERSIS GAMBAR REFERENSI -->
+                    <div style="border-top: 1px solid #e5e7eb; padding-top: 12px; color: #4b5563;">
+                        <div style="font-size: 10.5px; font-weight: 800; color: #111827; text-transform: uppercase; margin-bottom: 3px;">DOKUMEN ELEKTRONIK RESMI</div>
+                        <div style="font-size: 10px; line-height: 1.45; color: #4b5563;">
+                            Nota ini dibuat dan diterbitkan secara elektronik oleh Sistem Istana Bubur. <strong>Keaslian dokumen ini dapat diverifikasi</strong>. Segala bentuk pemalsuan atau manipulasi data menjadi tanggung jawab pelaku dan akan diproses sesuai ketentuan hukum yang berlaku. <strong>Manajemen Istana Bubur</strong>.
+                        </div>
+                        <div style="font-size: 9px; color: #9ca3af; margin-top: 4px;">&copy; 2026 Istanabubur. Seluruh hak cipta dilindungi.</div>
+                    </div>
+
+                </div>
+
             </div>
         </div>
     `;
 }
+
+// Global variable untuk menyimpan nota transaksi terakhir yang dibuka / dibuat
+let LAST_ACTIVE_NOTA = null;
+
+function previewNotaModal(trxData) {
+    const trx = trxData || LAST_TRX_DATA || LAST_ACTIVE_NOTA;
+    if (!trx) {
+        showToast('Data transaksi tidak tersedia untuk dipratinjau', 'error');
+        return;
+    }
+    LAST_ACTIVE_NOTA = trx;
+    const body = document.getElementById('preview-nota-modal-body');
+    if (body) {
+        body.innerHTML = generateReceiptHTML(trx);
+    }
+    const title = document.getElementById('preview-nota-modal-title');
+    if (title) {
+        title.textContent = `Nota Penjualan - #${trx.id || ''} (${trx.nama_pelanggan || 'Pelanggan'})`;
+    }
+    const btnUnduh = document.getElementById('btn-modal-nota-unduh-pdf');
+    if (btnUnduh) {
+        btnUnduh.onclick = () => cetakNotaPDF(trx);
+    }
+    const btnBukaLuar = document.getElementById('btn-modal-nota-buka-luar');
+    if (btnBukaLuar) {
+        btnBukaLuar.onclick = () => openNotaOutside(trx);
+    }
+    const btnWa = document.getElementById('btn-modal-nota-kirim-wa');
+    if (btnWa) {
+        btnWa.onclick = () => kirimWhatsApp(trx);
+    }
+    openModal('modal-preview-nota');
+}
+
+window.previewNotaModal = previewNotaModal;
+
+async function openNotaOutside(trxData) {
+    const trx = trxData || LAST_TRX_DATA || LAST_ACTIVE_NOTA;
+    if (!trx) {
+        showToast('Data transaksi tidak ditemukan', 'error');
+        return;
+    }
+    showToast('Menyiapkan nota untuk dibuka di luar aplikasi...', 'info');
+    await openDocPdfOutsideApp({
+        type: 'nota',
+        filename: `Nota_${trx.id || 'Penjualan'}.pdf`,
+        title: `Nota Penjualan #${trx.id || ''}`,
+        htmlContent: generateReceiptHTML(trx),
+        phone: trx.no_wa || '',
+        waMessage: generateReceiptWhatsAppMessage(trx)
+    });
+}
+window.openNotaOutside = openNotaOutside;
 
 // ==========================================
 // FEATURE: CETAK / LIHAT NOTA PDF & WHATSAPP (ANDROID APK & WEB READY)
@@ -5096,11 +5324,12 @@ async function cetakNotaPDF(data = null) {
     const waMessage = generateReceiptWhatsAppMessage(trx);
 
     const jsPdfOpt = {
-        margin: [4, 4, 4, 4],
+        margin: [6, 6, 6, 6],
         filename: filename,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true, letterRendering: true },
-        jsPDF: { unit: 'mm', format: [80, Math.max(160, 90 + ((trx.items?.length || 1) * 14))], orientation: 'portrait' }
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
     };
 
     await openDocPdfOutsideApp({
@@ -5328,13 +5557,13 @@ function renderHistoriTransaksi() {
                     ${extractJenis ? `<span class="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[9px] font-semibold">${extractJenis}</span>` : ''} 
                 </div>
 
-                <!-- Action Buttons: Cetak Struk, PDF, WA, & Hapus (Khusus Admin) -->
+                <!-- Action Buttons: Struk (Bluetooth), Lihat PDF, WA, & Hapus (Khusus Admin) -->
                 <div class="flex items-center gap-1.5 flex-wrap">
                     <button onclick="reprintStrukTrx('${idTrx}')" title="Cetak ke Printer Bluetooth" class="bg-gray-900 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-gray-800 active:scale-95 transition font-bold text-[10px]">
                         <i class="fas fa-print"></i> Struk
                     </button>
-                    <button onclick="cetakNotaPDFFromHistory('${idTrx}')" title="Lihat / Download Nota PDF" class="bg-red-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-red-700 active:scale-95 transition font-bold text-[10px]">
-                        <i class="fas fa-file-pdf"></i> PDF
+                    <button onclick="previewNotaFromHistory('${idTrx}')" title="Lihat Dokumen PDF Resmi" class="bg-red-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-red-700 active:scale-95 transition font-bold text-[10px]">
+                        <i class="fas fa-file-pdf"></i> Lihat PDF
                     </button>
                     <button onclick="kirimWhatsAppFromHistory('${idTrx}')" title="Kirim Nota via WhatsApp" class="bg-emerald-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-emerald-700 active:scale-95 transition font-bold text-[10px]">
                         <i class="fab fa-whatsapp"></i> WA
@@ -5437,6 +5666,15 @@ function getTrxDataFromHistory(idTrx) {
     };
 }
 
+function previewNotaFromHistory(idTrx) {
+    const data = getTrxDataFromHistory(idTrx);
+    if (!data) {
+        showToast('Data transaksi tidak ditemukan', 'error');
+        return;
+    }
+    previewNotaModal(data);
+}
+
 function cetakNotaPDFFromHistory(idTrx) {
     const data = getTrxDataFromHistory(idTrx);
     if (!data) {
@@ -5536,8 +5774,11 @@ function renderHistoriGaji() {
                 </div>
             </div>
 
-            <!-- Tombol Aksi: Lihat/Download PDF, Kirim Slip Gaji ke WhatsApp Karyawan, & Hapus -->
+            <!-- Tombol Aksi: Lihat Pratinjau, Download PDF, Kirim WhatsApp Karyawan, & Hapus -->
             <div class="flex items-center gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-100 flex-wrap">
+                <button onclick="previewSlipGajiFromHistori(${idx})" title="Lihat Pratinjau Slip Gaji Resmi" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
+                    <i class="fas fa-eye text-white"></i> Lihat
+                </button>
                 <button onclick="lihatPdfSlipGaji(${idx})" title="Lihat / Unduh Slip Gaji PDF" class="bg-gray-900 hover:bg-gray-800 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
                     <i class="fas fa-file-pdf text-red-400"></i> PDF
                 </button>
@@ -5595,7 +5836,7 @@ function confirmHapusHistoriGaji(idx) {
     if (modalConfirm) modalConfirm.classList.remove('hidden-view');
 }
 
-// Function: Format Slip Gaji HTML for display, print, and PDF
+// Function: Format Slip Gaji HTML for display, print, and PDF - Sesuai Persis dengan Desain Resmi & TTD Owner
 function generateSlipGajiHTML(t) {
     const bonus = Number(t['Bonus']) || 0;
     const potongan = Number(t['Potongan']) || 0;
@@ -5603,68 +5844,225 @@ function generateSlipGajiHTML(t) {
     const harian = Number(t['Gaji Harian']) || 0;
     const hari = Number(t['Hari Masuk']) || 0;
     const pokok = (harian && hari) ? (harian * hari) : (totalGaji - bonus + potongan);
-    const bulanFormatted = formatBulanIndo(t['Bulan']);
+    
+    // Format Periode (contoh: 2026-09)
+    let rawBulan = t['Bulan'] || '';
+    let periodeDisplay = rawBulan;
+    
+    // Format Tanggal Cetak (contoh: 17/9/2026)
+    let tglCetak = t['Tanggal Cetak'];
+    if (!tglCetak) {
+        const now = new Date();
+        tglCetak = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`;
+    }
+
+    // Hitung atau tampilkan keterangan hari tidak kerja
+    let ketLibur = (t['Keterangan Libur'] || '').trim();
+    if (!ketLibur) {
+        let daysInMonth = 30;
+        if (rawBulan && rawBulan.includes('-')) {
+            const parts = rawBulan.split('-');
+            const yr = parseInt(parts[0], 10);
+            const mo = parseInt(parts[1], 10);
+            if (!isNaN(yr) && !isNaN(mo)) {
+                daysInMonth = new Date(yr, mo, 0).getDate();
+            }
+        }
+        if (hari > 0 && hari < daysInMonth) {
+            const tidakKerja = daysInMonth - hari;
+            ketLibur = `Tidak Kerja (${tidakKerja} Hari)`;
+        } else if (hari >= daysInMonth) {
+            ketLibur = 'Hadir Penuh';
+        }
+    }
+
+    const nama = t['Nama'] || '-';
+    const jabatan = t['Jabatan'] || 'Dapur Bubur';
+    const cabang = t['Cabang'] || 'Samarinda';
+
+    // SVG Tanda Tangan Owner Jamilah (Vector crisp, transparent, 100% sama persis dengan TTD JAMILAH.png - Single Clean Stroke)
+    const ttdSvg = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 250" style="max-height: 64px; max-width: 170px; height: 100%; width: 100%; display: block;" fill="none">
+      <path d="M 182 32 C 187 23 194 21 200 25 C 204 20 211 20 215 26" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M 28 126 C 12 108 26 78 78 62 C 135 46 198 62 216 88 C 228 106 210 134 162 148 C 112 162 38 158 18 138 C 8 126 14 110 48 92" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M 160 34 C 148 78 114 162 90 218 C 82 234 88 242 100 238 C 114 232 132 208 148 168 C 168 118 180 68 172 38 C 168 32 160 30 156 36" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M 68 68 C 105 64 155 65 198 68" stroke="#000000" stroke-width="3.5" stroke-linecap="round" />
+      <path d="M 160 120 L 174 72 L 184 122 L 196 72 L 206 122 L 218 72 L 228 122" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M 194 125 L 285 128" stroke="#000000" stroke-width="3.8" stroke-linecap="round" />
+      <path d="M 228 122 C 235 90 248 55 258 48 C 265 52 260 75 250 115 C 232 178 212 232 205 244 C 200 250 205 255 212 250 C 225 240 250 190 272 130 C 290 82 304 48 296 46 C 288 46 280 68 276 102 C 274 120 282 125 298 120 C 320 112 355 118 395 118 C 415 118 435 117 448 118" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>`;
+
+    const logoUrl = '/assets/logo-istana-bubur.png';
+    const fallbackLogo = 'https://lh3.googleusercontent.com/d/1raKw_On7XyxlT5Oqz45gAIDmb0eUinMc';
 
     return `
-        <div style="width: 420px; font-family: 'Inter', -apple-system, sans-serif; background: #ffffff; padding: 24px; box-sizing: border-box; color: #1f2937; line-height: 1.5; border: 1px solid #e5e7eb;">
-            <div style="text-align: center; border-bottom: 2px solid #dc2626; padding-bottom: 12px; margin-bottom: 16px;">
-                <h1 style="font-size: 20px; font-weight: 800; margin: 0; color: #dc2626; letter-spacing: 1px;">ISTANA BUBUR</h1>
-                <p style="font-size: 11px; font-weight: 700; color: #374151; margin: 3px 0; text-transform: uppercase;">SLIP GAJI KARYAWAN RESMI</p>
-                <p style="font-size: 10px; color: #6b7280; margin: 0;">Periode: ${bulanFormatted}</p>
+    <div class="slip-gaji-container" style="width: 535px; max-width: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; background: #ffffff; padding: 26px 30px 22px 30px; box-sizing: border-box; color: #111827; line-height: 1.4; border: 1px solid #d1d5db; position: relative; overflow: hidden; margin: 0 auto; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border-radius: 4px;">
+        
+        <!-- Watermark Logo di Bagian Tengah Latar Belakang Sesuai Gambar Referensi -->
+        <div style="position: absolute; top: 48%; left: 50%; transform: translate(-50%, -50%); width: 330px; height: 330px; opacity: 0.10; pointer-events: none; z-index: 0; display: flex; align-items: center; justify-content: center;">
+            <img src="${logoUrl}" onerror="this.src='${fallbackLogo}'" style="max-width: 100%; max-height: 100%; object-fit: contain;" alt="Watermark Istana Bubur">
+        </div>
+
+        <!-- Konten Dokumen Utama (z-index: 1 di atas watermark) -->
+        <div style="position: relative; z-index: 1;">
+            
+            <!-- HEADER / KOP DOKUMEN -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <!-- Logo Istana Bubur Kiri -->
+                <div style="width: 110px; height: 70px; display: flex; align-items: center;">
+                    <img src="${logoUrl}" onerror="this.src='${fallbackLogo}'" style="max-width: 105px; max-height: 68px; object-fit: contain;" alt="Logo Istana Bubur">
+                </div>
+                <!-- Info Perusahaan Kanan Sesuai Gambar Referensi -->
+                <div style="text-align: right; font-family: Arial, Helvetica, sans-serif;">
+                    <div style="font-size: 21px; font-weight: 900; color: #004b87; letter-spacing: 0.5px; text-transform: uppercase; line-height: 1.1;">ISTANA BUBUR</div>
+                    <div style="font-size: 9.5px; font-style: italic; color: #4b5563; margin-top: 3px; line-height: 1.25;">Jln. Ki Hajar Dewantoro 1 No.27 Kelurahan Gunung Kelua, Kecamatan Samarinda Ulu, Samarinda,<br>Kalimantan Timur</div>
+                    <div style="font-size: 10px; font-weight: 700; color: #1f2937; margin-top: 3px;">Sistem Payroll &amp; Manajemen SDM Pusat</div>
+                    <div style="font-size: 9px; color: #4b5563; margin-top: 2px;">WhatsApp: +62 817-0330-3015 &bull; Email: istanabubur89@gmail.com</div>
+                </div>
             </div>
 
-            <div style="font-size: 11px; margin-bottom: 14px; background: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0;">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                    <span style="color: #64748b;">Nama Karyawan:</span>
-                    <span style="font-weight: 700; color: #0f172a;">${t['Nama']}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                    <span style="color: #64748b;">Jabatan:</span>
-                    <span style="font-weight: 600; color: #334155;">${t['Jabatan'] || '-'}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                    <span style="color: #64748b;">Lokasi Penempatan:</span>
-                    <span style="font-weight: 600; color: #334155;">${t['Cabang'] || 'Pusat'}</span>
-                </div>
-                ${t['No WA'] ? `<div style="display: flex; justify-content: space-between;"><span style="color: #64748b;">No. WhatsApp:</span><span style="font-weight: 600; color: #334155;">${t['No WA']}</span></div>` : ''}
+            <!-- Garis Pembatas Header -->
+            <div style="border-bottom: 1px solid #cbd5e1; margin-bottom: 14px;"></div>
+
+            <!-- JUDUL DOKUMEN & PERIODE -->
+            <div style="text-align: center; margin-bottom: 16px;">
+                <div style="font-size: 15px; font-weight: 800; color: #000000; letter-spacing: 0.5px; text-transform: uppercase;">SLIP GAJI KARYAWAN</div>
+                <div style="font-size: 11px; color: #374151; margin-top: 2px; font-weight: 500;">Periode: ${periodeDisplay}</div>
             </div>
 
-            <table style="width: 100%; font-size: 11px; border-collapse: collapse; margin-bottom: 14px;">
+            <!-- INFORMASI KARYAWAN (2 Kolom Kiri & Kanan) -->
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; font-size: 11px; margin-bottom: 14px;">
+                <table style="border-collapse: collapse; font-size: 11px; line-height: 1.5;">
+                    <tr>
+                        <td style="font-weight: 700; color: #000000; padding: 1px 12px 1px 0; white-space: nowrap;">Nama Karyawan:</td>
+                        <td style="color: #111827; padding: 1px 0;">${nama}</td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 700; color: #000000; padding: 1px 12px 1px 0; white-space: nowrap;">Jabatan:</td>
+                        <td style="color: #111827; padding: 1px 0;">${jabatan}</td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 700; color: #000000; padding: 1px 12px 1px 0; white-space: nowrap;">Cabang Kerja:</td>
+                        <td style="color: #111827; padding: 1px 0;">${cabang}</td>
+                    </tr>
+                </table>
+                <div style="font-size: 11px; white-space: nowrap; padding-top: 1px;">
+                    <span style="font-weight: 700; color: #000000;">Tanggal Cetak:</span>
+                    <span style="color: #111827; margin-left: 4px;">${tglCetak}</span>
+                </div>
+            </div>
+
+            <!-- TABEL RINCIAN GAJI PERSIS SEPERTI GAMBAR CONTOH -->
+            <table style="width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 6px;">
                 <thead>
-                    <tr style="border-bottom: 1px solid #cbd5e1; color: #475569; background: #f1f5f9;">
-                        <th style="text-align: left; padding: 6px 8px;">Komponen Gaji</th>
-                        <th style="text-align: right; padding: 6px 8px;">Nominal</th>
+                    <tr style="border-top: 1.5px solid #000000; border-bottom: 1.5px solid #000000;">
+                        <th style="text-align: left; padding: 6px 0; font-weight: 700; color: #000000;">Keterangan</th>
+                        <th style="text-align: right; padding: 6px 0; font-weight: 700; color: #000000;">Jumlah</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <tr style="border-bottom: 1px dashed #e2e8f0;">
-                        <td style="padding: 6px 8px;">Gaji Pokok ${hari ? `(${hari} hari x Rp ${formatRupiah(harian)})` : ''}</td>
-                        <td style="padding: 6px 8px; text-align: right; font-weight: 600;">Rp ${formatRupiah(pokok)}</td>
+                    <tr>
+                        <td style="padding: 7px 0; color: #111827;">Gaji Pokok ${hari && harian ? `(Hari Kerja: ${hari} hr x Rp ${formatRupiah(harian)})` : (hari ? `(Hari Kerja: ${hari} hr)` : '')}</td>
+                        <td style="padding: 7px 0; text-align: right; font-weight: 600; color: #111827;">Rp ${formatRupiah(pokok)}</td>
                     </tr>
-                    <tr style="border-bottom: 1px dashed #e2e8f0;">
-                        <td style="padding: 6px 8px; color: #16a34a;">Bonus & Tunjangan</td>
-                        <td style="padding: 6px 8px; text-align: right; font-weight: 600; color: #16a34a;">+ Rp ${formatRupiah(bonus)}</td>
-                    </tr>
-                    <tr style="border-bottom: 1px dashed #e2e8f0;">
-                        <td style="padding: 6px 8px; color: #dc2626;">Potongan ${t['Keterangan Libur'] ? `(${t['Keterangan Libur']})` : ''}</td>
-                        <td style="padding: 6px 8px; text-align: right; font-weight: 600; color: #dc2626;">- Rp ${formatRupiah(potongan)}</td>
+                    ${bonus > 0 ? `
+                    <tr>
+                        <td style="padding: 4px 0; color: #16a34a; font-weight: 500;">Bonus Kinerja &amp; Tunjangan</td>
+                        <td style="padding: 4px 0; text-align: right; font-weight: 600; color: #16a34a;">+ Rp ${formatRupiah(bonus)}</td>
+                    </tr>` : ''}
+                    <tr>
+                        <td style="padding: 4px 0; color: #dc2626; font-weight: 500;">Potongan Kasbon</td>
+                        <td style="padding: 4px 0; text-align: right; font-weight: 600; color: #dc2626;">- Rp ${formatRupiah(potongan)}</td>
                     </tr>
                 </tbody>
             </table>
 
-            <div style="border-top: 2px solid #0f172a; padding-top: 8px; margin-bottom: 18px;">
-                <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: 800; color: #0f172a;">
-                    <span>TOTAL DITERIMA:</span>
-                    <span style="color: #dc2626;">Rp ${formatRupiah(totalGaji)}</span>
+            <!-- Keterangan Informasi Hari Tidak Kerja -->
+            ${ketLibur ? `
+            <div style="font-size: 10.5px; font-style: italic; color: #4b5563; margin-bottom: 10px; padding-top: 2px;">
+                Informasi: ${ketLibur}
+            </div>` : ''}
+
+            <!-- Garis Divider Menuju Total -->
+            <div style="border-top: 1px solid #e5e7eb; margin: 12px 0 10px 0;"></div>
+
+            <!-- TOTAL DITERIMA -->
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 2px 0;">
+                <span style="font-size: 13px; font-weight: 800; color: #000000; letter-spacing: 0.5px;">TOTAL DITERIMA</span>
+                <span style="font-size: 14px; font-weight: 800; color: #16a34a;">Rp ${formatRupiah(totalGaji)}</span>
+            </div>
+
+            <!-- TANDA TANGAN OWNER JAMILAH (Kanan Bawah) Sesuai Gambar Referensi -->
+            <div style="display: flex; justify-content: flex-end; margin-top: 28px; margin-bottom: 22px;">
+                <div style="text-align: center; width: 180px;">
+                    <p style="margin: 0 0 2px 0; font-size: 11px; color: #111827;">Mengetahui,</p>
+                    <div style="height: 64px; display: flex; align-items: center; justify-content: center; margin: 2px 0;">
+                        ${ttdSvg}
+                    </div>
+                    <div style="border-bottom: 1.2px solid #000000; width: 140px; margin: 0 auto 4px auto;"></div>
+                    <p style="margin: 0; font-size: 11px; font-weight: 700; color: #000000;">Jamilah</p>
+                    <p style="margin: 1px 0 0 0; font-size: 10px; font-weight: 600; color: #1f2937;">Owner Istana Bubur</p>
                 </div>
             </div>
 
-            <div style="text-align: center; border-top: 1px dashed #cbd5e1; padding-top: 12px; font-size: 10px; color: #64748b;">
-                <p style="margin: 0; font-style: italic;">Slip gaji ini sah dan diterbitkan secara digital oleh Sistem Manajemen Istana Bubur.</p>
+            <!-- FOOTER DOKUMEN ELEKTRONIK RESMI PERSIS SEPERTI GAMBAR -->
+            <div style="border-top: 1px solid #334155; padding-top: 7px; margin-top: 14px;">
+                <p style="margin: 0 0 2px 0; font-size: 8.5px; font-weight: 800; color: #000000; letter-spacing: 0.5px; text-transform: uppercase;">DOKUMEN ELEKTRONIK RESMI</p>
+                <p style="margin: 0; font-size: 8px; line-height: 1.35; color: #475569; font-style: italic;">
+                    Dokumen ini dibuat dan diterbitkan secara elektronik oleh Sistem HR &amp; Payroll Istana Bubur. <strong>Keaslian Dokumen Dijamin Oleh Sistem Dan Telah Di Sahkan Dengan Tanda Tangan Resmi Oleh Pimpinan Secara Digital</strong>. Dokumen ini bersifat rahasia dan hanya boleh digunakan oleh pihak yang berwenang. Segala bentuk penggandaan, penyebarluasan, atau penggunaan tanpa izin tertulis dari <strong>Manajemen Istana Bubur Dilarang</strong>.
+                </p>
+                <p style="margin: 3px 0 0 0; font-size: 8px; font-weight: 700; color: #000000;">&copy; 2026 AnindyaPrintz. Seluruh hak cipta dilindungi.</p>
             </div>
+
         </div>
-    `;
+    </div>`;
 }
+
+// Global variable untuk menyimpan slip gaji terakhir yang dibuat / dibuka
+let LAST_ACTIVE_SLIP = null;
+
+function previewSlipGajiModal(slipData) {
+    const t = slipData || LAST_ACTIVE_SLIP;
+    if (!t) {
+        showToast('Data slip gaji tidak tersedia untuk dipratinjau', 'error');
+        return;
+    }
+    LAST_ACTIVE_SLIP = t;
+    const body = document.getElementById('preview-slip-modal-body');
+    if (body) {
+        body.innerHTML = generateSlipGajiHTML(t);
+    }
+    const title = document.getElementById('preview-slip-modal-title');
+    if (title) {
+        title.textContent = `Slip Gaji - ${t['Nama'] || 'Karyawan'} (${t['Bulan'] || ''})`;
+    }
+    const btnUnduh = document.getElementById('btn-modal-unduh-pdf');
+    if (btnUnduh) {
+        btnUnduh.onclick = () => cetakSlipGajiPDF(t);
+    }
+    const btnWa = document.getElementById('btn-modal-kirim-wa');
+    if (btnWa) {
+        btnWa.onclick = () => kirimWaSlipGajiDirect(t);
+    }
+    openModal('modal-preview-slip');
+}
+
+function previewSlipGajiTerbaru() {
+    previewSlipGajiModal(LAST_ACTIVE_SLIP);
+}
+
+function previewSlipGajiFromHistori(idx) {
+    const item = (HISTORI_GAJI_CACHE || [])[idx];
+    if (!item) {
+        showToast('Data slip gaji tidak ditemukan', 'error');
+        return;
+    }
+    previewSlipGajiModal(item);
+}
+
+window.previewSlipGajiModal = previewSlipGajiModal;
+window.previewSlipGajiTerbaru = previewSlipGajiTerbaru;
+window.previewSlipGajiFromHistori = previewSlipGajiFromHistori;
 
 function generateSlipGajiWhatsAppMessage(t) {
     const bulanFormatted = formatBulanIndo(t['Bulan']);
@@ -5754,13 +6152,7 @@ async function cetakSlipGajiPDF(t) {
         return;
     }
 
-    if (t['Link PDF'] && t['Link PDF'] !== '#' && t['Link PDF'].startsWith('http')) {
-        openUrlOutsideApp(t['Link PDF']);
-        showToast('Membuka file PDF di luar aplikasi...', 'success');
-        return;
-    }
-
-    showToast('Menyiapkan Slip Gaji PDF...', 'info');
+    showToast('Menyiapkan Slip Gaji PDF Resmi...', 'info');
 
     const cleanName = (t['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9]/g, '_');
     const cleanBulan = (t['Bulan'] || '').replace(/[^a-zA-Z0-9]/g, '_');
@@ -6843,6 +7235,8 @@ window.processCheckout = processCheckout;
 window.resetCart = resetCart;
 window.cetakStrukThermal = cetakStrukThermal;
 window.cetakNotaPDF = cetakNotaPDF;
+window.previewNotaModal = previewNotaModal;
+window.previewNotaFromHistory = previewNotaFromHistory;
 window.kirimWhatsApp = kirimWhatsApp;
 window.cetakNotaPDFFromHistory = cetakNotaPDFFromHistory;
 window.kirimWhatsAppFromHistory = kirimWhatsAppFromHistory;

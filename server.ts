@@ -62,15 +62,51 @@ setInterval(() => {
   }
 }, 30 * 60 * 1000);
 
-// Email Transporter Helper with dual port (465 SSL & 587 TLS) and timeout handling
+// Email Transporter Helper with connection pool, dual port (465 SSL & 587 TLS), and deliverability headers
+let sharedPooledTransporter: any = null;
+
+function getSharedEmailTransporter() {
+  const user = (process.env.SMTP_USER || 'istanabubur89@gmail.com').trim();
+  const rawPass = process.env.SMTP_PASS || process.env.SMTP_PASSWORD || 'axqgkpswdfooekzu';
+  const pass = rawPass ? rawPass.replace(/\s+/g, '') : '';
+  const from = process.env.SMTP_FROM || `"Istana Bubur" <${user}>`;
+
+  if (!user || !pass) {
+    return { transporter: null, from, user, isLive: false };
+  }
+
+  if (!sharedPooledTransporter) {
+    sharedPooledTransporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user, pass },
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 100,
+      rateLimit: 5,
+      rateDelta: 1000,
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+      tls: {
+        rejectUnauthorized: false
+      }
+    });
+  }
+
+  return {
+    transporter: sharedPooledTransporter,
+    from,
+    user,
+    isLive: true
+  };
+}
+
 function createEmailTransporter(forcePort?: number) {
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
   const defaultPort = parseInt(process.env.SMTP_PORT || '465', 10);
   const port = forcePort || defaultPort;
   const secure = port === 465;
-  // Support either SMTP_USER or fallback to istanabubur89@gmail.com
   const user = (process.env.SMTP_USER || 'istanabubur89@gmail.com').trim();
-  // Support both SMTP_PASS or SMTP_PASSWORD, and remove spaces often present in Gmail App Passwords
   const rawPass = process.env.SMTP_PASS || process.env.SMTP_PASSWORD || 'axqgkpswdfooekzu';
   const pass = rawPass ? rawPass.replace(/\s+/g, '') : '';
   const from = process.env.SMTP_FROM || `"Istana Bubur" <${user}>`;
@@ -82,9 +118,12 @@ function createEmailTransporter(forcePort?: number) {
         port,
         secure,
         auth: { user, pass },
-        connectionTimeout: 8000,
-        greetingTimeout: 8000,
-        socketTimeout: 12000
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 15000,
+        tls: {
+          rejectUnauthorized: false
+        }
       }),
       from,
       user,
@@ -93,7 +132,6 @@ function createEmailTransporter(forcePort?: number) {
     };
   }
 
-  // Fallback transporter when credentials are not filled
   return {
     transporter: nodemailer.createTransport({
       jsonTransport: true
@@ -105,39 +143,96 @@ function createEmailTransporter(forcePort?: number) {
   };
 }
 
-async function sendEmailWithFallback({ to, subject, html }: { to: string; subject: string; html: string }) {
-  const primary = createEmailTransporter(465);
-  if (!primary.isLive) {
-    return { success: false, isLive: false, error: 'Kredensial SMTP belum disetel' };
+async function sendEmailWithFallback({
+  to,
+  subject,
+  html,
+  text
+}: {
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+}) {
+  const cleanTo = String(to || '').trim().toLowerCase();
+  if (!cleanTo) {
+    return { success: false, isLive: false, error: 'Alamat email tujuan kosong' };
   }
 
-  // Percobaan 1: Port 465 (SSL)
+  const plainText = text || html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                                .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                                .replace(/<[^>]+>/g, ' ')
+                                .replace(/\s+/g, ' ')
+                                .trim();
+
+  // Opsi Pengiriman Email
+  const mailOptions = {
+    to: cleanTo,
+    subject,
+    text: plainText,
+    html,
+    priority: 'high' as const,
+    headers: {
+      'X-Priority': '1 (Highest)',
+      'X-MSMail-Priority': 'High',
+      'Importance': 'High',
+      'X-Mailer': 'Istana-Bubur-Auth-System'
+    }
+  };
+
+  // Percobaan 1: Gunakan Shared Pooled Transporter (service: gmail) - Cepat (<1.5 detik)
+  const shared = getSharedEmailTransporter();
+  if (shared.isLive && shared.transporter) {
+    try {
+      const info = await shared.transporter.sendMail({
+        from: shared.from,
+        replyTo: shared.user,
+        ...mailOptions
+      });
+      console.log(`[SMTP POOL SUCCESS] Sent to ${cleanTo} | ID: ${info?.messageId}`);
+      return { success: true, isLive: true, info, method: 'pool' };
+    } catch (poolErr: any) {
+      console.warn('[SMTP POOL GAGAL, MENCOBA PORT 465 LANGSUNG]:', poolErr?.message || poolErr);
+      // Reset pool jika terjadi koneksi terputus
+      try {
+        sharedPooledTransporter?.close();
+      } catch (e) {}
+      sharedPooledTransporter = null;
+    }
+  }
+
+  // Percobaan 2: Port 465 (Direct SSL)
   try {
+    const primary = createEmailTransporter(465);
+    if (!primary.isLive) {
+      return { success: false, isLive: false, error: 'Kredensial SMTP belum disetel' };
+    }
     const info = await primary.transporter.sendMail({
       from: primary.from,
-      to,
-      subject,
-      html
+      replyTo: primary.user,
+      ...mailOptions
     });
-    return { success: true, isLive: true, info, port: 465 };
+    console.log(`[SMTP 465 SUCCESS] Sent to ${cleanTo} | ID: ${info?.messageId}`);
+    return { success: true, isLive: true, info, port: 465, method: 'port465' };
   } catch (err465: any) {
-    console.warn('[SMTP 465 GAGAL, MENCOBA 587]:', err465?.message || err465);
-    // Percobaan 2: Port 587 (TLS/STARTTLS)
+    console.warn('[SMTP 465 GAGAL, MENCOBA PORT 587 TLS]:', err465?.message || err465);
+
+    // Percobaan 3: Port 587 (TLS/STARTTLS)
     try {
       const fallback = createEmailTransporter(587);
       const info = await fallback.transporter.sendMail({
         from: fallback.from,
-        to,
-        subject,
-        html
+        replyTo: fallback.user,
+        ...mailOptions
       });
-      return { success: true, isLive: true, info, port: 587 };
+      console.log(`[SMTP 587 SUCCESS] Sent to ${cleanTo} | ID: ${info?.messageId}`);
+      return { success: true, isLive: true, info, port: 587, method: 'port587' };
     } catch (err587: any) {
       console.error('[SMTP 587 GAGAL JUGA]:', err587?.message || err587);
       return {
         success: false,
         isLive: true,
-        error: err587?.message || err465?.message || 'Gagal mengirim melalui SMTP Gmail'
+        error: err587?.message || err465?.message || 'Gagal mengirim email melalui SMTP Gmail'
       };
     }
   }
@@ -202,6 +297,8 @@ function getOnlineSummary() {
 }
 
 // REST API Endpoints
+app.use('/assets', express.static(path.join(process.cwd(), 'public/assets')));
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
@@ -324,7 +421,7 @@ app.get('/view-doc/:docId', (req, res) => {
       box-shadow: 0 2px 8px rgba(0,0,0,0.06);
     }
     .top-bar-inner {
-      max-width: 720px;
+      max-width: 840px;
       margin: 0 auto;
       display: flex;
       flex-wrap: wrap;
@@ -394,7 +491,8 @@ app.get('/view-doc/:docId', (req, res) => {
       body { background: #ffffff; }
       .top-bar { display: none !important; }
       .content-wrap { padding: 0 !important; }
-      .doc-card { box-shadow: none !important; border: none !important; }
+      .doc-card { box-shadow: none !important; border: none !important; margin: 0 !important; }
+      tr { page-break-inside: avoid !important; break-inside: avoid !important; }
     }
   </style>
 </head>
@@ -456,11 +554,12 @@ app.get('/view-doc/:docId', (req, res) => {
       // Generate client side with html2pdf if base64 was not passed
       const el = document.getElementById('doc-render-area');
       const opt = {
-        margin: [4, 4, 4, 4],
+        margin: [6, 6, 6, 6],
         filename: '${doc.filename}',
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true },
-        jsPDF: { unit: 'mm', format: isNota ? [80, 220] : 'a5', orientation: 'portrait' }
+        jsPDF: { unit: 'mm', format: isNota ? 'a4' : 'a5', orientation: 'portrait' },
+        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
       };
 
       html2pdf().set(opt).from(el).save().then(() => {
@@ -610,39 +709,81 @@ app.post('/api/auth/send-referral-code', async (req, res) => {
     referralCodesStore.set(cleanPhone, record);
   }
 
+  // Sinkronisasikan juga ke universalOtpStore agar kedua endpoint verifikasi selalu valid
+  universalOtpStore.set(`register_${email}`, {
+    email,
+    username,
+    type: 'register',
+    otpHash,
+    createdAtMs: now,
+    expiresAtMs,
+    used: false
+  });
+
   // 4. Siapkan format pesan WhatsApp resmi
   const waMsg = `*ISTANA BUBUR - KODE OTP PENDAFTARAN*\n\nHalo *${username}*,\nBerikut adalah 6-digit Kode OTP Verifikasi Pendaftaran Akun Anda:\n\n👉 *${otp}* 👈\n\nKode ini bersifat rahasia dan berlaku selama 10 menit.\nMasukkan kode ini pada aplikasi untuk menyelesaikan pendaftaran.`;
   const waUrl = cleanPhone 
     ? `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(waMsg)}`
     : `https://api.whatsapp.com/send?text=${encodeURIComponent(waMsg)}`;
 
-  // 5. Siapkan Konten Email
+  // 5. Siapkan Konten Email (Plain Text & HTML dengan Anti-Spam Best Practices)
   const subject = `[Istana Bubur] Kode OTP Verifikasi Pendaftaran: ${otp}`;
+  const textContent = `ISTANA BUBUR - VERIFIKASI PENDAFTARAN AKUN
+
+Halo ${username},
+
+Berikut adalah 6-digit Kode OTP verifikasi pendaftaran akun baru Anda:
+
+👉 ${otp} 👈
+
+Kode OTP ini bersifat rahasia dan berlaku selama 10 menit.
+Masukkan kode ini pada aplikasi Istana Bubur untuk menyelesaikan pendaftaran akun Anda.
+
+💡 Tips: Jika Anda tidak menemukan email ini di Kotak Masuk (Inbox) utama Anda, periksa folder Spam atau Promosi.
+
+--
+Layanan Keamanan & Akun Istana Bubur
+istanabubur89@gmail.com`;
+
   const htmlContent = `
   <!DOCTYPE html>
   <html>
-  <head><meta charset="utf-8"></head>
-  <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; padding: 24px; margin: 0;">
-    <div style="max-width: 500px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-      <div style="background: #dc2626; color: #ffffff; padding: 24px; text-align: center;">
-        <h2 style="margin: 0; font-size: 22px; font-weight: 900; letter-spacing: 1px;">🥣 ISTANA BUBUR</h2>
-        <p style="margin: 4px 0 0; font-size: 13px; color: #fee2e2;">Verifikasi Pendaftaran Akun</p>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kode OTP Verifikasi Istana Bubur</title>
+  </head>
+  <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; padding: 24px 12px; margin: 0;">
+    <div style="display:none;font-size:1px;color:#f8fafc;line-height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;">
+      Kode OTP pendaftaran Istana Bubur Anda adalah ${otp}. Masukkan kode ini untuk mengaktifkan akun.
+    </div>
+    <div style="max-width: 500px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
+      <div style="background: #dc2626; color: #ffffff; padding: 26px 20px; text-align: center;">
+        <h1 style="margin: 0; font-size: 22px; font-weight: 900; letter-spacing: 1px; color: #ffffff;">🥣 ISTANA BUBUR</h1>
+        <p style="margin: 6px 0 0; font-size: 13px; color: #fee2e2; font-weight: 600;">Verifikasi Pendaftaran Akun Baru</p>
       </div>
-      <div style="padding: 24px; color: #1e293b;">
-        <p style="margin-top: 0;">Halo <strong>${username}</strong>,</p>
-        <p>Berikut adalah 6-digit kode OTP verifikasi pendaftaran akun Anda:</p>
-        <div style="text-align: center; margin: 28px 0;">
-          <div style="display: inline-block; background: #0f172a; color: #ffffff; font-family: monospace; font-size: 34px; font-weight: 900; letter-spacing: 8px; padding: 16px 32px; border-radius: 12px;">
+      <div style="padding: 26px 22px; color: #1e293b;">
+        <p style="margin-top: 0; font-size: 15px; color: #334155;">Halo <strong>${username}</strong>,</p>
+        <p style="font-size: 14px; color: #475569; line-height: 1.6;">
+          Terima kasih telah mendaftar di sistem operasional <strong>Istana Bubur</strong>. Berikut adalah 6-digit kode OTP verifikasi pendaftaran akun Anda:
+        </p>
+        <div style="text-align: center; margin: 26px 0; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 14px; padding: 20px;">
+          <span style="display: inline-block; background: #0f172a; color: #38bdf8; font-family: 'Courier New', Courier, monospace; font-size: 36px; font-weight: 900; letter-spacing: 10px; padding: 14px 28px; border-radius: 12px; box-shadow: 0 2px 8px rgba(15,23,42,0.15);">
             ${otp}
-          </div>
-          <p style="color: #dc2626; font-size: 12px; font-weight: 700; margin-top: 10px;">⏳ Berlaku selama 10 Menit</p>
+          </span>
+          <p style="color: #dc2626; font-size: 12px; font-weight: 700; margin: 12px 0 0;">⏳ Berlaku selama 10 Menit</p>
         </div>
-        <p style="font-size: 13px; color: #64748b; line-height: 1.5;">
-          Jangan berikan kode ini kepada siapapun demi keamanan sistem. Masukkan kode ini pada aplikasi untuk melanjutkan pendaftaran.
+        <div style="background: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 14px; border-radius: 6px; margin: 20px 0;">
+          <p style="margin: 0; font-size: 12px; color: #92400e; line-height: 1.5;">
+            <strong>💡 Tips Penting:</strong> Jika email ini masuk ke folder <strong>Spam</strong> atau <strong>Promosi</strong>, klik <strong>"Laporkan Bukan Spam"</strong> agar pemberitahuan berikutnya masuk ke Kotak Masuk utama Anda.
+          </p>
+        </div>
+        <p style="font-size: 13px; color: #64748b; line-height: 1.5; margin-bottom: 0;">
+          Jangan berikan kode ini kepada siapapun demi keamanan sistem. Masukkan kode ini pada aplikasi untuk menyelesaikan pendaftaran.
         </p>
       </div>
       <div style="background: #f8fafc; border-top: 1px solid #f1f5f9; padding: 16px; text-align: center; font-size: 11px; color: #94a3b8;">
-        Email otomatis dari Sistem Keamanan Istana Bubur.
+        Email otomatis dari Sistem Keamanan & Akun Istana Bubur &bull; istanabubur89@gmail.com
       </div>
     </div>
   </body>
@@ -658,12 +799,13 @@ app.post('/api/auth/send-referral-code', async (req, res) => {
       const sendResult = await sendEmailWithFallback({
         to: email,
         subject,
+        text: textContent,
         html: htmlContent
       });
 
       if (sendResult.success) {
         emailDelivered = true;
-        console.log(`[SMTP SUCCESS] Sent to ${email} via port ${sendResult.port}`);
+        console.log(`[SMTP SUCCESS] Sent to ${email} via ${sendResult.method || 'pool'}`);
       } else {
         emailErrorMsg = sendResult.error || 'Kendala koneksi SMTP';
         console.warn(`[SMTP WARN] Email to ${email} error: ${emailErrorMsg}`);
@@ -674,8 +816,7 @@ app.post('/api/auth/send-referral-code', async (req, res) => {
     }
   }
 
-  // Response: TIDAK membocorkan kode darurat di pesan teks
-  // Kode OTP disediakan untuk channel WhatsApp & sinkronisasi verifikasi
+  // Response
   return res.json({
     success: true,
     emailDelivered,
@@ -687,7 +828,7 @@ app.post('/api/auth/send-referral-code', async (req, res) => {
     whatsappUrl: waUrl,
     whatsappMessage: waMsg,
     message: emailDelivered
-      ? `Kode OTP verifikasi berhasil dikirim ke email ${email}. Anda juga dapat menerimanya via WhatsApp.`
+      ? `Kode OTP verifikasi berhasil dikirim ke email ${email}. Silakan cek Kotak Masuk atau folder Spam email Anda.`
       : (cleanPhone
           ? `Kode OTP verifikasi siap dikirimkan ke WhatsApp ${phone}. Silakan buka chat WhatsApp untuk menerimanya.`
           : `Kode OTP verifikasi telah diproses untuk akun Anda. Silakan cek email atau gunakan nomor WhatsApp.`)
@@ -819,6 +960,22 @@ app.post('/api/auth/verify-referral-code', (req, res) => {
   let record = referralCodesStore.get(email);
   if (!record && cleanPhone) {
     record = referralCodesStore.get(cleanPhone);
+  }
+
+  // Fallback ke universalOtpStore jika diminta melalui endpoint alternatif
+  if (!record) {
+    const uni = universalOtpStore.get(`register_${email}`);
+    if (uni) {
+      record = {
+        email: uni.email,
+        phone: cleanPhone || phone,
+        username: uni.username,
+        otpHash: uni.otpHash,
+        createdAtMs: uni.createdAtMs,
+        expiresAtMs: uni.expiresAtMs,
+        used: uni.used
+      };
+    }
   }
 
   if (!record) {
@@ -1135,10 +1292,41 @@ app.post('/api/auth/send-otp-email', async (req, res) => {
   </html>
   `;
 
+  const textContent = `ISTANA BUBUR - ${title.toUpperCase()}
+
+Halo ${recipientName},
+
+${desc}
+
+👉 ${otp} 👈
+
+Kode OTP ini bersifat rahasia dan berlaku selama 10 menit.
+Masukkan kode ini pada aplikasi untuk menyelesaikan verifikasi Anda.
+
+💡 Tips: Jika Anda tidak menemukan email ini di Kotak Masuk (Inbox) utama Anda, harap periksa folder Spam atau Promosi.
+
+--
+Layanan Keamanan & Akun Istana Bubur
+istanabubur89@gmail.com`;
+
+  // Jika type register, sinkronkan juga ke referralCodesStore
+  if (type === 'register') {
+    referralCodesStore.set(email, {
+      email,
+      phone: '',
+      username: recipientName,
+      otpHash,
+      createdAtMs: now,
+      expiresAtMs,
+      used: false
+    });
+  }
+
   try {
     const sendResult = await sendEmailWithFallback({
       to: email,
       subject,
+      text: textContent,
       html: htmlContent
     });
 

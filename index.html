@@ -933,12 +933,13 @@
                     </form>
                     
                     <div id="hasil-slip" class="mt-5 p-4 border border-emerald-200 bg-emerald-50 rounded-xl hidden-view text-center">
-                        <p class="text-sm text-emerald-800 font-bold mb-3">Berhasil Dibuat!</p>
-                        <div class="flex space-x-3 mb-3">
-                            <a id="link-pdf" href="#" target="_blank" class="flex-1 bg-gray-900 text-white text-xs font-semibold py-2.5 rounded-lg flex items-center justify-center gap-2">PDF</a>
-                            <a id="link-wa" href="#" target="_blank" class="flex-1 bg-emerald-500 text-white text-xs font-semibold py-2.5 rounded-lg flex items-center justify-center gap-2"><i class="fab fa-whatsapp text-sm"></i> WA</a>
+                        <p class="text-sm text-emerald-800 font-bold mb-3"><i class="fas fa-check-circle text-emerald-600 mr-1"></i> Slip Gaji Berhasil Dibuat!</p>
+                        <div class="grid grid-cols-3 gap-2 mb-3">
+                            <button type="button" id="btn-preview-slip" onclick="previewSlipGajiTerbaru()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold py-2.5 rounded-lg flex items-center justify-center gap-1.5 shadow-sm transition"><i class="fas fa-eye"></i> Lihat Slip</button>
+                            <a id="link-pdf" href="#" target="_blank" class="bg-gray-900 hover:bg-gray-800 text-white text-xs font-semibold py-2.5 rounded-lg flex items-center justify-center gap-1.5 shadow-sm transition"><i class="fas fa-file-pdf text-red-400"></i> PDF</a>
+                            <a id="link-wa" href="#" target="_blank" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold py-2.5 rounded-lg flex items-center justify-center gap-1.5 shadow-sm transition"><i class="fab fa-whatsapp text-white"></i> WA</a>
                         </div>
-                        <button type="button" onclick="resetFormSlip()" class="w-full bg-white border border-gray-300 text-gray-600 text-xs font-semibold py-2 rounded-lg hover:bg-gray-50 transition shadow-sm">Selesai & Buat Baru</button>
+                        <button type="button" onclick="resetFormSlip()" class="w-full bg-white border border-gray-300 text-gray-600 text-xs font-semibold py-2 rounded-lg hover:bg-gray-50 transition shadow-sm">Selesai &amp; Buat Baru</button>
                     </div>
                 </div>
             </div>
@@ -1467,12 +1468,12 @@
                         <i class="fab fa-android"></i> Cetak via Driver Android / RawBT
                     </button>
 
-                    <!-- Tombol PDF dan WhatsApp yang sudah diperbaiki -->
+                    <!-- Tombol Lihat PDF dan WhatsApp -->
                     <div class="flex gap-2 mb-3">
-                        <button onclick="cetakNotaPDF()" class="flex-1 bg-red-600 text-white py-3 rounded-lg font-bold shadow-md hover:bg-red-700 transition flex items-center justify-center gap-2 text-sm">
-                            <i class="fas fa-file-pdf"></i> PDF
+                        <button onclick="previewNotaModal()" class="flex-1 bg-red-600 text-white py-2.5 rounded-xl font-bold shadow-md hover:bg-red-700 active:scale-95 transition flex items-center justify-center gap-1.5 text-xs">
+                            <i class="fas fa-file-pdf"></i> Lihat PDF
                         </button>
-                        <button onclick="kirimWhatsApp()" class="flex-1 bg-emerald-500 text-white py-3 rounded-lg font-bold shadow-md hover:bg-emerald-600 transition flex items-center justify-center gap-2 text-sm">
+                        <button onclick="kirimWhatsApp()" class="flex-1 bg-emerald-600 text-white py-2.5 rounded-xl font-bold shadow-md hover:bg-emerald-700 active:scale-95 transition flex items-center justify-center gap-1.5 text-xs">
                             <i class="fab fa-whatsapp"></i> WhatsApp
                         </button>
                     </div>
@@ -1751,17 +1752,21 @@
 
                     <div class="space-y-1.5 text-left bg-gray-50/80 p-3 rounded-xl border border-gray-200">
                         <label class="block text-xs font-bold text-gray-700">Metode Pengiriman Kode OTP <span class="text-red-500">*</span></label>
-                        <div class="grid grid-cols-2 gap-2">
-                            <label class="flex items-center gap-2 p-2.5 rounded-xl bg-white border border-emerald-500/50 cursor-pointer text-xs font-bold text-gray-800 hover:bg-emerald-50/40 transition">
+                        <div class="grid grid-cols-3 gap-2">
+                            <label class="flex items-center gap-1.5 p-2 rounded-xl bg-white border border-emerald-500/50 cursor-pointer text-xs font-bold text-gray-800 hover:bg-emerald-50/40 transition">
                                 <input type="radio" name="reg-otp-method" value="both" checked class="text-emerald-600 focus:ring-emerald-500">
-                                <span class="flex items-center gap-1"><i class="fas fa-paper-plane text-emerald-600"></i> Email & WA</span>
+                                <span class="flex items-center gap-1 text-[11px]"><i class="fas fa-paper-plane text-emerald-600"></i> Email & WA</span>
                             </label>
-                            <label class="flex items-center gap-2 p-2.5 rounded-xl bg-white border border-gray-200 cursor-pointer text-xs font-bold text-gray-800 hover:bg-emerald-50/40 transition">
+                            <label class="flex items-center gap-1.5 p-2 rounded-xl bg-white border border-gray-200 cursor-pointer text-xs font-bold text-gray-800 hover:bg-emerald-50/40 transition">
+                                <input type="radio" name="reg-otp-method" value="email" class="text-emerald-600 focus:ring-emerald-500">
+                                <span class="flex items-center gap-1 text-[11px]"><i class="fas fa-envelope text-red-600"></i> Hanya Email</span>
+                            </label>
+                            <label class="flex items-center gap-1.5 p-2 rounded-xl bg-white border border-gray-200 cursor-pointer text-xs font-bold text-gray-800 hover:bg-emerald-50/40 transition">
                                 <input type="radio" name="reg-otp-method" value="whatsapp" class="text-emerald-600 focus:ring-emerald-500">
-                                <span class="flex items-center gap-1"><i class="fab fa-whatsapp text-emerald-600 text-sm"></i> WhatsApp</span>
+                                <span class="flex items-center gap-1 text-[11px]"><i class="fab fa-whatsapp text-emerald-600"></i> WhatsApp</span>
                             </label>
                         </div>
-                        <p class="text-[10px] text-gray-500">Kode OTP 6-digit dikirimkan ke Email dan nomor WhatsApp yang didaftarkan.</p>
+                        <p class="text-[10px] text-gray-500">Kode OTP 6-digit dikirimkan secara instan ke Email pendaftar.</p>
                     </div>
 
                     <button type="button" onclick="submitRegisterStep1()" id="btn-submit-step1" class="w-full bg-red-600 hover:bg-red-700 text-white py-3.5 rounded-2xl font-black text-xs shadow-md shadow-red-600/20 active:scale-95 transition flex items-center justify-center gap-2 mt-2">
@@ -1785,34 +1790,34 @@
                     <!-- Kartu Kontak Penerima OTP -->
                     <div class="bg-gray-50 border border-gray-200 rounded-2xl p-3.5 text-left text-xs space-y-2 shadow-xs">
                         <div class="flex items-center justify-between bg-white p-2.5 rounded-xl border border-gray-100">
-                            <div class="flex items-center gap-2">
-                                <i class="fas fa-envelope text-red-600 text-sm"></i>
-                                <div>
-                                    <p class="text-[10px] text-gray-400 font-semibold">Email Penerima</p>
-                                    <p id="reg-display-email" class="text-xs font-bold text-gray-800 font-mono break-all">email@anda.com</p>
+                            <div class="flex items-center gap-2 min-w-0">
+                                <div class="w-7 h-7 rounded-lg bg-red-100 text-red-600 flex items-center justify-center text-xs shrink-0">
+                                    <i class="fas fa-envelope"></i>
+                                </div>
+                                <div class="truncate">
+                                    <p class="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">Email Penerima</p>
+                                    <p id="reg-display-email" class="text-xs font-bold text-gray-800 font-mono truncate">email@anda.com</p>
                                 </div>
                             </div>
-                            <span id="reg-email-badge" class="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">Email Terkirim</span>
+                            <span id="reg-email-badge" class="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold shrink-0">Email Terkirim</span>
                         </div>
 
                         <div class="flex items-center justify-between bg-white p-2.5 rounded-xl border border-gray-100">
-                            <div class="flex items-center gap-2">
-                                <i class="fab fa-whatsapp text-emerald-600 text-base"></i>
-                                <div>
-                                    <p class="text-[10px] text-gray-400 font-semibold">Nomor WhatsApp</p>
-                                    <p id="reg-display-wa" class="text-xs font-bold text-gray-800 font-mono">081234567890</p>
+                            <div class="flex items-center gap-2 min-w-0">
+                                <div class="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center text-sm shrink-0">
+                                    <i class="fab fa-whatsapp"></i>
+                                </div>
+                                <div class="truncate">
+                                    <p class="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">Nomor WhatsApp</p>
+                                    <p id="reg-display-wa" class="text-xs font-bold text-gray-800 font-mono truncate">081234567890</p>
                                 </div>
                             </div>
-                            <span id="reg-wa-badge" class="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">WhatsApp Siap</span>
+                            <span id="reg-wa-badge" class="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold shrink-0">WhatsApp Siap</span>
                         </div>
                     </div>
 
                     <!-- Tombol Cepat Pengiriman WhatsApp & Email -->
                     <div class="space-y-2">
-                        <button type="button" onclick="sendReferralViaWhatsApp()" id="btn-reg-wa-open" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 px-3 rounded-xl font-bold text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition flex items-center justify-center gap-2">
-                            <i class="fab fa-whatsapp text-base"></i>
-                            <span>Buka / Kirim Kode OTP di WhatsApp (<span id="reg-btn-wa-phone">WA</span>)</span>
-                        </button>
                         <div class="grid grid-cols-2 gap-2">
                             <button type="button" onclick="openGmailApp()" class="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition">
                                 <i class="fab fa-google text-red-600"></i>
@@ -1823,11 +1828,22 @@
                                 <span>Kirim Ulang Email</span>
                             </button>
                         </div>
+                        <button type="button" onclick="sendReferralViaWhatsApp()" id="btn-reg-wa-open" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 px-3 rounded-xl font-bold text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition flex items-center justify-center gap-2">
+                            <i class="fab fa-whatsapp text-sm"></i>
+                            <span>Buka / Kirim OTP via WhatsApp (<span id="reg-btn-wa-phone">WA</span>)</span>
+                        </button>
                     </div>
 
-                    <p id="reg-email-notice" class="text-[11px] text-gray-600 leading-relaxed bg-amber-50/80 p-2.5 rounded-xl border border-amber-200/70 text-left">
-                        <i class="fas fa-circle-info text-amber-600 mr-1"></i> Periksa pesan masuk di <strong>Email</strong> (Inbox/Spam) atau klik tombol <strong>WhatsApp</strong> di atas untuk menerima pesan resmi kode OTP.
-                    </p>
+                    <div id="reg-email-notice" class="text-[11px] text-gray-600 leading-relaxed bg-amber-50/90 p-3 rounded-xl border border-amber-200/80 text-left space-y-1">
+                        <p class="font-bold text-amber-900 flex items-center gap-1.5">
+                            <i class="fas fa-circle-info text-amber-600"></i> Belum Menerima Kode di Kotak Masuk?
+                        </p>
+                        <p class="text-[11px] text-gray-600">
+                            1. Periksa folder <strong>Spam</strong> atau <strong>Promosi</strong> di email Anda.<br>
+                            2. Klik tombol <strong>"Kirim Ulang Email"</strong> di atas jika dalam 1 menit belum masuk.<br>
+                            3. Anda juga dapat menekan <strong>"Buka via WhatsApp"</strong> untuk menerima kode instan di WA.
+                        </p>
+                    </div>
 
                     <div class="space-y-2 text-left">
                         <label class="block text-xs font-bold text-gray-700 text-center">Masukkan 6 Digit Kode OTP Verifikasi</label>
@@ -2542,6 +2558,65 @@
         <!-- Image display -->
         <div class="p-2 sm:p-4 overflow-auto flex items-center justify-center bg-black/60 min-h-[250px] max-h-[80vh]">
             <img id="chat-preview-modal-img" src="" alt="Pratinjau Foto" class="max-h-[75vh] max-w-full object-contain rounded-xl shadow-lg select-none">
+        </div>
+    </div>
+</div>
+
+<!-- MODAL PREVIEW SLIP GAJI RESMI (SAMA PERSIS DENGAN REFERENSI & TTD OWNER) -->
+<div id="modal-preview-slip" class="fixed inset-0 bg-black/75 backdrop-blur-xs z-[99999] hidden-view flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-2xl w-full max-h-[94vh] flex flex-col shadow-2xl border border-gray-200 overflow-hidden my-auto">
+        <!-- Header Modal -->
+        <div class="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between shrink-0">
+            <div class="flex items-center gap-2">
+                <i class="fas fa-file-invoice-dollar text-blue-600 text-base"></i>
+                <h3 class="font-extrabold text-gray-800 text-sm" id="preview-slip-modal-title">Slip Gaji Karyawan Resmi</h3>
+            </div>
+            <div class="flex items-center gap-2">
+                <button type="button" id="btn-modal-unduh-pdf" class="bg-gray-900 hover:bg-gray-800 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95">
+                    <i class="fas fa-file-pdf text-red-400"></i> Unduh PDF
+                </button>
+                <button type="button" id="btn-modal-kirim-wa" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95">
+                    <i class="fab fa-whatsapp text-white"></i> WA
+                </button>
+                <button type="button" onclick="closeModal('modal-preview-slip')" class="w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 flex items-center justify-center transition">
+                    <i class="fas fa-times text-sm"></i>
+                </button>
+            </div>
+        </div>
+        <!-- Modal Body Content -->
+        <div class="p-2 sm:p-5 overflow-y-auto bg-gray-100/80 flex justify-center items-start min-h-[300px]" id="preview-slip-content-wrapper">
+            <div id="preview-slip-modal-body" class="shadow-md rounded-lg overflow-hidden bg-white max-w-full"></div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL PREVIEW NOTA TRANSAKSI RESMI (PERSIS SEPERTI NOTA REFERENSI) -->
+<div id="modal-preview-nota" class="fixed inset-0 bg-black/75 backdrop-blur-xs z-[99999] hidden-view flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-3xl w-full max-h-[96vh] flex flex-col shadow-2xl border border-gray-200 overflow-hidden my-auto">
+        <!-- Header Modal -->
+        <div class="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between shrink-0">
+            <div class="flex items-center gap-2">
+                <i class="fas fa-file-invoice text-red-600 text-base"></i>
+                <h3 class="font-extrabold text-gray-800 text-sm" id="preview-nota-modal-title">Nota Penjualan Resmi (A4)</h3>
+            </div>
+            <div class="flex items-center gap-2">
+                <button type="button" id="btn-modal-nota-unduh-pdf" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95">
+                    <i class="fas fa-file-pdf text-white"></i> Unduh PDF
+                </button>
+                <button type="button" id="btn-modal-nota-buka-luar" class="bg-gray-800 hover:bg-gray-900 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Buka di Browser Luar / Unduh Manual">
+                    <i class="fas fa-external-link-alt text-white"></i> Buka Luar
+                </button>
+                <button type="button" id="btn-modal-nota-kirim-wa" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95">
+                    <i class="fab fa-whatsapp text-white"></i> WA
+                </button>
+                <button type="button" onclick="closeModal('modal-preview-nota')" class="w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 flex items-center justify-center transition">
+                    <i class="fas fa-times text-sm"></i>
+                </button>
+            </div>
+        </div>
+        <!-- Modal Body Content -->
+        <div class="p-2 sm:p-5 overflow-y-auto bg-gray-100/80 flex justify-center items-start min-h-[300px]" id="preview-nota-content-wrapper">
+            <div id="preview-nota-modal-body" class="shadow-md rounded-lg overflow-hidden bg-white max-w-full"></div>
         </div>
     </div>
 </div>
