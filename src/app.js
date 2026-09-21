@@ -5206,9 +5206,10 @@ function openWhatsAppApp(phone, message) {
 // Helper: Menyiapkan dokumen & membuka di luar aplikasi Android agar dapat diunduh ke memori HP
 async function openDocPdfOutsideApp(options) {
     const { type, filename, title, htmlContent, element, jsPdfOpt, phone, waMessage } = options;
-    showToast('Menyiapkan file PDF untuk dibuka di luar aplikasi...', 'info');
+    showToast('Menyiapkan file PDF...', 'info');
 
     let base64Pdf = null;
+    let localBlob = null;
     try {
         if (typeof html2pdf !== 'undefined' && element) {
             const opt = jsPdfOpt || {
@@ -5216,12 +5217,16 @@ async function openDocPdfOutsideApp(options) {
                 filename: filename,
                 image: { type: 'jpeg', quality: 0.98 },
                 html2canvas: { scale: 2, useCORS: true },
-                jsPDF: { unit: 'mm', format: type === 'nota' ? [80, 200] : 'a5', orientation: 'portrait' }
+                jsPDF: { unit: 'mm', format: type === 'nota' ? 'a4' : 'a5', orientation: 'portrait' }
             };
-            const dataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
+            const worker = html2pdf().set(opt).from(element);
+            const dataUri = await worker.outputPdf('datauristring');
             if (dataUri && dataUri.includes('base64,')) {
                 base64Pdf = dataUri.split('base64,')[1];
             }
+            try {
+                localBlob = await worker.outputPdf('blob');
+            } catch(e){}
         }
     } catch(e) {
         console.warn('Client base64 PDF generation error:', e);
@@ -5245,10 +5250,13 @@ async function openDocPdfOutsideApp(options) {
         });
         const res = await resp.json();
         if (res && res.success) {
-            const apiBase = getApiEndpoint('');
-            const originBase = (window.location.origin && window.location.origin !== 'null' && window.location.protocol.startsWith('http')) 
-                ? window.location.origin 
-                : (apiBase || 'https://ais-dev-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app');
+            let originBase = '';
+            if (window.location.origin && window.location.origin !== 'null' && window.location.protocol.startsWith('http')) {
+                originBase = window.location.origin;
+            } else {
+                const apiBase = getApiEndpoint('');
+                originBase = apiBase ? apiBase.replace(/\/+$/, '') : ('https://' + CLOUD_HOST_DEFAULT);
+            }
             externalUrl = originBase.replace(/\/+$/, '') + res.viewUrl + '?download=1';
         }
     } catch(err) {
@@ -5263,15 +5271,32 @@ async function openDocPdfOutsideApp(options) {
         showToast('Mengunduh PDF di perangkat...', 'info');
     }
 
-    // 3. Cadangan unduh lokal di dalam web jika didukung
-    if (typeof html2pdf !== 'undefined' && element) {
+    // 3. Cadangan unduh lokal jika di web browser standar
+    if (localBlob && !isAndroidApkOrFileEnv()) {
+        try {
+            const blobUrl = URL.createObjectURL(localBlob);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                a.remove();
+                URL.revokeObjectURL(blobUrl);
+            }, 2000);
+            showToast('Nota / Slip PDF siap diunduh!', 'success');
+            return;
+        } catch(e){}
+    }
+
+    if (typeof html2pdf !== 'undefined' && element && !isAndroidApkOrFileEnv()) {
         try {
             const opt = jsPdfOpt || {
                 margin: [4, 4, 4, 4],
                 filename: filename,
                 image: { type: 'jpeg', quality: 0.98 },
                 html2canvas: { scale: 2, useCORS: true },
-                jsPDF: { unit: 'mm', format: type === 'nota' ? [80, 200] : 'a5', orientation: 'portrait' }
+                jsPDF: { unit: 'mm', format: type === 'nota' ? 'a4' : 'a5', orientation: 'portrait' }
             };
             html2pdf().set(opt).from(element).save().then(() => {
                 showToast('Nota / Slip PDF siap diunduh!', 'success');
@@ -5557,13 +5582,16 @@ function renderHistoriTransaksi() {
                     ${extractJenis ? `<span class="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[9px] font-semibold">${extractJenis}</span>` : ''} 
                 </div>
 
-                <!-- Action Buttons: Struk (Bluetooth), Lihat PDF, WA, & Hapus (Khusus Admin) -->
+                <!-- Action Buttons: Struk (Bluetooth), Unduh PDF, Pratinjau, WA, & Hapus (Khusus Admin) -->
                 <div class="flex items-center gap-1.5 flex-wrap">
                     <button onclick="reprintStrukTrx('${idTrx}')" title="Cetak ke Printer Bluetooth" class="bg-gray-900 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-gray-800 active:scale-95 transition font-bold text-[10px]">
                         <i class="fas fa-print"></i> Struk
                     </button>
-                    <button onclick="previewNotaFromHistory('${idTrx}')" title="Lihat Dokumen PDF Resmi" class="bg-red-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-red-700 active:scale-95 transition font-bold text-[10px]">
-                        <i class="fas fa-file-pdf"></i> Lihat PDF
+                    <button onclick="cetakNotaPDFFromHistory('${idTrx}')" title="Unduh Nota PDF (Android APK & Browser)" class="bg-red-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-red-700 active:scale-95 transition font-bold text-[10px]">
+                        <i class="fas fa-download"></i> Unduh PDF
+                    </button>
+                    <button onclick="previewNotaFromHistory('${idTrx}')" title="Lihat Pratinjau Dokumen Nota" class="bg-blue-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-blue-700 active:scale-95 transition font-bold text-[10px]">
+                        <i class="fas fa-eye"></i> Lihat
                     </button>
                     <button onclick="kirimWhatsAppFromHistory('${idTrx}')" title="Kirim Nota via WhatsApp" class="bg-emerald-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-emerald-700 active:scale-95 transition font-bold text-[10px]">
                         <i class="fab fa-whatsapp"></i> WA
@@ -5774,13 +5802,13 @@ function renderHistoriGaji() {
                 </div>
             </div>
 
-            <!-- Tombol Aksi: Lihat Pratinjau, Download PDF, Kirim WhatsApp Karyawan, & Hapus -->
+            <!-- Tombol Aksi: Lihat Pratinjau, Unduh PDF, Kirim WhatsApp Karyawan, & Hapus -->
             <div class="flex items-center gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-100 flex-wrap">
+                <button onclick="lihatPdfSlipGaji(${idx})" title="Unduh Slip Gaji PDF (Android APK & Browser)" class="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
+                    <i class="fas fa-download"></i> Unduh PDF
+                </button>
                 <button onclick="previewSlipGajiFromHistori(${idx})" title="Lihat Pratinjau Slip Gaji Resmi" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
                     <i class="fas fa-eye text-white"></i> Lihat
-                </button>
-                <button onclick="lihatPdfSlipGaji(${idx})" title="Lihat / Unduh Slip Gaji PDF" class="bg-gray-900 hover:bg-gray-800 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
-                    <i class="fas fa-file-pdf text-red-400"></i> PDF
                 </button>
                 <button onclick="kirimWaSlipGaji(${idx})" title="Kirim Link & Rincian Slip Gaji ke No. WhatsApp Karyawan" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
                     <i class="fab fa-whatsapp text-white text-sm"></i> Kirim WA
@@ -6040,12 +6068,41 @@ function previewSlipGajiModal(slipData) {
     if (btnUnduh) {
         btnUnduh.onclick = () => cetakSlipGajiPDF(t);
     }
+    const btnBukaLuar = document.getElementById('btn-modal-slip-buka-luar');
+    if (btnBukaLuar) {
+        btnBukaLuar.onclick = () => openSlipOutside(t);
+    }
     const btnWa = document.getElementById('btn-modal-kirim-wa');
     if (btnWa) {
         btnWa.onclick = () => kirimWaSlipGajiDirect(t);
     }
     openModal('modal-preview-slip');
 }
+
+async function openSlipOutside(slipData) {
+    const t = slipData || LAST_ACTIVE_SLIP;
+    if (!t) {
+        showToast('Data slip gaji tidak ditemukan', 'error');
+        return;
+    }
+    showToast('Menyiapkan slip gaji untuk dibuka di luar aplikasi...', 'info');
+    const cleanName = (t['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9]/g, '_');
+    const cleanBulan = (t['Bulan'] || '').replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `Slip_Gaji_${cleanName}_${cleanBulan}.pdf`;
+    const title = `Slip Gaji - ${t['Nama'] || 'Karyawan'}`;
+    const htmlContent = generateSlipGajiHTML(t);
+    const waMessage = generateSlipGajiWhatsAppMessage(t);
+
+    await openDocPdfOutsideApp({
+        type: 'slip',
+        filename,
+        title,
+        htmlContent,
+        phone: t['No WA'] || '',
+        waMessage
+    });
+}
+window.openSlipOutside = openSlipOutside;
 
 function previewSlipGajiTerbaru() {
     previewSlipGajiModal(LAST_ACTIVE_SLIP);
@@ -7256,6 +7313,7 @@ window.kirimWaSlipGaji = kirimWaSlipGaji;
 window.kirimWaSlipGajiDirect = kirimWaSlipGajiDirect;
 window.lihatPdfSlipGaji = lihatPdfSlipGaji;
 window.cetakSlipGajiPDF = cetakSlipGajiPDF;
+window.openSlipOutside = openSlipOutside;
 window.formatBulanIndo = formatBulanIndo;
 window.savePrinterSettings = savePrinterSettings;
 window.scanPrinters = scanPrinters;
