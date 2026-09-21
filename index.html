@@ -929,15 +929,14 @@
                             <p class="text-xs font-bold mb-1 uppercase text-orange-800">Total Diterima</p>
                             <p class="text-3xl font-extrabold text-red-600" id="s-total">Rp 0</p>
                         </div>
-                        <button type="submit" id="btn-generate-slip" class="w-full bg-emerald-600 text-white py-3.5 rounded-xl font-bold shadow-md mt-2"><i class="fas fa-print"></i> Cetak PDF</button>
+                        <button type="submit" id="btn-generate-slip" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-xl font-bold shadow-md mt-2 transition flex items-center justify-center gap-2"><i class="fas fa-file-invoice-dollar"></i> Buat &amp; Simpan Slip Gaji</button>
                     </form>
                     
                     <div id="hasil-slip" class="mt-5 p-4 border border-emerald-200 bg-emerald-50 rounded-xl hidden-view text-center">
                         <p class="text-sm text-emerald-800 font-bold mb-3"><i class="fas fa-check-circle text-emerald-600 mr-1"></i> Slip Gaji Berhasil Dibuat!</p>
-                        <div class="grid grid-cols-3 gap-2 mb-3">
+                        <div class="grid grid-cols-2 gap-2 mb-3">
                             <button type="button" id="btn-preview-slip" onclick="previewSlipGajiTerbaru()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold py-2.5 rounded-lg flex items-center justify-center gap-1.5 shadow-sm transition"><i class="fas fa-eye"></i> Lihat Slip</button>
-                            <a id="link-pdf" href="#" target="_blank" class="bg-gray-900 hover:bg-gray-800 text-white text-xs font-semibold py-2.5 rounded-lg flex items-center justify-center gap-1.5 shadow-sm transition"><i class="fas fa-file-pdf text-red-400"></i> PDF</a>
-                            <a id="link-wa" href="#" target="_blank" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold py-2.5 rounded-lg flex items-center justify-center gap-1.5 shadow-sm transition"><i class="fab fa-whatsapp text-white"></i> WA</a>
+                            <a id="link-wa" href="#" target="_blank" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold py-2.5 rounded-lg flex items-center justify-center gap-1.5 shadow-sm transition"><i class="fab fa-whatsapp text-white"></i> Kirim WA &amp; Link PDF</a>
                         </div>
                         <button type="button" onclick="resetFormSlip()" class="w-full bg-white border border-gray-300 text-gray-600 text-xs font-semibold py-2 rounded-lg hover:bg-gray-50 transition shadow-sm">Selesai &amp; Buat Baru</button>
                     </div>
@@ -2572,14 +2571,8 @@
                 <h3 class="font-extrabold text-gray-800 text-sm" id="preview-slip-modal-title">Slip Gaji Karyawan Resmi</h3>
             </div>
             <div class="flex items-center gap-2">
-                <button type="button" id="btn-modal-unduh-pdf" class="bg-gray-900 hover:bg-gray-800 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95">
-                    <i class="fas fa-file-pdf text-red-400"></i> Unduh PDF
-                </button>
-                <button type="button" id="btn-modal-slip-buka-luar" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Buka di Browser Luar / Unduh Manual">
-                    <i class="fas fa-external-link-alt text-white"></i> Buka Luar
-                </button>
-                <button type="button" id="btn-modal-kirim-wa" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95">
-                    <i class="fab fa-whatsapp text-white"></i> WA
+                <button type="button" id="btn-modal-kirim-wa" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Kirim Rincian & Link Unduh PDF ke WhatsApp Karyawan">
+                    <i class="fab fa-whatsapp text-white"></i> Kirim WA & Link PDF
                 </button>
                 <button type="button" onclick="closeModal('modal-preview-slip')" class="w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 flex items-center justify-center transition">
                     <i class="fas fa-times text-sm"></i>
@@ -2603,14 +2596,8 @@
                 <h3 class="font-extrabold text-gray-800 text-sm" id="preview-nota-modal-title">Nota Penjualan Resmi (A4)</h3>
             </div>
             <div class="flex items-center gap-2">
-                <button type="button" id="btn-modal-nota-unduh-pdf" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95">
-                    <i class="fas fa-file-pdf text-white"></i> Unduh PDF
-                </button>
-                <button type="button" id="btn-modal-nota-buka-luar" class="bg-gray-800 hover:bg-gray-900 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Buka di Browser Luar / Unduh Manual">
-                    <i class="fas fa-external-link-alt text-white"></i> Buka Luar
-                </button>
-                <button type="button" id="btn-modal-nota-kirim-wa" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95">
-                    <i class="fab fa-whatsapp text-white"></i> WA
+                <button type="button" id="btn-modal-nota-kirim-wa" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Kirim Rincian & Link Unduh PDF ke WhatsApp Pelanggan">
+                    <i class="fab fa-whatsapp text-white"></i> Kirim WA & Link PDF
                 </button>
                 <button type="button" onclick="closeModal('modal-preview-nota')" class="w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 flex items-center justify-center transition">
                     <i class="fas fa-times text-sm"></i>

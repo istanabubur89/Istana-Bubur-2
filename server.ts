@@ -52,15 +52,15 @@ interface StoredDocument {
 }
 const documentStore = new Map<string, StoredDocument>();
 
-// Periodic cleanup of documents older than 3 hours
+// Periodic cleanup of documents older than 30 days (for persistent WhatsApp links)
 setInterval(() => {
   const now = Date.now();
   for (const [id, doc] of documentStore.entries()) {
-    if (now - doc.createdAt > 3 * 3600 * 1000) {
+    if (now - doc.createdAt > 30 * 24 * 3600 * 1000) {
       documentStore.delete(id);
     }
   }
-}, 30 * 60 * 1000);
+}, 60 * 60 * 1000);
 
 // Email Transporter Helper with connection pool, dual port (465 SSL & 587 TLS), and deliverability headers
 let sharedPooledTransporter: any = null;
@@ -311,7 +311,8 @@ app.post('/api/pdf/prepare-doc', (req, res) => {
       return res.status(400).json({ success: false, message: 'htmlContent wajib diisi' });
     }
 
-    const docId = 'ib-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex');
+    const customId = req.body.customId ? String(req.body.customId).replace(/[^a-zA-Z0-9._-]/g, '_') : '';
+    const docId = customId || ('ib-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex'));
     const safeFilename = (filename || (type === 'slip' ? 'Slip_Gaji.pdf' : 'Nota_Transaksi.pdf')).replace(/[^a-zA-Z0-9._-]/g, '_');
 
     documentStore.set(docId, {

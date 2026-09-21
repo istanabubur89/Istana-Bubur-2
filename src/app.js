@@ -3916,13 +3916,6 @@ async function generateSlip(e) {
                 btnPreviewSlip.onclick = () => previewSlipGajiModal(slipObj);
             }
 
-            const linkPdf = document.getElementById('link-pdf');
-            if (linkPdf) {
-                linkPdf.onclick = (ev) => {
-                    ev.preventDefault();
-                    cetakSlipGajiPDF(slipObj);
-                };
-            }
             const linkWa = document.getElementById('link-wa');
             if (linkWa) {
                 linkWa.onclick = (ev) => {
@@ -5010,14 +5003,6 @@ function previewNotaModal(trxData) {
     if (title) {
         title.textContent = `Nota Penjualan - #${trx.id || ''} (${trx.nama_pelanggan || 'Pelanggan'})`;
     }
-    const btnUnduh = document.getElementById('btn-modal-nota-unduh-pdf');
-    if (btnUnduh) {
-        btnUnduh.onclick = () => cetakNotaPDF(trx);
-    }
-    const btnBukaLuar = document.getElementById('btn-modal-nota-buka-luar');
-    if (btnBukaLuar) {
-        btnBukaLuar.onclick = () => openNotaOutside(trx);
-    }
     const btnWa = document.getElementById('btn-modal-nota-kirim-wa');
     if (btnWa) {
         btnWa.onclick = () => kirimWhatsApp(trx);
@@ -5203,6 +5188,52 @@ function openWhatsAppApp(phone, message) {
     }
 }
 
+// Helper: Mempersiapkan dokumen di server dan menghasilkan tautan unduh PDF publik untuk WhatsApp
+async function prepareDocForExternalLink(options) {
+    const { type, customId, filename, title, htmlContent, phone, waMessage } = options;
+    try {
+        let originBase = '';
+        if (typeof window !== 'undefined' && window.location) {
+            const org = window.location.origin;
+            if (org && org !== 'null' && (window.location.protocol === 'http:' || window.location.protocol === 'https:')) {
+                originBase = org.replace(/\/+$/, '');
+            }
+        }
+        if (!originBase) {
+            const apiBase = getApiEndpoint('');
+            originBase = apiBase ? apiBase.replace(/\/+$/, '') : ('https://' + CLOUD_HOST_DEFAULT);
+        }
+
+        const endpoint = getApiEndpoint('/api/pdf/prepare-doc');
+        const resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: type || 'nota',
+                customId: customId || undefined,
+                filename,
+                title,
+                htmlContent,
+                phone: phone || '',
+                waMessage: waMessage || ''
+            })
+        });
+
+        const res = await resp.json();
+        if (res && res.success) {
+            return {
+                docId: res.docId,
+                viewUrl: `${originBase}${res.viewUrl}`,
+                downloadUrl: `${originBase}${res.viewUrl}?download=1`
+            };
+        }
+    } catch(err) {
+        console.warn('prepareDocForExternalLink error:', err);
+    }
+    return null;
+}
+window.prepareDocForExternalLink = prepareDocForExternalLink;
+
 // Helper: Menyiapkan dokumen & membuka di luar aplikasi Android agar dapat diunduh ke memori HP
 async function openDocPdfOutsideApp(options) {
     const { type, filename, title, htmlContent, element, jsPdfOpt, phone, waMessage } = options;
@@ -5305,8 +5336,13 @@ async function openDocPdfOutsideApp(options) {
     }
 }
 
-function generateReceiptWhatsAppMessage(trx) {
+function generateReceiptWhatsAppMessage(trx, linkPdf = '') {
     const itemsText = (trx.items || []).map(i => `• ${i.nama} (${i.qty}x @Rp ${formatRupiah(i.harga)}) = Rp ${formatRupiah(i.qty * i.harga)}`).join('\n');
+
+    let linkPdfSection = '';
+    if (linkPdf) {
+        linkPdfSection = `📄 *Link Unduh PDF Nota Resmi:*\n${linkPdf}\n===============================\n`;
+    }
 
     return `*NOTA TRANSAKSI - ISTANA BUBUR*
 ===============================
@@ -5322,7 +5358,7 @@ ${itemsText}
 *TOTAL BELANJA: Rp ${formatRupiah(trx.total)}*
 *Pembayaran:* ${trx.metode || 'Cash'}${trx.bayar ? `\n*Tunai:* Rp ${formatRupiah(trx.bayar)}\n*Kembalian:* Rp ${formatRupiah(trx.kembali)}` : ''}
 ===============================
-_Terima kasih telah berbelanja di Istana Bubur!_
+${linkPdfSection}_Terima kasih telah berbelanja di Istana Bubur!_
 _Selamat menikmati hidangan kami._`;
 }
 
@@ -5398,9 +5434,9 @@ function printReceiptFallback(htmlContent) {
 }
 
 // ==========================================
-// FEATURE: KIRIM WHATSAPP
+// FEATURE: KIRIM WHATSAPP (DENGAN LINK UNDUH PDF RESMI)
 // ==========================================
-function kirimWhatsApp(data = null) {
+async function kirimWhatsApp(data = null) {
     const trx = data || LAST_TRX_DATA;
     if (!trx) {
         showToast('Tidak ada data transaksi untuk dikirim ke WhatsApp', 'error');
@@ -5414,7 +5450,28 @@ function kirimWhatsApp(data = null) {
         noWa = noWa.trim();
     }
 
-    const waMessage = generateReceiptWhatsAppMessage(trx);
+    showToast('Menyiapkan pesan WhatsApp & link unduh PDF nota...', 'info');
+
+    let linkPdf = '';
+    try {
+        const htmlContent = generateReceiptHTML(trx);
+        const filename = `Nota_${(trx.id || 'Transaksi').toString().replace(/[^a-zA-Z0-9._-]/g, '_')}.pdf`;
+        const res = await prepareDocForExternalLink({
+            type: 'nota',
+            customId: `nota-${(trx.id || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_')}`,
+            filename,
+            title: `Nota Transaksi #${trx.id || ''}`,
+            htmlContent,
+            phone: noWa
+        });
+        if (res && res.downloadUrl) {
+            linkPdf = res.downloadUrl;
+        }
+    } catch(err) {
+        console.warn('Gagal menyiapkan link unduh PDF nota:', err);
+    }
+
+    const waMessage = generateReceiptWhatsAppMessage(trx, linkPdf);
     openWhatsAppApp(noWa, waMessage);
 }
 
@@ -5582,18 +5639,15 @@ function renderHistoriTransaksi() {
                     ${extractJenis ? `<span class="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[9px] font-semibold">${extractJenis}</span>` : ''} 
                 </div>
 
-                <!-- Action Buttons: Struk (Bluetooth), Unduh PDF, Pratinjau, WA, & Hapus (Khusus Admin) -->
+                <!-- Action Buttons: Struk (Bluetooth), Lihat Dokumen, WA & Link Unduh PDF, & Hapus (Khusus Admin) -->
                 <div class="flex items-center gap-1.5 flex-wrap">
                     <button onclick="reprintStrukTrx('${idTrx}')" title="Cetak ke Printer Bluetooth" class="bg-gray-900 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-gray-800 active:scale-95 transition font-bold text-[10px]">
                         <i class="fas fa-print"></i> Struk
                     </button>
-                    <button onclick="cetakNotaPDFFromHistory('${idTrx}')" title="Unduh Nota PDF (Android APK & Browser)" class="bg-red-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-red-700 active:scale-95 transition font-bold text-[10px]">
-                        <i class="fas fa-download"></i> Unduh PDF
-                    </button>
-                    <button onclick="previewNotaFromHistory('${idTrx}')" title="Lihat Pratinjau Dokumen Nota" class="bg-blue-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-blue-700 active:scale-95 transition font-bold text-[10px]">
+                    <button onclick="previewNotaFromHistory('${idTrx}')" title="Lihat Dokumen Nota" class="bg-blue-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-blue-700 active:scale-95 transition font-bold text-[10px]">
                         <i class="fas fa-eye"></i> Lihat
                     </button>
-                    <button onclick="kirimWhatsAppFromHistory('${idTrx}')" title="Kirim Nota via WhatsApp" class="bg-emerald-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-emerald-700 active:scale-95 transition font-bold text-[10px]">
+                    <button onclick="kirimWhatsAppFromHistory('${idTrx}')" title="Kirim Rincian & Link Unduh PDF via WhatsApp" class="bg-emerald-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-emerald-700 active:scale-95 transition font-bold text-[10px]">
                         <i class="fab fa-whatsapp"></i> WA
                     </button>
                     ${deleteButtonHtml}
@@ -5802,15 +5856,12 @@ function renderHistoriGaji() {
                 </div>
             </div>
 
-            <!-- Tombol Aksi: Lihat Pratinjau, Unduh PDF, Kirim WhatsApp Karyawan, & Hapus -->
+            <!-- Tombol Aksi: Lihat Dokumen Slip, Kirim WhatsApp Karyawan & Link PDF, & Hapus -->
             <div class="flex items-center gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-100 flex-wrap">
-                <button onclick="lihatPdfSlipGaji(${idx})" title="Unduh Slip Gaji PDF (Android APK & Browser)" class="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
-                    <i class="fas fa-download"></i> Unduh PDF
-                </button>
-                <button onclick="previewSlipGajiFromHistori(${idx})" title="Lihat Pratinjau Slip Gaji Resmi" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
+                <button onclick="previewSlipGajiFromHistori(${idx})" title="Lihat Dokumen Slip Gaji Resmi" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
                     <i class="fas fa-eye text-white"></i> Lihat
                 </button>
-                <button onclick="kirimWaSlipGaji(${idx})" title="Kirim Link & Rincian Slip Gaji ke No. WhatsApp Karyawan" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
+                <button onclick="kirimWaSlipGaji(${idx})" title="Kirim Link Unduh PDF & Rincian Slip Gaji ke WhatsApp Karyawan" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
                     <i class="fab fa-whatsapp text-white text-sm"></i> Kirim WA
                 </button>
                 <button onclick="confirmHapusHistoriGaji(${idx})" title="Hapus Riwayat Slip Gaji" class="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
@@ -6064,14 +6115,6 @@ function previewSlipGajiModal(slipData) {
     if (title) {
         title.textContent = `Slip Gaji - ${t['Nama'] || 'Karyawan'} (${t['Bulan'] || ''})`;
     }
-    const btnUnduh = document.getElementById('btn-modal-unduh-pdf');
-    if (btnUnduh) {
-        btnUnduh.onclick = () => cetakSlipGajiPDF(t);
-    }
-    const btnBukaLuar = document.getElementById('btn-modal-slip-buka-luar');
-    if (btnBukaLuar) {
-        btnBukaLuar.onclick = () => openSlipOutside(t);
-    }
     const btnWa = document.getElementById('btn-modal-kirim-wa');
     if (btnWa) {
         btnWa.onclick = () => kirimWaSlipGajiDirect(t);
@@ -6121,7 +6164,7 @@ window.previewSlipGajiModal = previewSlipGajiModal;
 window.previewSlipGajiTerbaru = previewSlipGajiTerbaru;
 window.previewSlipGajiFromHistori = previewSlipGajiFromHistori;
 
-function generateSlipGajiWhatsAppMessage(t) {
+function generateSlipGajiWhatsAppMessage(t, customLinkPdf = '') {
     const bulanFormatted = formatBulanIndo(t['Bulan']);
     const bonus = Number(t['Bonus']) || 0;
     const potongan = Number(t['Potongan']) || 0;
@@ -6130,9 +6173,10 @@ function generateSlipGajiWhatsAppMessage(t) {
     const hari = Number(t['Hari Masuk']) || 0;
     const pokok = (harian && hari) ? (harian * hari) : (totalGaji - bonus + potongan);
 
+    const targetLink = customLinkPdf || t['Link PDF'] || '';
     let linkPdfSection = '';
-    if (t['Link PDF'] && t['Link PDF'] !== '#' && t['Link PDF'].startsWith('http')) {
-        linkPdfSection = `*Link Unduh Slip Gaji PDF:*\n${t['Link PDF']}\n\n`;
+    if (targetLink && targetLink !== '#' && targetLink.startsWith('http')) {
+        linkPdfSection = `📄 *Link Unduh Slip Gaji PDF:*\n${targetLink}\n\n`;
     } else {
         linkPdfSection = `*Status Dokumen:*\nTelah diverifikasi & disahkan resmi oleh Manajemen Istana Bubur\n\n`;
     }
@@ -6165,7 +6209,7 @@ function kirimWaSlipGaji(idx) {
     kirimWaSlipGajiDirect(t);
 }
 
-function kirimWaSlipGajiDirect(t) {
+async function kirimWaSlipGajiDirect(t) {
     if (!t) {
         showToast('Data slip gaji tidak ditemukan', 'error');
         return;
@@ -6189,7 +6233,35 @@ function kirimWaSlipGajiDirect(t) {
         noWa = noWa.trim();
     }
 
-    const waMessage = generateSlipGajiWhatsAppMessage(t);
+    showToast('Menyiapkan pesan WhatsApp & link unduh PDF slip gaji...', 'info');
+
+    let linkPdf = '';
+    if (t['Link PDF'] && t['Link PDF'].startsWith('http')) {
+        linkPdf = t['Link PDF'];
+    }
+
+    try {
+        const cleanName = (t['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const cleanBulan = (t['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const filename = `Slip_Gaji_${cleanName}_${cleanBulan}.pdf`;
+        const htmlContent = generateSlipGajiHTML(t);
+        const res = await prepareDocForExternalLink({
+            type: 'slip',
+            customId: `slip-${cleanName}-${cleanBulan}-${Date.now().toString(36)}`,
+            filename,
+            title: `Slip Gaji - ${t['Nama'] || 'Karyawan'} (${formatBulanIndo(t['Bulan'])})`,
+            htmlContent,
+            phone: noWa
+        });
+        if (res && res.downloadUrl) {
+            linkPdf = res.downloadUrl;
+            t['Link PDF'] = linkPdf;
+        }
+    } catch(err) {
+        console.warn('Gagal menyiapkan link unduh slip gaji:', err);
+    }
+
+    const waMessage = generateSlipGajiWhatsAppMessage(t, linkPdf);
     openWhatsAppApp(noWa, waMessage);
 }
 
