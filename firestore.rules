@@ -38,6 +38,12 @@ service cloud.firestore {
       allow read, write: if true;
     }
     // -------------------------------------------------------------
+    // KOLEKSI: DOCUMENTS (Nota & Slip PDF untuk tautan unduh publik)
+    // -------------------------------------------------------------
+    match /documents/{docId} {
+      allow read, write: if true;
+    }
+    // -------------------------------------------------------------
     // KOLEKSI: BRANCHES (Daftar Cabang Operasional)
     // -------------------------------------------------------------
     match /branches/{branchId} {

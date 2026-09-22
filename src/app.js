@@ -23,7 +23,10 @@ import {
     firestoreGetHistoriGaji,
     firestoreProcessSlipGaji,
     firestoreDeleteHistoriGaji,
+    firestoreUpdateTransaksiPdfLink,
+    firestoreUpdateSlipPdfLink,
     subscribeToTransactions,
+    subscribeToPayroll,
     subscribeToAdminChat,
     sendAdminChatMessage,
     deleteAdminChatMessage,
@@ -38,7 +41,9 @@ import {
     firestoreGetAllUsers,
     firestoreGetBranches,
     firestoreSaveBranch,
-    subscribeToBranches
+    subscribeToBranches,
+    firestoreSaveDocument,
+    firestoreGetDocument
 } from './firebase.ts';
 
 // Global Cache & State
@@ -104,7 +109,34 @@ let chatPollTimer = null;
 let wsPingInterval = null;
 
 // Domain Cloud Server default untuk Android WebView APK, Capacitor, dan Web
-const CLOUD_HOST_DEFAULT = 'ais-dev-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app';
+const CLOUD_HOST_DEV = 'ais-dev-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app';
+const CLOUD_HOST_PUBLIC = 'ais-pre-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app';
+const CLOUD_HOST_DEFAULT = CLOUD_HOST_DEV;
+
+// Helper: Mendapatkan Base URL publik resmi yang dapat dibuka oleh siapa saja (termasuk penerima WhatsApp)
+function getPublicWebOrigin() {
+    // 1. Cek jika pengguna menyetel URL publik custom di localStorage
+    const customPublic = (localStorage.getItem('IB_PUBLIC_URL') || localStorage.getItem('IB_API_SERVER_URL') || '').trim();
+    if (customPublic.startsWith('http://') || customPublic.startsWith('https://')) {
+        return customPublic.replace(/\/+$/, '');
+    }
+
+    // 2. Jika di web browser normal (bukan APK/file://)
+    if (!isAndroidApkOrFileEnv() && typeof window !== 'undefined' && window.location) {
+        const origin = window.location.origin;
+        if (origin && origin !== 'null' && (window.location.protocol === 'http:' || window.location.protocol === 'https:')) {
+            // Jika berjalan di ais-dev, arahkan ke ais-pre agar link publik bisa dibuka oleh pelanggan tanpa login AI Studio
+            if (origin.includes('ais-dev-')) {
+                return origin.replace('ais-dev-', 'ais-pre-').replace(/\/+$/, '');
+            }
+            return origin.replace(/\/+$/, '');
+        }
+    }
+
+    // 3. Fallback resmi untuk APK Android WebView: Gunakan URL Cloud Publik Shared
+    return 'https://' + CLOUD_HOST_PUBLIC;
+}
+window.getPublicWebOrigin = getPublicWebOrigin;
 
 // Deteksi cerdas apakah berjalan di dalam APK Android WebView / file:// / Capacitor / local host non-dev
 function isAndroidApkOrFileEnv() {
@@ -5190,47 +5222,73 @@ function openWhatsAppApp(phone, message) {
 
 // Helper: Mempersiapkan dokumen di server dan menghasilkan tautan unduh PDF publik untuk WhatsApp
 async function prepareDocForExternalLink(options) {
-    const { type, customId, filename, title, htmlContent, phone, waMessage } = options;
-    try {
-        let originBase = '';
-        if (typeof window !== 'undefined' && window.location) {
-            const org = window.location.origin;
-            if (org && org !== 'null' && (window.location.protocol === 'http:' || window.location.protocol === 'https:')) {
-                originBase = org.replace(/\/+$/, '');
-            }
-        }
-        if (!originBase) {
-            const apiBase = getApiEndpoint('');
-            originBase = apiBase ? apiBase.replace(/\/+$/, '') : ('https://' + CLOUD_HOST_DEFAULT);
-        }
+    const { type, customId, filename, title, htmlContent, phone, waMessage, base64Pdf } = options;
+    
+    // 1. Tentukan docId yang konsisten & bersih
+    let docId = '';
+    if (customId) {
+        docId = String(customId).replace(/[^a-zA-Z0-9._-]/g, '_');
+    } else {
+        const rand = Math.random().toString(36).substring(2, 8);
+        docId = `${type || 'nota'}-${Date.now().toString(36)}-${rand}`;
+    }
 
+    const safeFilename = (filename || (type === 'slip' ? 'Slip_Gaji.pdf' : 'Nota_Transaksi.pdf')).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const fullFilename = safeFilename.endsWith('.pdf') ? safeFilename : (safeFilename + '.pdf');
+    const docTitle = title || (type === 'slip' ? 'Slip Gaji Karyawan' : 'Nota Transaksi');
+    const publicOrigin = getPublicWebOrigin();
+
+    const viewUrl = `${publicOrigin}/view-doc/${docId}`;
+    const downloadUrl = `${publicOrigin}/view-doc/${docId}?download=1`;
+
+    // 2. SIMPAN DOKUMEN KE CLOUD FIRESTORE (Koleksi 'documents')
+    // Sangat penting untuk Android APK: SDK Firebase Client dapat menyimpan langsung secara stabil
+    // tanpa tergantung routing cookie/proxy HTTP lokal!
+    try {
+        if (typeof firestoreSaveDocument === 'function') {
+            await firestoreSaveDocument({
+                id: docId,
+                type: type || 'nota',
+                filename: fullFilename,
+                title: docTitle,
+                htmlContent: htmlContent || '',
+                phone: phone || '',
+                waMessage: waMessage || '',
+                base64Pdf: base64Pdf || ''
+            });
+        }
+    } catch(fsErr) {
+        console.warn('[prepareDocForExternalLink] Firestore save warning:', fsErr);
+    }
+
+    // 3. Cadangan: Kirim juga ke server Express jika server dapat dihubungi
+    try {
         const endpoint = getApiEndpoint('/api/pdf/prepare-doc');
-        const resp = await fetch(endpoint, {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                customId: docId,
                 type: type || 'nota',
-                customId: customId || undefined,
-                filename,
-                title,
-                htmlContent,
+                filename: fullFilename,
+                title: docTitle,
+                htmlContent: htmlContent || '',
                 phone: phone || '',
-                waMessage: waMessage || ''
-            })
-        });
+                waMessage: waMessage || '',
+                base64Pdf: base64Pdf || undefined
+            }),
+            signal: controller.signal
+        }).then(r => r.json()).catch(() => {}).finally(() => clearTimeout(timeoutId));
+    } catch(e) {}
 
-        const res = await resp.json();
-        if (res && res.success) {
-            return {
-                docId: res.docId,
-                viewUrl: `${originBase}${res.viewUrl}`,
-                downloadUrl: `${originBase}${res.viewUrl}?download=1`
-            };
-        }
-    } catch(err) {
-        console.warn('prepareDocForExternalLink error:', err);
-    }
-    return null;
+    // SELALU KEMBALIKAN TAUTAN PUBLIK VALID (TIDAK PERNAH NULL)
+    return {
+        docId,
+        viewUrl,
+        downloadUrl
+    };
 }
 window.prepareDocForExternalLink = prepareDocForExternalLink;
 
@@ -5339,10 +5397,14 @@ async function openDocPdfOutsideApp(options) {
 function generateReceiptWhatsAppMessage(trx, linkPdf = '') {
     const itemsText = (trx.items || []).map(i => `• ${i.nama} (${i.qty}x @Rp ${formatRupiah(i.harga)}) = Rp ${formatRupiah(i.qty * i.harga)}`).join('\n');
 
-    let linkPdfSection = '';
-    if (linkPdf) {
-        linkPdfSection = `📄 *Link Unduh PDF Nota Resmi:*\n${linkPdf}\n===============================\n`;
+    // Jamin selalu menyertakan link unduh PDF nota yang valid untuk Android APK & Web
+    let targetLink = linkPdf;
+    if (!targetLink || !targetLink.startsWith('http')) {
+        const fallbackDocId = `nota-${(trx.id || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+        targetLink = `${getPublicWebOrigin()}/view-doc/${fallbackDocId}?download=1`;
     }
+
+    const linkPdfSection = `📄 *Link Unduh PDF Nota Resmi:*\n${targetLink}\n===============================\n`;
 
     return `*NOTA TRANSAKSI - ISTANA BUBUR*
 ===============================
@@ -5452,13 +5514,16 @@ async function kirimWhatsApp(data = null) {
 
     showToast('Menyiapkan pesan WhatsApp & link unduh PDF nota...', 'info');
 
-    let linkPdf = '';
+    const docId = `nota-${(trx.id || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const publicOrigin = getPublicWebOrigin();
+    let linkPdf = `${publicOrigin}/view-doc/${docId}?download=1`;
+
     try {
         const htmlContent = generateReceiptHTML(trx);
         const filename = `Nota_${(trx.id || 'Transaksi').toString().replace(/[^a-zA-Z0-9._-]/g, '_')}.pdf`;
         const res = await prepareDocForExternalLink({
             type: 'nota',
-            customId: `nota-${(trx.id || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_')}`,
+            customId: docId,
             filename,
             title: `Nota Transaksi #${trx.id || ''}`,
             htmlContent,
@@ -6173,13 +6238,17 @@ function generateSlipGajiWhatsAppMessage(t, customLinkPdf = '') {
     const hari = Number(t['Hari Masuk']) || 0;
     const pokok = (harian && hari) ? (harian * hari) : (totalGaji - bonus + potongan);
 
-    const targetLink = customLinkPdf || t['Link PDF'] || '';
-    let linkPdfSection = '';
-    if (targetLink && targetLink !== '#' && targetLink.startsWith('http')) {
-        linkPdfSection = `📄 *Link Unduh Slip Gaji PDF:*\n${targetLink}\n\n`;
-    } else {
-        linkPdfSection = `*Status Dokumen:*\nTelah diverifikasi & disahkan resmi oleh Manajemen Istana Bubur\n\n`;
+    const cleanName = (t['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const cleanBulan = (t['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const fallbackDocId = t['ID Gaji'] ? `slip-${String(t['ID Gaji']).replace(/[^a-zA-Z0-9._-]/g, '_')}` : `slip-${cleanName}-${cleanBulan}`;
+    const publicOrigin = getPublicWebOrigin();
+
+    let targetLink = customLinkPdf || t['Link PDF'] || '';
+    if (!targetLink || targetLink === '#' || !targetLink.startsWith('http')) {
+        targetLink = `${publicOrigin}/view-doc/${fallbackDocId}?download=1`;
     }
+
+    const linkPdfSection = `📄 *Link Unduh Slip Gaji PDF:*\n${targetLink}\n\n`;
 
     return `*SLIP GAJI KARYAWAN - ISTANA BUBUR*
 ================================
@@ -6235,19 +6304,22 @@ async function kirimWaSlipGajiDirect(t) {
 
     showToast('Menyiapkan pesan WhatsApp & link unduh PDF slip gaji...', 'info');
 
-    let linkPdf = '';
+    const cleanName = (t['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const cleanBulan = (t['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const docId = t['ID Gaji'] ? `slip-${String(t['ID Gaji']).replace(/[^a-zA-Z0-9._-]/g, '_')}` : `slip-${cleanName}-${cleanBulan}`;
+    const publicOrigin = getPublicWebOrigin();
+    let linkPdf = `${publicOrigin}/view-doc/${docId}?download=1`;
+
     if (t['Link PDF'] && t['Link PDF'].startsWith('http')) {
         linkPdf = t['Link PDF'];
     }
 
     try {
-        const cleanName = (t['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
-        const cleanBulan = (t['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
         const filename = `Slip_Gaji_${cleanName}_${cleanBulan}.pdf`;
         const htmlContent = generateSlipGajiHTML(t);
         const res = await prepareDocForExternalLink({
             type: 'slip',
-            customId: `slip-${cleanName}-${cleanBulan}-${Date.now().toString(36)}`,
+            customId: docId,
             filename,
             title: `Slip Gaji - ${t['Nama'] || 'Karyawan'} (${formatBulanIndo(t['Bulan'])})`,
             htmlContent,

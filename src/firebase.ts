@@ -9,6 +9,7 @@ import {
   getDocs,
   getDoc,
   setDoc,
+  updateDoc,
   deleteDoc,
   query,
   orderBy,
@@ -54,6 +55,7 @@ export const COLLECTIONS = {
   TRANSACTIONS: 'transactions',
   EMPLOYEES: 'employees',
   PAYROLL: 'payroll',
+  DOCUMENTS: 'documents',
   BRANCHES: 'branches',
   REFERRAL_CODES: 'referralCodes',
   ADMIN_CONVERSATIONS: 'admin_conversations',
@@ -533,6 +535,7 @@ export async function firestoreGetHistoriTransaksi() {
       'Kembalian': Number(data.kembalian || 0),
       'Metode': data.metode || 'Cash',
       'Items JSON': typeof data.items === 'string' ? data.items : JSON.stringify(data.items || []),
+      'Link PDF': data.linkPdf || '#',
       _timestamp: data.createdAt || 0
     });
   });
@@ -562,6 +565,7 @@ export async function firestoreProcessTransaksiKasir(trx: any) {
     kembalian: Number(trx.kembali || 0),
     metode: trx.metode || 'Cash',
     items: itemsJson,
+    linkPdf: trx.linkPdf || '#',
     createdAt: Date.now()
   };
 
@@ -578,6 +582,21 @@ export async function firestoreDeleteTransaksi(trxId: string) {
   const targetDoc = doc(db, COLLECTIONS.TRANSACTIONS, trxId);
   await deleteDoc(targetDoc);
   return { success: true, message: `Transaksi #${trxId} berhasil dihapus dari Cloud Firestore.` };
+}
+
+export async function firestoreUpdateTransaksiPdfLink(trxId: string, linkPdf: string) {
+  try {
+    const cleanId = String(trxId).trim();
+    const targetDoc = doc(db, COLLECTIONS.TRANSACTIONS, cleanId);
+    await updateDoc(targetDoc, {
+      linkPdf: linkPdf,
+      updatedAt: Date.now()
+    });
+    return { success: true };
+  } catch(err) {
+    console.warn(`[firestoreUpdateTransaksiPdfLink error for ${trxId}]:`, err);
+    return { success: false, error: err };
+  }
 }
 
 // -------------------------------------------------------------
@@ -653,6 +672,55 @@ export async function firestoreDeleteHistoriGaji(slipId: string) {
   return { success: true, message: 'Riwayat slip gaji berhasil dihapus dari Cloud Firestore.' };
 }
 
+export async function firestoreUpdateSlipPdfLink(slipId: string, linkPdf: string) {
+  try {
+    const cleanId = String(slipId).trim();
+    const targetDoc = doc(db, COLLECTIONS.PAYROLL, cleanId);
+    await updateDoc(targetDoc, {
+      linkPdf: linkPdf,
+      updatedAt: Date.now()
+    });
+    return { success: true };
+  } catch(err) {
+    console.warn(`[firestoreUpdateSlipPdfLink error for ${slipId}]:`, err);
+    return { success: false, error: err };
+  }
+}
+
+// -------------------------------------------------------------
+// REALTIME LISTENERS
+// -------------------------------------------------------------
+export function subscribeToPayroll(callback: (payrollList: any[]) => void): () => void {
+  const q = collection(db, COLLECTIONS.PAYROLL);
+  return onSnapshot(q, (snapshot) => {
+    const list: any[] = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      list.push({
+        'ID Slip': data.id || docSnap.id,
+        'Nama': data.nama || '',
+        'ID Karyawan': data.employeeId || '',
+        'Bulan': data.bulan || '',
+        'Hari Masuk': Number(data.hariMasuk || 0),
+        'Gaji Harian': Number(data.gajiHarian || 0),
+        'Bonus': Number(data.bonus || 0),
+        'Potongan': Number(data.potongan || 0),
+        'Total Gaji': Number(data.totalGaji || 0),
+        'Cabang': data.cabang || 'Pusat',
+        'Jabatan': data.jabatan || '-',
+        'No WA': data.noWa || '',
+        'Keterangan Libur': data.keteranganLibur || '',
+        'Link PDF': data.linkPdf || '#',
+        _timestamp: data.createdAt || 0
+      });
+    });
+    list.sort((a, b) => (b._timestamp || 0) - (a._timestamp || 0));
+    callback(list);
+  }, (err) => {
+    console.warn('[Firestore Payroll Listener Warning]:', err);
+  });
+}
+
 // -------------------------------------------------------------
 // REALTIME LISTENERS
 // -------------------------------------------------------------
@@ -674,6 +742,7 @@ export function subscribeToTransactions(callback: (transactions: any[]) => void)
         'Kembalian': Number(data.kembalian || 0),
         'Metode': data.metode || 'Cash',
         'Items JSON': typeof data.items === 'string' ? data.items : JSON.stringify(data.items || []),
+        'Link PDF': data.linkPdf || '#',
         _timestamp: data.createdAt || 0
       });
     });
@@ -1136,5 +1205,56 @@ export function subscribeToBranches(callback: (branches: string[]) => void): () 
   } catch (e) {
     callback(['Sempajak', 'M Yamin']);
     return () => {};
+  }
+}
+
+// -------------------------------------------------------------
+// DOKUMEN ELEKTRONIK PUBLIK (NOTA TRANSAKSI & SLIP GAJI PDF)
+// -------------------------------------------------------------
+export async function firestoreSaveDocument(docData: {
+  id: string;
+  type: 'nota' | 'slip';
+  filename: string;
+  title: string;
+  htmlContent: string;
+  phone?: string;
+  waMessage?: string;
+  base64Pdf?: string;
+}): Promise<boolean> {
+  try {
+    const cleanId = String(docData.id || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+    if (!cleanId) return false;
+    const docRef = doc(db, COLLECTIONS.DOCUMENTS, cleanId);
+    await setDoc(docRef, {
+      id: cleanId,
+      type: docData.type || 'nota',
+      filename: docData.filename,
+      title: docData.title,
+      htmlContent: docData.htmlContent,
+      phone: docData.phone || '',
+      waMessage: docData.waMessage || '',
+      base64Pdf: docData.base64Pdf || '',
+      createdAt: Date.now()
+    }, { merge: true });
+    return true;
+  } catch (err) {
+    console.warn('[Firestore firestoreSaveDocument Error]:', err);
+    return false;
+  }
+}
+
+export async function firestoreGetDocument(docId: string): Promise<any | null> {
+  try {
+    const cleanId = String(docId || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+    if (!cleanId) return null;
+    const docRef = doc(db, COLLECTIONS.DOCUMENTS, cleanId);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return snap.data();
+    }
+    return null;
+  } catch (err) {
+    console.warn('[Firestore firestoreGetDocument Error]:', err);
+    return null;
   }
 }

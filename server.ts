@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import nodemailer from 'nodemailer';
+import { firestoreGetDocument, firestoreSaveDocument } from './src/firebase';
 
 const app = express();
 const PORT = 3000;
@@ -51,6 +52,40 @@ interface StoredDocument {
   createdAt: number;
 }
 const documentStore = new Map<string, StoredDocument>();
+
+// Helper untuk mengambil dokumen dari memory store atau Firestore cloud fallback
+async function getStoredOrFirestoreDoc(docId: string): Promise<StoredDocument | null> {
+  const cleanId = String(docId || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+  if (!cleanId) return null;
+
+  // 1. Cek memory store
+  let doc = documentStore.get(cleanId);
+  if (doc) return doc;
+
+  // 2. Cek Cloud Firestore 'documents'
+  try {
+    const fsDoc = await firestoreGetDocument(cleanId);
+    if (fsDoc && fsDoc.htmlContent) {
+      const storedObj: StoredDocument = {
+        id: fsDoc.id || cleanId,
+        type: fsDoc.type || 'nota',
+        filename: fsDoc.filename || 'Dokumen.pdf',
+        title: fsDoc.title || 'Dokumen Istana Bubur',
+        htmlContent: fsDoc.htmlContent,
+        base64Pdf: fsDoc.base64Pdf || undefined,
+        phone: fsDoc.phone || '',
+        waMessage: fsDoc.waMessage || '',
+        createdAt: fsDoc.createdAt || Date.now()
+      };
+      documentStore.set(storedObj.id, storedObj);
+      return storedObj;
+    }
+  } catch (err) {
+    console.warn('[server.ts getStoredOrFirestoreDoc warning]:', err);
+  }
+
+  return null;
+}
 
 // Periodic cleanup of documents older than 30 days (for persistent WhatsApp links)
 setInterval(() => {
@@ -314,8 +349,7 @@ app.post('/api/pdf/prepare-doc', (req, res) => {
     const customId = req.body.customId ? String(req.body.customId).replace(/[^a-zA-Z0-9._-]/g, '_') : '';
     const docId = customId || ('ib-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex'));
     const safeFilename = (filename || (type === 'slip' ? 'Slip_Gaji.pdf' : 'Nota_Transaksi.pdf')).replace(/[^a-zA-Z0-9._-]/g, '_');
-
-    documentStore.set(docId, {
+    const docObj: StoredDocument = {
       id: docId,
       type: type === 'slip' ? 'slip' : 'nota',
       filename: safeFilename.endsWith('.pdf') ? safeFilename : safeFilename + '.pdf',
@@ -325,6 +359,13 @@ app.post('/api/pdf/prepare-doc', (req, res) => {
       phone: phone || '',
       waMessage: waMessage || '',
       createdAt: Date.now()
+    };
+
+    documentStore.set(docId, docObj);
+
+    // Simpan juga ke Firestore untuk redundansi data cloud
+    firestoreSaveDocument(docObj).catch(err => {
+      console.warn('[prepare-doc Firestore save warning]:', err);
     });
 
     res.json({
@@ -340,8 +381,8 @@ app.post('/api/pdf/prepare-doc', (req, res) => {
 });
 
 // Direct PDF File Download endpoint (forces attachment download in Android external browser)
-app.get('/api/pdf/download/:docId', (req, res) => {
-  const doc = documentStore.get(req.params.docId);
+app.get('/api/pdf/download/:docId', async (req, res) => {
+  const doc = await getStoredOrFirestoreDoc(req.params.docId);
   if (!doc) {
     return res.status(404).send(`
       <!DOCTYPE html>
@@ -368,8 +409,8 @@ app.get('/api/pdf/download/:docId', (req, res) => {
 });
 
 // External Document Viewer & Print/Download Page (Accessible outside APK in Google Chrome / Browser)
-app.get('/view-doc/:docId', (req, res) => {
-  const doc = documentStore.get(req.params.docId);
+app.get('/view-doc/:docId', async (req, res) => {
+  const doc = await getStoredOrFirestoreDoc(req.params.docId);
   if (!doc) {
     return res.status(404).send(`
       <!DOCTYPE html>
