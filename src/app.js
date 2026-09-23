@@ -67,6 +67,7 @@ let dashboardPeriodMode = 'today';
 let targetBranchModalSource = 'login';
 let unsubscribeTransactions = null;
 let unsubscribeBranches = null;
+let unsubscribePayroll = null;
 
 if (typeof window !== 'undefined') {
     window.KARYAWAN_DATA = KARYAWAN_DATA;
@@ -2645,6 +2646,7 @@ function loginSuccessLogic() {
     initRealtimeChatSystem();
     initBranchSystem();
     initRealtimeTransactionsListener();
+    initRealtimePayrollListener();
 
     const now = new Date();
     const monthDash = document.getElementById('filter-month-dashboard');
@@ -5531,6 +5533,15 @@ async function kirimWhatsApp(data = null) {
         });
         if (res && res.downloadUrl) {
             linkPdf = res.downloadUrl;
+            trx.linkPdf = linkPdf;
+            try {
+                const targetTrxId = trx.id || docId;
+                if (targetTrxId) {
+                    await firestoreUpdateTransaksiPdfLink(targetTrxId, linkPdf);
+                }
+            } catch(updateErr) {
+                console.warn('Gagal menyimpan link PDF nota ke Firestore:', updateErr);
+            }
         }
     } catch(err) {
         console.warn('Gagal menyiapkan link unduh PDF nota:', err);
@@ -6328,6 +6339,14 @@ async function kirimWaSlipGajiDirect(t) {
         if (res && res.downloadUrl) {
             linkPdf = res.downloadUrl;
             t['Link PDF'] = linkPdf;
+            try {
+                const targetSlipId = t['ID Slip'] || t['ID Gaji'] || docId;
+                if (targetSlipId) {
+                    await firestoreUpdateSlipPdfLink(targetSlipId, linkPdf);
+                }
+            } catch(updateErr) {
+                console.warn('Gagal menyimpan link PDF slip ke Firestore:', updateErr);
+            }
         }
     } catch(err) {
         console.warn('Gagal menyiapkan link unduh slip gaji:', err);
@@ -6391,6 +6410,28 @@ async function cetakSlipGajiPDF(t) {
 
     setTimeout(() => tempContainer.remove(), 2000);
 }
+window.cetakSlipGajiPDF = cetakSlipGajiPDF;
+window.lihatPdfSlipGaji = lihatPdfSlipGaji;
+window.kirimWaSlipGaji = kirimWaSlipGaji;
+window.kirimWaSlipGajiDirect = kirimWaSlipGajiDirect;
+
+function initRealtimePayrollListener() {
+    try {
+        if (unsubscribePayroll) {
+            unsubscribePayroll();
+            unsubscribePayroll = null;
+        }
+        unsubscribePayroll = subscribeToPayroll((payrollList) => {
+            if (Array.isArray(payrollList)) {
+                HISTORI_GAJI_CACHE = payrollList;
+                renderHistoriGaji();
+            }
+        });
+    } catch(err) {
+        console.warn('Realtime payroll listener error:', err);
+    }
+}
+window.initRealtimePayrollListener = initRealtimePayrollListener;
 
 // ==========================================
 // BLUETOOTH THERMAL PRINTER ESC/POS LOGIC
