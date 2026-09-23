@@ -918,7 +918,7 @@ export async function deleteAdminChatMessage(username: string, messageId: string
 }
 
 export async function deleteUserConversationHistory(username: string) {
-  const rawUser = String(username).trim();
+  const rawUser = String(username || '').trim();
   const normUser = rawUser.toLowerCase();
   
   const targets = new Set<string>();
@@ -927,6 +927,7 @@ export async function deleteUserConversationHistory(username: string) {
 
   // 1. Hapus semua pesan dari subkoleksi messages untuk semua variasi username
   for (const targetUser of targets) {
+    if (!targetUser) continue;
     try {
       const messagesCol = collection(db, COLLECTIONS.ADMIN_CHATS, targetUser, 'messages');
       const snap = await getDocs(messagesCol);
@@ -952,6 +953,60 @@ export async function deleteUserConversationHistory(username: string) {
   }
 
   return { success: true, message: 'Seluruh riwayat percakapan berhasil dihapus dari database.' };
+}
+
+export async function clearAllAdminConversationsHistory(): Promise<{ success: boolean; message: string }> {
+  try {
+    const userIds = new Set<string>();
+
+    // 1. Dapatkan seluruh dokumen percakapan di ADMIN_CONVERSATIONS
+    try {
+      const convSnap = await getDocs(collection(db, COLLECTIONS.ADMIN_CONVERSATIONS));
+      convSnap.forEach(d => {
+        userIds.add(d.id);
+        const data = d.data();
+        if (data.username) userIds.add(String(data.username).trim().toLowerCase());
+        if (data.id) userIds.add(String(data.id).trim().toLowerCase());
+      });
+    } catch (e) {
+      console.warn('[clearAllAdminConversationsHistory convSnap warning]:', e);
+    }
+
+    // 2. Dapatkan juga dokumen dari ADMIN_CHATS jika ada
+    try {
+      const chatsSnap = await getDocs(collection(db, COLLECTIONS.ADMIN_CHATS));
+      chatsSnap.forEach(d => {
+        userIds.add(d.id);
+      });
+    } catch (_) {}
+
+    // 3. Hapus seluruh pesan di subkoleksi 'messages' dan dokumen-dokumennya untuk tiap user
+    for (const uid of userIds) {
+      if (!uid) continue;
+      try {
+        const msgsCol = collection(db, COLLECTIONS.ADMIN_CHATS, uid, 'messages');
+        const msgsSnap = await getDocs(msgsCol);
+        if (!msgsSnap.empty) {
+          const deletePromises = msgsSnap.docs.map(m => deleteDoc(m.ref));
+          await Promise.all(deletePromises);
+        }
+        try {
+          await deleteDoc(doc(db, COLLECTIONS.ADMIN_CHATS, uid));
+        } catch (_) {}
+      } catch (err) {
+        console.warn(`[clearAllAdminConversationsHistory chat error for ${uid}]:`, err);
+      }
+
+      try {
+        await deleteDoc(doc(db, COLLECTIONS.ADMIN_CONVERSATIONS, uid));
+      } catch (_) {}
+    }
+
+    return { success: true, message: 'Seluruh riwayat percakapan admin berhasil dibersihkan.' };
+  } catch (err) {
+    console.error('[clearAllAdminConversationsHistory Error]:', err);
+    throw err;
+  }
 }
 
 export function subscribeToAdminConversations(callback: (conversations: any[]) => void): () => void {
@@ -1258,3 +1313,12 @@ export async function firestoreGetDocument(docId: string): Promise<any | null> {
     return null;
   }
 }
+
+if (typeof window !== 'undefined') {
+  (window as any).deleteUserConversationHistory = deleteUserConversationHistory;
+  (window as any).clearAllAdminConversationsHistory = clearAllAdminConversationsHistory;
+  (window as any).deleteAdminChatMessage = deleteAdminChatMessage;
+  (window as any).deleteGroupChatMessage = deleteGroupChatMessage;
+  (window as any).clearGroupChatMessages = clearGroupChatMessages;
+}
+

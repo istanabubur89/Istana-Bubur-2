@@ -31,6 +31,7 @@ import {
     sendAdminChatMessage,
     deleteAdminChatMessage,
     deleteUserConversationHistory,
+    clearAllAdminConversationsHistory,
     subscribeToAdminConversations,
     markAdminConversationRead,
     subscribeToGroupChat,
@@ -7963,6 +7964,37 @@ function confirmDeleteUserChatMessage(msgId) {
     );
 }
 
+function confirmDeleteUserMyChatHistory() {
+    if (!CURRENT_USER) return;
+
+    if (!userAdminChatMessages || userAdminChatMessages.length === 0) {
+        showToast('Riwayat chat dengan Admin Pusat masih kosong', 'info');
+        return;
+    }
+
+    showCustomConfirmModal(
+        'Hapus Seluruh Riwayat Chat?',
+        'Apakah Anda yakin ingin menghapus SELURUH riwayat percakapan Anda dengan Admin Pusat?\n\nSemua pesan yang pernah dikirim dan diterima akan dihapus bersih dan permanen dari database Firebase.',
+        'Hapus Bersih',
+        async () => {
+            try {
+                showToast('Menghapus seluruh riwayat chat dari database...', 'info');
+                await deleteUserConversationHistory(CURRENT_USER.username);
+
+                userAdminChatMessages = [];
+                renderUserAdminMessages();
+                unreadAdminCount = 0;
+                updateChatUnreadBadges();
+
+                showToast('Riwayat percakapan dengan Admin Pusat berhasil dihapus bersih dari database', 'success');
+            } catch (err) {
+                console.error('Gagal menghapus riwayat chat kasir:', err);
+                showToast('Gagal menghapus riwayat percakapan. Periksa koneksi database.', 'error');
+            }
+        }
+    );
+}
+
 async function handleSendUserAdminMessage(e) {
     if (e) e.preventDefault();
     if (!CURRENT_USER) return;
@@ -8369,6 +8401,42 @@ function confirmDeleteSelectedUserHistory() {
         return;
     }
     confirmDeleteConversationHistory(encodeURIComponent(currentSelectedAdminChatUser.username), currentSelectedAdminChatUser.fullName);
+}
+
+function confirmClearAllAdminChatHistory() {
+    if (!isCurrentUserAdmin()) {
+        showToast('Hanya Admin yang berhak menghapus seluruh riwayat chat', 'warning');
+        return;
+    }
+
+    showCustomConfirmModal(
+        'Hapus SEMUA Riwayat Chat Admin?',
+        'PERINGATAN ADMIN:\nApakah Anda yakin ingin menghapus SELURUH riwayat obrolan dengan SEMUA pengguna?\n\nSemua percakapan dan pesan 1-on-1 akan dihapus bersih secara permanen dari database Cloud Firestore.',
+        'Hapus Semua',
+        async () => {
+            try {
+                showToast('Menghapus seluruh percakapan admin dari database...', 'info');
+                await clearAllAdminConversationsHistory();
+
+                // Bersihkan memori dan state lokal
+                adminConversationsList = [];
+                currentAdminThreadMessages = [];
+                adminUnreadPerUser = {};
+                unreadAdminCount = 0;
+                updateChatUnreadBadges();
+
+                if (currentSelectedAdminChatUser) {
+                    renderAdminThreadMessages();
+                }
+                renderAdminConversationsSidebar();
+
+                showToast('Seluruh riwayat chat admin berhasil dibersihkan dari database', 'success');
+            } catch (err) {
+                console.error('Gagal membersihkan seluruh riwayat chat admin:', err);
+                showToast('Gagal membersihkan riwayat chat. Periksa koneksi internet.', 'error');
+            }
+        }
+    );
 }
 
 function selectAdminChatUserByData(el) {
@@ -9233,6 +9301,8 @@ window.closeOtherSwipedCards = closeOtherSwipedCards;
 window.handleUserCardClick = handleUserCardClick;
 window.confirmDeleteConversationHistory = confirmDeleteConversationHistory;
 window.confirmDeleteSelectedUserHistory = confirmDeleteSelectedUserHistory;
+window.confirmDeleteUserMyChatHistory = confirmDeleteUserMyChatHistory;
+window.confirmClearAllAdminChatHistory = confirmClearAllAdminChatHistory;
 window.selectAdminChatUser = selectAdminChatUser;
 window.selectAdminChatUserByData = selectAdminChatUserByData;
 window.filterAdminUserList = filterAdminUserList;
