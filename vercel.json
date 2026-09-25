@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/view-doc/:docId*", "destination": "/index.html" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

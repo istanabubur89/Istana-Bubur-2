@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import nodemailer from 'nodemailer';
-import { firestoreGetDocument, firestoreSaveDocument } from './src/firebase';
+import { firestoreGetDocument, firestoreSaveDocument, firestoreGetDocumentOrFromDatabase } from './src/firebase';
 
 const app = express();
 const PORT = 3000;
@@ -53,6 +53,264 @@ interface StoredDocument {
 }
 const documentStore = new Map<string, StoredDocument>();
 
+function formatRupiahServer(num: number | string): string {
+  const n = Number(num) || 0;
+  return n.toLocaleString('id-ID');
+}
+
+function formatBulanIndoServer(periode: string): string {
+  if (!periode) return '';
+  const months: Record<string, string> = {
+    '01': 'Januari', '02': 'Februari', '03': 'Maret', '04': 'April',
+    '05': 'Mei', '06': 'Juni', '07': 'Juli', '08': 'Agustus',
+    '09': 'September', '10': 'Oktober', '11': 'November', '12': 'Desember'
+  };
+  const parts = periode.split('-');
+  if (parts.length === 2 && months[parts[1]]) {
+    return `${months[parts[1]]} ${parts[0]}`;
+  }
+  return periode;
+}
+
+function generateReceiptHTMLServer(trx: any): string {
+  const items = trx.items || [];
+  const logoUrl = '/assets/logo-istana-bubur.png';
+  const fallbackLogo = 'https://lh3.googleusercontent.com/d/1raKw_On7XyxlT5Oqz45gAIDmb0eUinMc';
+
+  let idStr = String(trx.id || '');
+  if (!idStr.startsWith('TRX')) {
+    idStr = 'TRX-' + idStr.replace(/^#/, '');
+  }
+
+  let tglStr = trx.tanggal || '';
+  if (!tglStr) {
+    const now = new Date(trx.createdAt || Date.now());
+    tglStr = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  }
+
+  const kasirStr = trx.kasir || 'Admin';
+  const pelangganStr = trx.namaPelanggan || trx.nama_pelanggan || 'Umum';
+
+  const itemsRowsHtml = items.map((it: any) => `
+    <tr style="border-bottom: 1px solid #e5e7eb; page-break-inside: avoid; break-inside: avoid;">
+      <td style="padding: 8px 6px; font-weight: 600; color: #111827; text-align: left; vertical-align: middle; word-break: break-word;">${it.nama || 'Produk'}</td>
+      <td style="padding: 8px 6px; text-align: center; color: #111827; font-weight: 500; vertical-align: middle; white-space: nowrap;">${it.qty || 1}</td>
+      <td style="padding: 8px 6px; text-align: right; color: #111827; font-weight: 500; vertical-align: middle; white-space: nowrap;">Rp ${formatRupiahServer(it.harga || 0)}</td>
+      <td style="padding: 8px 6px; text-align: right; font-weight: 700; color: #111827; vertical-align: middle; white-space: nowrap;">Rp ${formatRupiahServer((it.qty || 1) * (it.harga || 0))}</td>
+    </tr>
+  `).join('');
+
+  let ongkirRowHtml = '';
+  if (trx.ongkir && Number(trx.ongkir) > 0) {
+    ongkirRowHtml = `
+      <tr style="border-bottom: 1px solid #e5e7eb; page-break-inside: avoid; break-inside: avoid;">
+        <td style="padding: 8px 6px; font-weight: 600; color: #111827; text-align: left; vertical-align: middle;">Ongkir</td>
+        <td style="padding: 8px 6px; text-align: center; color: #111827; font-weight: 500; vertical-align: middle; white-space: nowrap;">1</td>
+        <td style="padding: 8px 6px; text-align: right; color: #111827; font-weight: 500; vertical-align: middle; white-space: nowrap;">Rp ${formatRupiahServer(trx.ongkir)}</td>
+        <td style="padding: 8px 6px; text-align: right; font-weight: 700; color: #111827; vertical-align: middle; white-space: nowrap;">Rp ${formatRupiahServer(trx.ongkir)}</td>
+      </tr>`;
+  }
+
+  const totalVal = Number(trx.total || 0);
+  const bayarVal = (trx.bayar !== undefined && trx.bayar !== null && trx.bayar !== '') ? Number(trx.bayar) : totalVal;
+  const kembaliVal = (trx.kembalian !== undefined && trx.kembalian !== null && trx.kembalian !== '') ? Number(trx.kembalian) : (trx.kembali !== undefined ? Number(trx.kembali) : Math.max(0, bayarVal - totalVal));
+
+  return `
+    <div id="pdf-receipt-content" style="width: 760px; max-width: 100%; min-height: 980px; font-family: -apple-system, BlinkMacSystemFont, Arial, sans-serif; background: #ffffff; padding: 36px 42px 32px 42px; box-sizing: border-box; color: #111827; line-height: 1.4; border: 1px solid #e5e7eb; position: relative; margin: 0 auto; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border-radius: 4px;">
+      <div style="position: absolute; top: 480px; left: 50%; transform: translate(-50%, -50%); width: 420px; height: 420px; opacity: 0.06; pointer-events: none; z-index: 0; display: flex; align-items: center; justify-content: center;">
+        <img src="${logoUrl}" onerror="this.src='${fallbackLogo}'" style="max-width: 100%; max-height: 100%; object-fit: contain;" alt="Watermark Istana Bubur">
+      </div>
+      <div style="position: relative; z-index: 1;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+          <div style="width: 160px; height: 90px; display: flex; align-items: center;">
+            <img src="${logoUrl}" onerror="this.src='${fallbackLogo}'" style="max-width: 155px; max-height: 85px; object-fit: contain;" alt="Logo Istana Bubur">
+          </div>
+          <div style="text-align: right;">
+            <h1 style="font-family: Arial, Helvetica, sans-serif; font-size: 28px; font-weight: 900; color: #a11d20; letter-spacing: 0.5px; margin: 0 0 4px 0; text-transform: uppercase; line-height: 1.1;">ISTANA BUBUR</h1>
+            <div style="font-size: 12px; color: #374151; margin-top: 2px; line-height: 1.4;">Jln. Ki Hajar Dewantoro 1 No.27 Kel. Gunung Kelua</div>
+            <div style="font-size: 12px; color: #374151; line-height: 1.4;">Kecamatan Samarinda Ulu, Samarinda, Kalimantan Timur</div>
+            <div style="display: flex; justify-content: flex-end; align-items: center; gap: 14px; margin-top: 8px; font-size: 11.5px; color: #374151; flex-wrap: wrap;">
+              <span>WA: 0857-5408-7689</span>
+              <span>IG: @istanabuburr_</span>
+              <span>TikTok: @istanabubur</span>
+            </div>
+          </div>
+        </div>
+        <div style="border-bottom: 4px solid #a11d20; margin-top: 12px; margin-bottom: 22px;"></div>
+        <div style="text-align: center; margin-bottom: 22px;">
+          <h2 style="font-family: Arial, Helvetica, sans-serif; font-size: 22px; font-weight: 900; color: #a11d20; letter-spacing: 3px; margin: 0; text-transform: uppercase;">NOTA PENJUALAN</h2>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; font-size: 13px; color: #111827;">
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <div>No. Transaksi : <span style="font-weight: 700;">${idStr}</span></div>
+            <div>Tanggal : <span>${tglStr}</span></div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px; text-align: right;">
+            <div>Kasir : <span style="font-weight: 700;">${kasirStr}</span></div>
+            <div>Pelanggan : <span style="font-weight: 700;">${pelangganStr}</span></div>
+          </div>
+        </div>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 13px;">
+          <thead>
+            <tr style="border-top: 2.5px solid #000000; border-bottom: 2.5px solid #000000; font-size: 12px; font-weight: 800; color: #000000; text-transform: uppercase;">
+              <th style="text-align: left; padding: 9px 8px;">NAMA PRODUK</th>
+              <th style="text-align: center; padding: 9px 8px; width: 70px;">QTY</th>
+              <th style="text-align: right; padding: 9px 8px; width: 130px;">HARGA</th>
+              <th style="text-align: right; padding: 9px 8px; width: 140px;">SUBTOTAL</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemsRowsHtml}
+            ${ongkirRowHtml}
+          </tbody>
+        </table>
+        <div style="border-bottom: 1.5px solid #111827; margin-bottom: 16px;"></div>
+        <div style="display: flex; justify-content: flex-end; margin-bottom: 22px;">
+          <div style="width: 320px; font-size: 13px;">
+            <div style="display: flex; justify-content: space-between; padding: 4px 0; font-weight: 700;">
+              <span>Total Belanja</span>
+              <span>Rp ${formatRupiahServer(totalVal)}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; padding: 4px 0; color: #4b5563;">
+              <span>Tunai / Bayar</span>
+              <span>Rp ${formatRupiahServer(bayarVal)}</span>
+            </div>
+            <div style="border-top: 2.5px solid #000000; margin: 6px 0;"></div>
+            <div style="display: flex; justify-content: space-between; padding: 4px 0; font-weight: 900; font-size: 16px; color: #a11d20;">
+              <span>Kembalian</span>
+              <span>Rp ${formatRupiahServer(kembaliVal)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function generateSlipGajiHTMLServer(pay: any): string {
+  const harian = Number(pay.gajiHarian) || 0;
+  const hari = Number(pay.hariMasuk) || 0;
+  const bonus = Number(pay.bonus) || 0;
+  const potongan = Number(pay.potongan) || 0;
+  const totalGaji = Number(pay.totalGaji) || ((harian * hari) + bonus - potongan);
+  const pokok = (harian && hari) ? (harian * hari) : (totalGaji - bonus + potongan);
+
+  const periodeDisplay = formatBulanIndoServer(pay.bulan || '');
+  const now = new Date(pay.createdAt || Date.now());
+  const tglCetak = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`;
+
+  const nama = pay.nama || 'Karyawan';
+  const jabatan = pay.jabatan || 'Dapur Bubur';
+  const cabang = pay.cabang || 'Samarinda';
+  const ketLibur = pay.keteranganLibur || '';
+
+  const logoUrl = '/assets/logo-istana-bubur.png';
+  const fallbackLogo = 'https://lh3.googleusercontent.com/d/1raKw_On7XyxlT5Oqz45gAIDmb0eUinMc';
+
+  const ttdSvg = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 250" style="max-height: 64px; max-width: 170px; height: 100%; width: 100%; display: block;" fill="none">
+      <path d="M 182 32 C 187 23 194 21 200 25 C 204 20 211 20 215 26" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M 28 126 C 12 108 26 78 78 62 C 135 46 198 62 216 88 C 228 106 210 134 162 148 C 112 162 38 158 18 138 C 8 126 14 110 48 92" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M 160 34 C 148 78 114 162 90 218 C 82 234 88 242 100 238 C 114 232 132 208 148 168 C 168 118 180 68 172 38 C 168 32 160 30 156 36" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M 68 68 C 105 64 155 65 198 68" stroke="#000000" stroke-width="3.5" stroke-linecap="round" />
+      <path d="M 160 120 L 174 72 L 184 122 L 196 72 L 206 122 L 218 72 L 228 122" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M 194 125 L 285 128" stroke="#000000" stroke-width="3.8" stroke-linecap="round" />
+      <path d="M 228 122 C 235 90 248 55 258 48 C 265 52 260 75 250 115 C 232 178 212 232 205 244 C 200 250 205 255 212 250 C 225 240 250 190 272 130 C 290 82 304 48 296 46 C 288 46 280 68 276 102 C 274 120 282 125 298 120 C 320 112 355 118 395 118 C 415 118 435 117 448 118" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>`;
+
+  return `
+    <div class="slip-gaji-container" style="width: 535px; max-width: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; background: #ffffff; padding: 26px 30px 22px 30px; box-sizing: border-box; color: #111827; line-height: 1.4; border: 1px solid #d1d5db; position: relative; overflow: hidden; margin: 0 auto; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border-radius: 4px;">
+      <div style="position: absolute; top: 48%; left: 50%; transform: translate(-50%, -50%); width: 330px; height: 330px; opacity: 0.10; pointer-events: none; z-index: 0; display: flex; align-items: center; justify-content: center;">
+        <img src="${logoUrl}" onerror="this.src='${fallbackLogo}'" style="max-width: 100%; max-height: 100%; object-fit: contain;" alt="Watermark Istana Bubur">
+      </div>
+      <div style="position: relative; z-index: 1;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <div style="width: 110px; height: 70px; display: flex; align-items: center;">
+            <img src="${logoUrl}" onerror="this.src='${fallbackLogo}'" style="max-width: 105px; max-height: 68px; object-fit: contain;" alt="Logo Istana Bubur">
+          </div>
+          <div style="text-align: right; font-family: Arial, Helvetica, sans-serif;">
+            <div style="font-size: 21px; font-weight: 900; color: #004b87; letter-spacing: 0.5px; text-transform: uppercase; line-height: 1.1;">ISTANA BUBUR</div>
+            <div style="font-size: 9.5px; font-style: italic; color: #4b5563; margin-top: 3px; line-height: 1.25;">Jln. Ki Hajar Dewantoro 1 No.27 Kelurahan Gunung Kelua, Samarinda</div>
+            <div style="font-size: 10px; font-weight: 700; color: #1f2937; margin-top: 3px;">Sistem Payroll &amp; Manajemen SDM Pusat</div>
+          </div>
+        </div>
+        <div style="border-bottom: 1px solid #cbd5e1; margin-bottom: 14px;"></div>
+        <div style="text-align: center; margin-bottom: 16px;">
+          <div style="font-size: 15px; font-weight: 800; color: #000000; letter-spacing: 0.5px; text-transform: uppercase;">SLIP GAJI KARYAWAN</div>
+          <div style="font-size: 11px; color: #374151; margin-top: 2px; font-weight: 500;">Periode: ${periodeDisplay || pay.bulan}</div>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; font-size: 11px; margin-bottom: 14px;">
+          <table style="border-collapse: collapse; font-size: 11px; line-height: 1.5;">
+            <tr>
+              <td style="font-weight: 700; color: #000000; padding: 1px 12px 1px 0; white-space: nowrap;">Nama Karyawan:</td>
+              <td style="color: #111827; padding: 1px 0;">${nama}</td>
+            </tr>
+            <tr>
+              <td style="font-weight: 700; color: #000000; padding: 1px 12px 1px 0; white-space: nowrap;">Jabatan:</td>
+              <td style="color: #111827; padding: 1px 0;">${jabatan}</td>
+            </tr>
+            <tr>
+              <td style="font-weight: 700; color: #000000; padding: 1px 12px 1px 0; white-space: nowrap;">Cabang Kerja:</td>
+              <td style="color: #111827; padding: 1px 0;">${cabang}</td>
+            </tr>
+          </table>
+          <div style="font-size: 11px; white-space: nowrap; padding-top: 1px;">
+            <span style="font-weight: 700; color: #000000;">Tanggal Cetak:</span>
+            <span style="color: #111827; margin-left: 4px;">${tglCetak}</span>
+          </div>
+        </div>
+        <table style="width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 6px;">
+          <thead>
+            <tr style="border-top: 1.5px solid #000000; border-bottom: 1.5px solid #000000;">
+              <th style="text-align: left; padding: 6px 0; font-weight: 700; color: #000000;">Keterangan</th>
+              <th style="text-align: right; padding: 6px 0; font-weight: 700; color: #000000;">Jumlah</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="padding: 7px 0; color: #111827;">Gaji Pokok ${hari && harian ? `(Hari Kerja: ${hari} hr x Rp ${formatRupiahServer(harian)})` : (hari ? `(Hari Kerja: ${hari} hr)` : '')}</td>
+              <td style="padding: 7px 0; text-align: right; font-weight: 600; color: #111827;">Rp ${formatRupiahServer(pokok)}</td>
+            </tr>
+            ${bonus > 0 ? `
+            <tr>
+              <td style="padding: 4px 0; color: #16a34a; font-weight: 500;">Bonus Kinerja &amp; Tunjangan</td>
+              <td style="padding: 4px 0; text-align: right; font-weight: 600; color: #16a34a;">+ Rp ${formatRupiahServer(bonus)}</td>
+            </tr>` : ''}
+            <tr>
+              <td style="padding: 4px 0; color: #dc2626; font-weight: 500;">Potongan Kasbon</td>
+              <td style="padding: 4px 0; text-align: right; font-weight: 600; color: #dc2626;">- Rp ${formatRupiahServer(potongan)}</td>
+            </tr>
+          </tbody>
+        </table>
+        ${ketLibur ? `
+        <div style="font-size: 10.5px; font-style: italic; color: #4b5563; margin-bottom: 10px; padding-top: 2px;">
+          Informasi: ${ketLibur}
+        </div>` : ''}
+        <div style="border-top: 1px solid #e5e7eb; margin: 12px 0 10px 0;"></div>
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 2px 0;">
+          <span style="font-size: 13px; font-weight: 800; color: #000000; letter-spacing: 0.5px;">TOTAL DITERIMA</span>
+          <span style="font-size: 14px; font-weight: 800; color: #16a34a;">Rp ${formatRupiahServer(totalGaji)}</span>
+        </div>
+        <div style="border-bottom: 1.5px solid #000000; margin: 10px 0 18px 0;"></div>
+        <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 14px;">
+          <div style="text-align: center; width: 140px;">
+            <div style="font-size: 10.5px; color: #374151; margin-bottom: 46px;">Penerima,</div>
+            <div style="font-weight: 700; font-size: 11px; color: #000000; border-top: 1px solid #9ca3af; padding-top: 4px;">${nama}</div>
+          </div>
+          <div style="text-align: center; width: 170px;">
+            <div style="font-size: 10.5px; color: #374151; margin-bottom: 4px;">Samarinda, Owner</div>
+            <div style="display: flex; justify-content: center; align-items: center; height: 50px; margin-bottom: 2px;">
+              ${ttdSvg}
+            </div>
+            <div style="font-weight: 800; font-size: 11px; color: #000000; border-top: 1px solid #9ca3af; padding-top: 4px;">JAMILAH</div>
+            <div style="font-size: 9px; color: #6b7280;">Owner Istana Bubur</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 // Helper untuk mengambil dokumen dari memory store atau Firestore cloud fallback
 async function getStoredOrFirestoreDoc(docId: string): Promise<StoredDocument | null> {
   const cleanId = String(docId || '').replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -62,23 +320,64 @@ async function getStoredOrFirestoreDoc(docId: string): Promise<StoredDocument | 
   let doc = documentStore.get(cleanId);
   if (doc) return doc;
 
-  // 2. Cek Cloud Firestore 'documents'
+  // 2. Cek Cloud Firestore dengan fallback multi-sumber (documents, transactions, payroll)
   try {
-    const fsDoc = await firestoreGetDocument(cleanId);
-    if (fsDoc && fsDoc.htmlContent) {
-      const storedObj: StoredDocument = {
-        id: fsDoc.id || cleanId,
-        type: fsDoc.type || 'nota',
-        filename: fsDoc.filename || 'Dokumen.pdf',
-        title: fsDoc.title || 'Dokumen Istana Bubur',
-        htmlContent: fsDoc.htmlContent,
-        base64Pdf: fsDoc.base64Pdf || undefined,
-        phone: fsDoc.phone || '',
-        waMessage: fsDoc.waMessage || '',
-        createdAt: fsDoc.createdAt || Date.now()
-      };
-      documentStore.set(storedObj.id, storedObj);
-      return storedObj;
+    const res = await firestoreGetDocumentOrFromDatabase(cleanId);
+    if (res) {
+      if (res.source === 'documents' && res.data?.htmlContent) {
+        const d = res.data;
+        const storedObj: StoredDocument = {
+          id: d.id || cleanId,
+          type: d.type || 'nota',
+          filename: d.filename || (d.type === 'slip' ? `Slip_Gaji_${cleanId}.pdf` : `Nota_${cleanId}.pdf`),
+          title: d.title || (d.type === 'slip' ? 'Slip Gaji Karyawan' : 'Nota Penjualan'),
+          htmlContent: d.htmlContent,
+          base64Pdf: d.base64Pdf || undefined,
+          phone: d.phone || '',
+          waMessage: d.waMessage || '',
+          createdAt: d.createdAt || Date.now()
+        };
+        documentStore.set(cleanId, storedObj);
+        documentStore.set(storedObj.id, storedObj);
+        return storedObj;
+      } else if (res.source === 'transactions' && res.data) {
+        const trx = res.data;
+        const trxId = trx.id || cleanId;
+        const html = generateReceiptHTMLServer(trx);
+        const storedObj: StoredDocument = {
+          id: cleanId,
+          type: 'nota',
+          filename: `Nota_${String(trxId).replace(/[^a-zA-Z0-9._-]/g, '_')}.pdf`,
+          title: `Nota Penjualan #${trxId}`,
+          htmlContent: html,
+          phone: trx.noWa || '',
+          waMessage: `Nota Penjualan #${trxId}`,
+          createdAt: trx.createdAt || Date.now()
+        };
+        documentStore.set(cleanId, storedObj);
+        documentStore.set(storedObj.id, storedObj);
+        try { await firestoreSaveDocument(storedObj); } catch (_) {}
+        return storedObj;
+      } else if (res.source === 'payroll' && res.data) {
+        const pay = res.data;
+        const cleanName = String(pay.nama || 'Karyawan').replace(/\s+/g, '_');
+        const cleanBulan = String(pay.bulan || '').replace(/[^a-zA-Z0-9]/g, '_');
+        const html = generateSlipGajiHTMLServer(pay);
+        const storedObj: StoredDocument = {
+          id: cleanId,
+          type: 'slip',
+          filename: `Slip_Gaji_${cleanName}_${cleanBulan}.pdf`,
+          title: `Slip Gaji - ${pay.nama || 'Karyawan'}`,
+          htmlContent: html,
+          phone: pay.noWa || '',
+          waMessage: `Slip Gaji - ${pay.nama || 'Karyawan'}`,
+          createdAt: pay.createdAt || Date.now()
+        };
+        documentStore.set(cleanId, storedObj);
+        documentStore.set(storedObj.id, storedObj);
+        try { await firestoreSaveDocument(storedObj); } catch (_) {}
+        return storedObj;
+      }
     }
   } catch (err) {
     console.warn('[server.ts getStoredOrFirestoreDoc warning]:', err);
@@ -292,17 +591,7 @@ export interface ClientConnection {
 }
 
 // In-memory chat storage seeded with initial conversation (tanpa hardcode Cabang A, B, C)
-const chatMessages: ChatMessage[] = [
-  {
-    id: 'msg-init-welcome',
-    cabang: 'Semua',
-    sender: 'Admin Pusat',
-    role: 'Admin',
-    text: 'Selamat datang di Ruang Chat Bantuan & Operasional Istana Bubur. Hubungi Admin Pusat jika membutuhkan bantuan operasional kasir.',
-    timestamp: new Date().toISOString(),
-    formattedTime: '08:00'
-  }
-];
+const chatMessages: ChatMessage[] = [];
 
 const clients = new Set<ClientConnection>();
 
@@ -700,6 +989,33 @@ app.get('/api/chat/cabangs', (req, res) => {
       lastMessage: cabangMap[cabang].lastMessage
     }))
   });
+});
+
+app.post('/api/chat/clear-user', (req, res) => {
+  const username = String(req.body.username || '').toLowerCase().trim();
+  if (username) {
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      if (chatMessages[i].sender.toLowerCase().trim() === username) {
+        chatMessages.splice(i, 1);
+      }
+    }
+  }
+  broadcast({
+    type: 'init',
+    messages: chatMessages,
+    onlineUsers: getOnlineSummary()
+  });
+  return res.json({ success: true, message: 'Riwayat percakapan user berhasil dihapus dari server.' });
+});
+
+app.post('/api/chat/clear-all', (req, res) => {
+  chatMessages.length = 0;
+  broadcast({
+    type: 'init',
+    messages: [],
+    onlineUsers: getOnlineSummary()
+  });
+  return res.json({ success: true, message: 'Seluruh riwayat chat di server berhasil dibersihkan.' });
 });
 
 // ==========================================

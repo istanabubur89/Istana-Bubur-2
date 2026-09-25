@@ -114,11 +114,13 @@ let wsPingInterval = null;
 const CLOUD_HOST_DEV = 'ais-dev-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app';
 const CLOUD_HOST_PUBLIC = 'ais-pre-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app';
 const CLOUD_HOST_DEFAULT = CLOUD_HOST_DEV;
+// Host publik resmi yang dapat dibuka di Google Chrome / Browser HP penerima WhatsApp tanpa halangan login AI Studio
+const PUBLIC_PRODUCTION_HOST = 'istana-bubur-2.vercel.app';
 
 // Helper: Mendapatkan Base URL publik resmi yang dapat dibuka oleh siapa saja (termasuk penerima WhatsApp)
 function getPublicWebOrigin() {
     // 1. Cek jika pengguna menyetel URL publik custom di localStorage
-    const customPublic = (localStorage.getItem('IB_PUBLIC_URL') || localStorage.getItem('IB_API_SERVER_URL') || '').trim();
+    const customPublic = (localStorage.getItem('IB_PUBLIC_URL') || '').trim();
     if (customPublic.startsWith('http://') || customPublic.startsWith('https://')) {
         return customPublic.replace(/\/+$/, '');
     }
@@ -127,18 +129,54 @@ function getPublicWebOrigin() {
     if (!isAndroidApkOrFileEnv() && typeof window !== 'undefined' && window.location) {
         const origin = window.location.origin;
         if (origin && origin !== 'null' && (window.location.protocol === 'http:' || window.location.protocol === 'https:')) {
-            // Jika berjalan di ais-dev, arahkan ke ais-pre agar link publik bisa dibuka oleh pelanggan tanpa login AI Studio
-            if (origin.includes('ais-dev-')) {
-                return origin.replace('ais-dev-', 'ais-pre-').replace(/\/+$/, '');
+            // Jika berjalan di Vercel atau domain custom selain Google AI Studio run.app, gunakan origin aktif
+            if (origin.includes('vercel.app') || (!origin.includes('ais-dev-') && !origin.includes('ais-pre-') && !origin.includes('run.app'))) {
+                return origin.replace(/\/+$/, '');
             }
-            return origin.replace(/\/+$/, '');
         }
     }
 
-    // 3. Fallback resmi untuk APK Android WebView: Gunakan URL Cloud Publik Shared
-    return 'https://' + CLOUD_HOST_PUBLIC;
+    // 3. Fallback resmi teruji untuk WhatsApp APK Android: Gunakan production Vercel
+    return 'https://' + PUBLIC_PRODUCTION_HOST;
 }
 window.getPublicWebOrigin = getPublicWebOrigin;
+
+// Helper Simpan & Reset Domain Publik di Menu Pengaturan
+function saveCustomPublicUrl() {
+    const input = document.getElementById('setting-public-web-url');
+    if (!input) return;
+    let val = input.value.trim();
+    if (!val) {
+        localStorage.removeItem('IB_PUBLIC_URL');
+        showToast('Pengaturan URL publik direset ke default', 'info');
+        initPublicUrlSettings();
+        return;
+    }
+    if (!val.startsWith('http://') && !val.startsWith('https://')) {
+        val = 'https://' + val;
+    }
+    val = val.replace(/\/+$/, '');
+    localStorage.setItem('IB_PUBLIC_URL', val);
+    input.value = val;
+    showToast('Domain publik WhatsApp berhasil disimpan: ' + val, 'success');
+}
+window.saveCustomPublicUrl = saveCustomPublicUrl;
+
+function resetDefaultPublicUrl() {
+    localStorage.removeItem('IB_PUBLIC_URL');
+    const input = document.getElementById('setting-public-web-url');
+    if (input) input.value = 'https://' + PUBLIC_PRODUCTION_HOST;
+    showToast('Domain publik WhatsApp dikembalikan ke default: https://' + PUBLIC_PRODUCTION_HOST, 'info');
+}
+window.resetDefaultPublicUrl = resetDefaultPublicUrl;
+
+function initPublicUrlSettings() {
+    const input = document.getElementById('setting-public-web-url');
+    if (input) {
+        input.value = getPublicWebOrigin();
+    }
+}
+window.initPublicUrlSettings = initPublicUrlSettings;
 
 // Deteksi cerdas apakah berjalan di dalam APK Android WebView / file:// / Capacitor / local host non-dev
 function isAndroidApkOrFileEnv() {
@@ -5241,8 +5279,8 @@ async function prepareDocForExternalLink(options) {
     const docTitle = title || (type === 'slip' ? 'Slip Gaji Karyawan' : 'Nota Transaksi');
     const publicOrigin = getPublicWebOrigin();
 
-    const viewUrl = `${publicOrigin}/view-doc/${docId}`;
-    const downloadUrl = `${publicOrigin}/view-doc/${docId}?download=1`;
+    const viewUrl = `${publicOrigin}/?doc=${docId}`;
+    const downloadUrl = `${publicOrigin}/?doc=${docId}&download=1`;
 
     // 2. SIMPAN DOKUMEN KE CLOUD FIRESTORE (Koleksi 'documents')
     // Sangat penting untuk Android APK: SDK Firebase Client dapat menyimpan langsung secara stabil
@@ -5402,9 +5440,10 @@ function generateReceiptWhatsAppMessage(trx, linkPdf = '') {
 
     // Jamin selalu menyertakan link unduh PDF nota yang valid untuk Android APK & Web
     let targetLink = linkPdf;
-    if (!targetLink || !targetLink.startsWith('http')) {
-        const fallbackDocId = `nota-${(trx.id || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-        targetLink = `${getPublicWebOrigin()}/view-doc/${fallbackDocId}?download=1`;
+    const cleanTrxId = (trx.id || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_');
+    const docId = cleanTrxId.startsWith('nota-') ? cleanTrxId : `nota-${cleanTrxId}`;
+    if (!targetLink || targetLink === '#' || !targetLink.startsWith('http') || targetLink.includes('ais-pre-') || targetLink.includes('ais-dev-')) {
+        targetLink = `${getPublicWebOrigin()}/?doc=${docId}&download=1`;
     }
 
     const linkPdfSection = `📄 *Link Unduh PDF Nota Resmi:*\n${targetLink}\n===============================\n`;
@@ -5517,9 +5556,10 @@ async function kirimWhatsApp(data = null) {
 
     showToast('Menyiapkan pesan WhatsApp & link unduh PDF nota...', 'info');
 
-    const docId = `nota-${(trx.id || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const cleanTrxId = (trx.id || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_');
+    const docId = cleanTrxId.startsWith('nota-') ? cleanTrxId : `nota-${cleanTrxId}`;
     const publicOrigin = getPublicWebOrigin();
-    let linkPdf = `${publicOrigin}/view-doc/${docId}?download=1`;
+    let linkPdf = `${publicOrigin}/?doc=${docId}&download=1`;
 
     try {
         const htmlContent = generateReceiptHTML(trx);
@@ -6252,12 +6292,14 @@ function generateSlipGajiWhatsAppMessage(t, customLinkPdf = '') {
 
     const cleanName = (t['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
     const cleanBulan = (t['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
-    const fallbackDocId = t['ID Gaji'] ? `slip-${String(t['ID Gaji']).replace(/[^a-zA-Z0-9._-]/g, '_')}` : `slip-${cleanName}-${cleanBulan}`;
+    const rawSlipId = t['ID Slip'] || t['ID Gaji'] || t.id || `${cleanName}-${cleanBulan}`;
+    const cleanSlipId = String(rawSlipId).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const fallbackDocId = cleanSlipId.startsWith('slip-') ? cleanSlipId : `slip-${cleanSlipId}`;
     const publicOrigin = getPublicWebOrigin();
 
     let targetLink = customLinkPdf || t['Link PDF'] || '';
-    if (!targetLink || targetLink === '#' || !targetLink.startsWith('http')) {
-        targetLink = `${publicOrigin}/view-doc/${fallbackDocId}?download=1`;
+    if (!targetLink || targetLink === '#' || !targetLink.startsWith('http') || targetLink.includes('ais-pre-') || targetLink.includes('ais-dev-')) {
+        targetLink = `${publicOrigin}/?doc=${fallbackDocId}&download=1`;
     }
 
     const linkPdfSection = `📄 *Link Unduh Slip Gaji PDF:*\n${targetLink}\n\n`;
@@ -6318,11 +6360,13 @@ async function kirimWaSlipGajiDirect(t) {
 
     const cleanName = (t['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
     const cleanBulan = (t['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
-    const docId = t['ID Gaji'] ? `slip-${String(t['ID Gaji']).replace(/[^a-zA-Z0-9._-]/g, '_')}` : `slip-${cleanName}-${cleanBulan}`;
+    const rawSlipId = t['ID Slip'] || t['ID Gaji'] || t.id || `${cleanName}-${cleanBulan}`;
+    const cleanSlipId = String(rawSlipId).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const docId = cleanSlipId.startsWith('slip-') ? cleanSlipId : `slip-${cleanSlipId}`;
     const publicOrigin = getPublicWebOrigin();
-    let linkPdf = `${publicOrigin}/view-doc/${docId}?download=1`;
+    let linkPdf = `${publicOrigin}/?doc=${docId}&download=1`;
 
-    if (t['Link PDF'] && t['Link PDF'].startsWith('http')) {
+    if (t['Link PDF'] && t['Link PDF'].startsWith('http') && !t['Link PDF'].includes('ais-pre-') && !t['Link PDF'].includes('ais-dev-')) {
         linkPdf = t['Link PDF'];
     }
 
@@ -8068,49 +8112,10 @@ function renderAdminConversationsSidebar() {
     if (!container) return;
 
     const searchQuery = (searchInput ? searchInput.value.trim().toLowerCase() : '');
-    const allUsers = typeof getAllUsers === 'function' ? getAllUsers() : [];
 
-    // Gabungkan riwayat percakapan dari Firestore dengan semua pengguna yang terdaftar
-    const userMap = new Map();
-
-    // 1. Masukkan pengguna terdaftar
-    allUsers.forEach(u => {
-        if (u.username && u.username.toLowerCase() !== 'admin') {
-            const key = u.username.trim().toLowerCase();
-            userMap.set(key, {
-                username: u.username.trim(),
-                fullName: u.fullName || u.username,
-                role: u.role || 'Kasir',
-                cabang: u.cabang || 'Pusat',
-                lastMessage: 'Belum ada percakapan',
-                lastTimestamp: '',
-                unreadForAdmin: adminUnreadPerUser[u.username.trim()] || 0
-            });
-        }
-    });
-
-    // 2. Terapkan data dari adminConversationsList (Firestore)
-    adminConversationsList.forEach(c => {
-        if (c.username && c.username.toLowerCase() !== 'admin') {
-            const key = c.username.trim().toLowerCase();
-            const existing = userMap.get(key) || {};
-            userMap.set(key, {
-                username: c.username.trim(),
-                fullName: c.fullName || existing.fullName || c.username,
-                role: c.role || existing.role || 'Kasir',
-                cabang: c.cabang || existing.cabang || 'Pusat',
-                lastMessage: c.lastMessage || existing.lastMessage || 'Belum ada percakapan',
-                lastTimestamp: c.lastTimestamp || existing.lastTimestamp || '',
-                unreadForAdmin: c.unreadForAdmin !== undefined ? c.unreadForAdmin : (existing.unreadForAdmin || 0)
-            });
-        }
-    });
-
-    let list = Array.from(userMap.values());
-
-    if (totalCountEl) {
-        totalCountEl.innerText = `${list.length} User`;
-    }
+    // HANYA ambil data percakapan yang AKTIF dari Firestore (adminConversationsList)
+    // JANGAN memaksakan memasukkan semua user terdaftar jika belum pernah ada percakapan!
+    let list = (adminConversationsList || []).filter(c => c.username && c.username.toLowerCase() !== 'admin');
 
     // Filter pencarian
     if (searchQuery) {
@@ -8131,19 +8136,56 @@ function renderAdminConversationsSidebar() {
         return timeB - timeA;
     });
 
-    if (list.length === 0) {
-        container.innerHTML = `
-            <div class="p-6 text-center text-xs text-gray-400">
-                <i class="fas fa-user-slash text-2xl mb-2 text-gray-300"></i>
-                <p>Tidak ada pengguna ditemukan</p>
-            </div>
-        `;
-        return;
+    if (totalCountEl) {
+        totalCountEl.innerText = `${list.length} Percakapan`;
     }
 
-    // Auto select first user on desktop if not yet selected
-    if (!currentSelectedAdminChatUser && list.length > 0 && window.innerWidth >= 768) {
-        selectAdminChatUser(list[0].username, list[0].fullName, list[0].role, list[0].cabang);
+    if (list.length === 0) {
+        // Jika sedang mencari user namun tidak ada dalam percakapan aktif, tampilkan pencarian dari semua pengguna
+        if (searchQuery) {
+            const allUsers = typeof getAllUsers === 'function' ? getAllUsers() : [];
+            const matchedUsers = allUsers.filter(u => 
+                u.username && u.username.toLowerCase() !== 'admin' &&
+                (u.username.toLowerCase().includes(searchQuery) || (u.fullName && u.fullName.toLowerCase().includes(searchQuery)))
+            );
+
+            if (matchedUsers.length > 0) {
+                container.innerHTML = `
+                    <div class="p-2 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Hasil Pencarian Pengguna:</div>
+                    ${matchedUsers.map(u => `
+                        <div class="p-3 bg-white hover:bg-gray-50 rounded-2xl border border-gray-200 mb-2 flex items-center justify-between gap-2.5 transition">
+                            <div class="min-w-0">
+                                <p class="text-xs font-bold text-gray-900 truncate">${escapeHtml(u.fullName || u.username)}</p>
+                                <p class="text-[10px] text-gray-500 truncate">@${escapeHtml(u.username)} • Cabang ${escapeHtml(u.cabang || 'Pusat')}</p>
+                            </div>
+                            <button type="button" onclick="startChatWithUser('${encodeURIComponent(u.username)}', '${escapeHtml(u.fullName || u.username)}', '${escapeHtml(u.role || 'Kasir')}', '${escapeHtml(u.cabang || 'Pusat')}')" class="px-3 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition shrink-0 cursor-pointer">
+                                Mulai Chat
+                            </button>
+                        </div>
+                    `).join('')}
+                `;
+                return;
+            }
+        }
+
+        // Tampilan Benar-Benar Bersih Saat Riwayat Percakapan Kosong
+        container.innerHTML = `
+            <div class="p-6 text-center text-xs text-gray-400 flex flex-col items-center justify-center min-h-[220px]">
+                <div class="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl mb-2.5 shadow-2xs">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+                <p class="font-bold text-gray-800 text-xs mb-1">Riwayat Percakapan Bersih</p>
+                <p class="text-[11px] text-gray-500 mb-3 max-w-[210px] leading-relaxed">Tidak ada riwayat percakapan aktif dengan pengguna saat ini.</p>
+                <button type="button" onclick="openStartNewChatModal()" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white rounded-xl text-xs font-bold shadow-xs transition cursor-pointer">
+                    <i class="fas fa-plus text-[10px]"></i> Mulai Obrolan Baru
+                </button>
+            </div>
+        `;
+
+        if (currentSelectedAdminChatUser) {
+            currentSelectedAdminChatUser = null;
+            renderAdminThreadMessages();
+        }
         return;
     }
 
@@ -8368,10 +8410,9 @@ function confirmDeleteConversationHistory(encodedUsername, fullName) {
 
                 // 1. Bersihkan array pesan memori
                 if (currentSelectedAdminChatUser && currentSelectedAdminChatUser.username.toLowerCase() === normUser) {
+                    currentSelectedAdminChatUser = null;
                     currentAdminThreadMessages = [];
                     renderAdminThreadMessages();
-                    // Re-subscribe agar sync Firestore bersih
-                    subscribeAdminToUserThread(username);
                 }
 
                 // 2. Hapus dari riwayat adminConversationsList lokal
@@ -8383,7 +8424,7 @@ function confirmDeleteConversationHistory(encodedUsername, fullName) {
                 unreadAdminCount = Object.values(adminUnreadPerUser).reduce((a, b) => a + b, 0);
                 updateChatUnreadBadges();
 
-                // 4. Render ulang daftar pengguna (status pesan terakhir otomatis kembali menjadi "Belum ada percakapan")
+                // 4. Render ulang daftar pengguna (status pesan terakhir otomatis kembali bersih)
                 renderAdminConversationsSidebar();
 
                 showToast(`Riwayat percakapan dengan "${displayName}" berhasil dihapus bersih dari database`, 'success');
@@ -8418,16 +8459,20 @@ function confirmClearAllAdminChatHistory() {
                 showToast('Menghapus seluruh percakapan admin dari database...', 'info');
                 await clearAllAdminConversationsHistory();
 
+                // Bersihkan server Express jika aktif
+                try {
+                    fetch(getApiEndpoint('/api/chat/clear-all'), { method: 'POST' }).catch(() => {});
+                } catch(_) {}
+
                 // Bersihkan memori dan state lokal
                 adminConversationsList = [];
+                currentSelectedAdminChatUser = null;
                 currentAdminThreadMessages = [];
                 adminUnreadPerUser = {};
                 unreadAdminCount = 0;
                 updateChatUnreadBadges();
 
-                if (currentSelectedAdminChatUser) {
-                    renderAdminThreadMessages();
-                }
+                renderAdminThreadMessages();
                 renderAdminConversationsSidebar();
 
                 showToast('Seluruh riwayat chat admin berhasil dibersihkan dari database', 'success');

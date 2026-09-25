@@ -565,7 +565,7 @@ export async function firestoreProcessTransaksiKasir(trx: any) {
     kembalian: Number(trx.kembali || 0),
     metode: trx.metode || 'Cash',
     items: itemsJson,
-    linkPdf: trx.linkPdf || '#',
+    linkPdf: (trx.linkPdf && trx.linkPdf !== '#') ? trx.linkPdf : `https://istana-bubur-2.vercel.app/?doc=nota-${trxId}&download=1`,
     createdAt: Date.now()
   };
 
@@ -609,6 +609,8 @@ export async function firestoreGetHistoriGaji() {
     const data = docSnap.data();
     list.push({
       'ID Slip': data.id || docSnap.id,
+      'ID Gaji': data.id || docSnap.id,
+      'id': data.id || docSnap.id,
       'Nama': data.nama || '',
       'ID Karyawan': data.employeeId || '',
       'Bulan': data.bulan || '',
@@ -651,17 +653,19 @@ export async function firestoreProcessSlipGaji(sData: any) {
     jabatan: sData.jabatan || '-',
     noWa: sData.wa || '',
     keteranganLibur: sData.keteranganLibur || '',
-    linkPdf: '#',
+    linkPdf: (sData.linkPdf && sData.linkPdf !== '#') ? sData.linkPdf : `https://istana-bubur-2.vercel.app/?doc=slip-${slipId}&download=1`,
     createdAt: Date.now()
   };
 
   await setDoc(doc(db, COLLECTIONS.PAYROLL, slipId), payload);
 
+  const finalPdfUrl = payload.linkPdf;
+
   return {
     success: true,
     idSlip: slipId,
     message: 'Slip gaji berhasil diproses & disimpan di Cloud Firestore!',
-    pdfUrl: '#',
+    pdfUrl: finalPdfUrl,
     waLink: '#'
   };
 }
@@ -698,6 +702,8 @@ export function subscribeToPayroll(callback: (payrollList: any[]) => void): () =
       const data = docSnap.data();
       list.push({
         'ID Slip': data.id || docSnap.id,
+        'ID Gaji': data.id || docSnap.id,
+        'id': data.id || docSnap.id,
         'Nama': data.nama || '',
         'ID Karyawan': data.employeeId || '',
         'Bulan': data.bulan || '',
@@ -1268,7 +1274,7 @@ export function subscribeToBranches(callback: (branches: string[]) => void): () 
 // -------------------------------------------------------------
 export async function firestoreSaveDocument(docData: {
   id: string;
-  type: 'nota' | 'slip';
+  type?: 'nota' | 'slip';
   filename: string;
   title: string;
   htmlContent: string;
@@ -1279,8 +1285,7 @@ export async function firestoreSaveDocument(docData: {
   try {
     const cleanId = String(docData.id || '').replace(/[^a-zA-Z0-9._-]/g, '_');
     if (!cleanId) return false;
-    const docRef = doc(db, COLLECTIONS.DOCUMENTS, cleanId);
-    await setDoc(docRef, {
+    const payload = {
       id: cleanId,
       type: docData.type || 'nota',
       filename: docData.filename,
@@ -1290,7 +1295,32 @@ export async function firestoreSaveDocument(docData: {
       waMessage: docData.waMessage || '',
       base64Pdf: docData.base64Pdf || '',
       createdAt: Date.now()
-    }, { merge: true });
+    };
+
+    const docRef = doc(db, COLLECTIONS.DOCUMENTS, cleanId);
+    await setDoc(docRef, payload, { merge: true });
+
+    // Simpan juga variasi prefix agar tautan dengan/tanpa prefix tetap bisa dibuka
+    const extraIds: string[] = [];
+    if (cleanId.startsWith('nota-')) {
+      extraIds.push(cleanId.replace(/^nota-/, ''));
+    } else if (docData.type === 'nota') {
+      extraIds.push('nota-' + cleanId);
+    }
+    if (cleanId.startsWith('slip-')) {
+      extraIds.push(cleanId.replace(/^slip-/, ''));
+    } else if (docData.type === 'slip') {
+      extraIds.push('slip-' + cleanId);
+    }
+
+    for (const altId of extraIds) {
+      if (altId && altId !== cleanId) {
+        try {
+          await setDoc(doc(db, COLLECTIONS.DOCUMENTS, altId), { ...payload, id: altId }, { merge: true });
+        } catch (_) {}
+      }
+    }
+
     return true;
   } catch (err) {
     console.warn('[Firestore firestoreSaveDocument Error]:', err);
@@ -1314,7 +1344,113 @@ export async function firestoreGetDocument(docId: string): Promise<any | null> {
   }
 }
 
+// Smart document resolver: mencari di 'documents', dan jika belum ada, otomatis mengambil langsung dari 'transactions' atau 'payroll'
+export async function firestoreGetDocumentOrFromDatabase(docId: string): Promise<{
+  source: 'documents' | 'transactions' | 'payroll';
+  data: any;
+} | null> {
+  try {
+    const rawId = String(docId || '').trim();
+    const cleanId = rawId.replace(/[^a-zA-Z0-9._-]/g, '_');
+    if (!cleanId) return null;
+
+    // 1. Cek di koleksi 'documents' dengan berbagai variasi format
+    const docCandidates = [
+      cleanId,
+      cleanId.replace(/^nota-/, ''),
+      cleanId.replace(/^slip-/, ''),
+      'nota-' + cleanId.replace(/^nota-/, ''),
+      'slip-' + cleanId.replace(/^slip-/, '')
+    ];
+
+    for (const c of docCandidates) {
+      try {
+        const snap = await getDoc(doc(db, COLLECTIONS.DOCUMENTS, c));
+        if (snap.exists() && snap.data()?.htmlContent) {
+          return { source: 'documents', data: snap.data() };
+        }
+      } catch (_) {}
+    }
+
+    // 2. Cek langsung di koleksi 'transactions' (Database Transaksi Kasir)
+    const rawTrxId = cleanId.replace(/^nota-/, '');
+    const trxCandidates = [
+      rawTrxId,
+      cleanId,
+      rawTrxId.startsWith('TRX-') ? rawTrxId : 'TRX-' + rawTrxId
+    ];
+
+    for (const tc of trxCandidates) {
+      try {
+        const snap = await getDoc(doc(db, COLLECTIONS.TRANSACTIONS, tc));
+        if (snap.exists()) {
+          return { source: 'transactions', data: { ...snap.data(), id: snap.id || tc } };
+        }
+      } catch (_) {}
+    }
+
+    // Scan koleksi transactions jika ID belum ditemukan persis
+    try {
+      const snapTrxAll = await getDocs(collection(db, COLLECTIONS.TRANSACTIONS));
+      for (const d of snapTrxAll.docs) {
+        const data = d.data();
+        const dId = String(data.id || d.id || '');
+        if (dId === rawTrxId || dId === cleanId || rawTrxId.includes(dId) || dId.includes(rawTrxId)) {
+          return { source: 'transactions', data: { ...data, id: dId } };
+        }
+      }
+    } catch (_) {}
+
+    // 3. Cek langsung di koleksi 'payroll' (Database Riwayat Slip Gaji Karyawan)
+    const rawSlipId = cleanId.replace(/^slip-/, '');
+    const payCandidates = [
+      rawSlipId,
+      cleanId,
+      rawSlipId.startsWith('SLIP-') ? rawSlipId : 'SLIP-' + rawSlipId
+    ];
+
+    for (const pc of payCandidates) {
+      try {
+        const snap = await getDoc(doc(db, COLLECTIONS.PAYROLL, pc));
+        if (snap.exists()) {
+          return { source: 'payroll', data: { ...snap.data(), id: snap.id || pc } };
+        }
+      } catch (_) {}
+    }
+
+    // Scan koleksi payroll jika belum ketemu ID persis (misal pencarian nama atau bulan)
+    try {
+      const snapPayAll = await getDocs(collection(db, COLLECTIONS.PAYROLL));
+      for (const d of snapPayAll.docs) {
+        const data = d.data();
+        const pId = String(data.id || d.id || '');
+        const pNama = String(data.nama || '').toLowerCase().replace(/[^a-z0-9]/g, '_');
+        const pBulan = String(data.bulan || '').replace(/[^a-zA-Z0-9]/g, '_');
+
+        if (pId === rawSlipId || pId === cleanId || rawSlipId.includes(pId) || pId.includes(rawSlipId)) {
+          return { source: 'payroll', data: { ...data, id: pId } };
+        }
+        if (pNama && cleanId.toLowerCase().includes(pNama)) {
+          if (!pBulan || cleanId.includes(pBulan)) {
+            return { source: 'payroll', data: { ...data, id: pId } };
+          }
+        }
+      }
+    } catch (_) {}
+
+    return null;
+  } catch (err) {
+    console.warn('[firestoreGetDocumentOrFromDatabase Error]:', err);
+    return null;
+  }
+}
+
 if (typeof window !== 'undefined') {
+  (window as any).firestoreGetDocumentOrFromDatabase = firestoreGetDocumentOrFromDatabase;
+  (window as any).firestoreGetDocument = firestoreGetDocument;
+  (window as any).firestoreSaveDocument = firestoreSaveDocument;
+  (window as any).firestoreUpdateTransaksiPdfLink = firestoreUpdateTransaksiPdfLink;
+  (window as any).firestoreUpdateSlipPdfLink = firestoreUpdateSlipPdfLink;
   (window as any).deleteUserConversationHistory = deleteUserConversationHistory;
   (window as any).clearAllAdminConversationsHistory = clearAllAdminConversationsHistory;
   (window as any).deleteAdminChatMessage = deleteAdminChatMessage;
