@@ -590,6 +590,8 @@ export async function firestoreUpdateTransaksiPdfLink(trxId: string, linkPdf: st
     const targetDoc = doc(db, COLLECTIONS.TRANSACTIONS, cleanId);
     await updateDoc(targetDoc, {
       linkPdf: linkPdf,
+      pdfUrl: linkPdf,
+      'Link PDF': linkPdf,
       updatedAt: Date.now()
     });
     return { success: true };
@@ -682,6 +684,8 @@ export async function firestoreUpdateSlipPdfLink(slipId: string, linkPdf: string
     const targetDoc = doc(db, COLLECTIONS.PAYROLL, cleanId);
     await updateDoc(targetDoc, {
       linkPdf: linkPdf,
+      pdfUrl: linkPdf,
+      'Link PDF': linkPdf,
       updatedAt: Date.now()
     });
     return { success: true };

@@ -44,6 +44,103 @@
         input[type=number] { -moz-appearance: textfield; }
         
         #print-frame { position: absolute; width: 0; height: 0; border: none; overflow: hidden; }
+
+        /* Google Sign-In Material Button Official Styling */
+        .gsi-material-button {
+          -moz-user-select: none;
+          -webkit-user-select: none;
+          -ms-user-select: none;
+          -webkit-appearance: none;
+          background-color: WHITE;
+          background-image: none;
+          border: 1px solid #747775;
+          -webkit-border-radius: 20px;
+          border-radius: 20px;
+          -webkit-box-sizing: border-box;
+          box-sizing: border-box;
+          color: #1f1f1f;
+          cursor: pointer;
+          font-family: 'Roboto', arial, sans-serif;
+          font-size: 13px;
+          height: 38px;
+          letter-spacing: 0.25px;
+          outline: none;
+          overflow: hidden;
+          padding: 0 12px;
+          position: relative;
+          text-align: center;
+          -webkit-transition: background-color .218s, border-color .218s, box-shadow .218s;
+          transition: background-color .218s, border-color .218s, box-shadow .218s;
+          vertical-align: middle;
+          white-space: nowrap;
+          width: auto;
+          max-width: 400px;
+          min-width: min-content;
+          display: inline-flex;
+          align-items: center;
+        }
+        .gsi-material-button .gsi-material-button-icon {
+          height: 18px;
+          margin-right: 8px;
+          min-width: 18px;
+          width: 18px;
+        }
+        .gsi-material-button .gsi-material-button-content-wrapper {
+          -webkit-align-items: center;
+          align-items: center;
+          display: flex;
+          -webkit-flex-direction: row;
+          flex-direction: row;
+          -webkit-flex-wrap: nowrap;
+          flex-wrap: nowrap;
+          height: 100%;
+          justify-content: space-between;
+          position: relative;
+          width: 100%;
+        }
+        .gsi-material-button .gsi-material-button-contents {
+          -webkit-flex-grow: 1;
+          flex-grow: 1;
+          font-family: 'Roboto', arial, sans-serif;
+          font-weight: 500;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          vertical-align: top;
+        }
+        .gsi-material-button .gsi-material-button-state {
+          -webkit-transition: opacity .218s;
+          transition: opacity .218s;
+          bottom: 0;
+          left: 0;
+          opacity: 0;
+          position: absolute;
+          right: 0;
+          top: 0;
+        }
+        .gsi-material-button:disabled {
+          cursor: default;
+          background-color: #ffffff61;
+          border-color: #1f1f1f1f;
+        }
+        .gsi-material-button:disabled .gsi-material-button-contents {
+          opacity: 38%;
+        }
+        .gsi-material-button:disabled .gsi-material-button-icon {
+          opacity: 38%;
+        }
+        .gsi-material-button:not(:disabled):active .gsi-material-button-state, 
+        .gsi-material-button:not(:disabled):focus .gsi-material-button-state {
+          background-color: #303030;
+          opacity: 12%;
+        }
+        .gsi-material-button:not(:disabled):hover {
+          -webkit-box-shadow: 0 1px 2px 0 rgba(60, 64, 67, .30), 0 1px 3px 1px rgba(60, 64, 67, .15);
+          box-shadow: 0 1px 2px 0 rgba(60, 64, 67, .30), 0 1px 3px 1px rgba(60, 64, 67, .15);
+        }
+        .gsi-material-button:not(:disabled):hover .gsi-material-button-state {
+          background-color: #303030;
+          opacity: 8%;
+        }
     </style>
 </head>
 <body>
@@ -922,6 +1019,90 @@
                     </div>
                 </div>
 
+                <!-- KARTU INTEGRASI GOOGLE DRIVE CLOUD (NOTA & SLIP GAJI) -->
+                <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 mb-4 space-y-4">
+                    <div class="flex items-center justify-between pb-3 border-b border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center text-xl shadow-xs border border-amber-100">
+                                <i class="fab fa-google-drive"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-gray-900 text-sm">Penyimpanan Google Drive</h3>
+                                <p class="text-xs text-gray-500">Simpan otomatis PDF Nota Transaksi & Slip Gaji ke folder Google Drive</p>
+                            </div>
+                        </div>
+                        <span id="gdrive-status-badge" class="bg-gray-100 text-gray-600 text-[10px] font-bold px-2.5 py-1 rounded-full border border-gray-200">
+                            Belum Terhubung
+                        </span>
+                    </div>
+
+                    <!-- Auth Box: When Not Connected -->
+                    <div id="gdrive-unauthed-box" class="bg-gray-50 p-4 rounded-xl border border-gray-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div>
+                            <p class="text-xs font-bold text-gray-800">Hubungkan Akun Google</p>
+                            <p class="text-[11px] text-gray-500 mt-0.5">Izin akses penyimpanan file Google Drive untuk menyimpan dokumen otomatis.</p>
+                        </div>
+                        <div>
+                            <button type="button" class="gsi-material-button" onclick="handleGoogleSignInClick()" id="btn-gdrive-signin">
+                                <div class="gsi-material-button-state"></div>
+                                <div class="gsi-material-button-content-wrapper">
+                                    <div class="gsi-material-button-icon">
+                                        <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style="display: block;">
+                                            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                                            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                                            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                                            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                                            <path fill="none" d="M0 0h48v48H0z"></path>
+                                        </svg>
+                                    </div>
+                                    <span class="gsi-material-button-contents">Sign in with Google</span>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Authed Info Box: When Connected -->
+                    <div id="gdrive-authed-box" class="hidden-view bg-emerald-50/70 p-4 rounded-xl border border-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                                <i class="fas fa-check"></i>
+                            </div>
+                            <div>
+                                <p class="text-xs font-bold text-emerald-950">Terhubung ke Google Drive</p>
+                                <p class="text-[11px] text-emerald-800" id="gdrive-user-email">istanabubur89@gmail.com</p>
+                            </div>
+                        </div>
+                        <button type="button" onclick="handleGoogleSignOutClick()" class="px-3 py-1.5 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-xl text-xs font-bold transition active:scale-95 shadow-2xs">
+                            <i class="fas fa-sign-out-alt mr-1"></i> Putuskan
+                        </button>
+                    </div>
+
+                    <!-- Folder Config -->
+                    <div class="space-y-2">
+                        <label class="block text-xs font-bold text-gray-700">Folder Google Drive Tujuan</label>
+                        <div class="flex gap-2">
+                            <input type="text" id="gdrive-folder-id" value="1-Q_CN5nca3vKCMNH9ljM0p3BMalHwcGw" class="flex-1 border border-gray-300 rounded-xl px-3.5 py-2.5 text-xs bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500 font-mono">
+                            <button type="button" onclick="saveGoogleDriveFolderId()" class="bg-gray-900 hover:bg-black text-white px-4 py-2.5 rounded-xl text-xs font-bold transition shrink-0 active:scale-95">
+                                Simpan
+                            </button>
+                        </div>
+                        <div class="flex items-center justify-between text-[11px] pt-1">
+                            <a id="gdrive-open-folder-link" href="https://drive.google.com/drive/folders/1-Q_CN5nca3vKCMNH9ljM0p3BMalHwcGw?usp=sharing" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 font-bold inline-flex items-center gap-1">
+                                <i class="fas fa-external-link-alt text-[10px]"></i> Buka Folder di Google Drive ↗
+                            </a>
+                            <span class="text-gray-400">Folder Resmi Istana Bubur</span>
+                        </div>
+                    </div>
+
+                    <!-- Action Test Upload -->
+                    <div class="pt-3 border-t border-gray-100 flex items-center justify-between flex-wrap gap-2">
+                        <button type="button" onclick="testUploadGoogleDrive()" id="btn-test-gdrive" class="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition active:scale-95 inline-flex items-center gap-1.5 shadow-xs">
+                            <i class="fas fa-cloud-upload-alt"></i> Tes Unggah PDF ke Drive
+                        </button>
+                        <span class="text-[10px] text-gray-500">Link download Google Drive otomatis disertakan di pesan WhatsApp</span>
+                    </div>
+                </div>
+
                 <!-- PANDUAN KHUSUS PENGGUNAAN DI APK ANDROID -->
                 <div class="bg-gradient-to-br from-blue-50 to-indigo-50/60 p-4 sm:p-5 rounded-2xl border border-blue-100 text-xs text-blue-950 space-y-2.5">
                     <div class="flex items-center gap-2 font-bold text-sm text-blue-900">
@@ -1233,10 +1414,10 @@
                                         <i class="fas fa-users-cog text-red-600"></i> Daftar Pengguna
                                     </h4>
                                     <div class="flex items-center gap-1.5">
-                                        <span id="admin-total-user-count" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200">0 User</span>
+                                        <span id="admin-total-user-count" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200">0 Obrolan</span>
                                         <button type="button" onclick="confirmClearAllAdminChatHistory()" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-red-50 hover:bg-red-600 text-red-600 hover:text-white border border-red-200 text-[10px] font-bold transition active:scale-95" title="Hapus seluruh riwayat chat admin dengan semua pengguna">
                                             <i class="fas fa-trash-alt text-[9px]"></i>
-                                            <span>Hapus Semua</span>
+                                            <span>Bersihkan</span>
                                         </button>
                                     </div>
                                 </div>
@@ -1244,11 +1425,11 @@
                                     <i class="fas fa-search absolute left-3 top-2.5 text-gray-400 text-xs"></i>
                                     <input type="text" id="admin-user-search-input" placeholder="Cari nama / username..." oninput="filterAdminUserList(event)" class="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-red-500">
                                 </div>
-                                <div class="mt-2 pt-1 border-t border-gray-100 flex items-center justify-between text-[10px] text-gray-400">
+                                <div class="mt-2 pt-1 border-t border-gray-100 flex items-center justify-between text-[10px] text-gray-400" id="admin-swipe-guide-row">
                                     <span class="flex items-center gap-1 font-medium text-gray-500">
                                         <i class="fas fa-arrow-left text-red-500"></i> Geser/Swipe kiri untuk hapus
                                     </span>
-                                    <span>History chat</span>
+                                    <span>Riwayat Obrolan</span>
                                 </div>
                             </div>
                             <!-- User Conversations List -->
@@ -2628,6 +2809,9 @@
                 <h3 class="font-extrabold text-gray-800 text-sm" id="preview-slip-modal-title">Slip Gaji Karyawan Resmi</h3>
             </div>
             <div class="flex items-center gap-2">
+                <button type="button" onclick="uploadCurrentSlipToDrive()" class="bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Simpan PDF Slip ke Google Drive">
+                    <i class="fab fa-google-drive"></i> Simpan Drive
+                </button>
                 <button type="button" id="btn-modal-kirim-wa" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Kirim Rincian & Link Unduh PDF ke WhatsApp Karyawan">
                     <i class="fab fa-whatsapp text-white"></i> Kirim WA & Link PDF
                 </button>
@@ -2653,6 +2837,9 @@
                 <h3 class="font-extrabold text-gray-800 text-sm" id="preview-nota-modal-title">Nota Penjualan Resmi (A4)</h3>
             </div>
             <div class="flex items-center gap-2">
+                <button type="button" onclick="uploadCurrentNotaToDrive()" class="bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Simpan PDF Nota ke Google Drive">
+                    <i class="fab fa-google-drive"></i> Simpan Drive
+                </button>
                 <button type="button" id="btn-modal-nota-kirim-wa" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Kirim Rincian & Link Unduh PDF ke WhatsApp Pelanggan">
                     <i class="fab fa-whatsapp text-white"></i> Kirim WA & Link PDF
                 </button>
@@ -2693,6 +2880,129 @@
         </div>
         <div id="start-new-chat-user-list" class="flex-1 overflow-y-auto divide-y divide-gray-100 p-2 min-h-[200px] max-h-[380px]">
             <!-- Dynamic users list rendered here -->
+        </div>
+    </div>
+</div>
+
+<!-- MODAL GOOGLE DRIVE CLOUD STORAGE (NOTA & SLIP GAJI) -->
+<div id="modal-google-drive" class="fixed inset-0 bg-black/60 backdrop-blur-xs z-[99999] hidden-view flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+    <div class="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-gray-100 overflow-hidden flex flex-col my-auto animate-in fade-in zoom-in-95 duration-200">
+        <!-- Header Modal -->
+        <div class="px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-amber-50/70 to-orange-50/40 flex items-center justify-between shrink-0">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center text-xl shadow-md">
+                    <i class="fab fa-google-drive"></i>
+                </div>
+                <div>
+                    <h3 class="font-extrabold text-gray-900 text-sm sm:text-base leading-tight">Penyimpanan Google Drive</h3>
+                    <p class="text-[11px] text-gray-500 mt-0.5">Nota transaksi & slip gaji otomatis tersimpan ke Drive</p>
+                </div>
+            </div>
+            <button type="button" onclick="closeModal('modal-google-drive')" class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center transition active:scale-95">
+                <i class="fas fa-times text-xs"></i>
+            </button>
+        </div>
+
+        <!-- Modal Body Content -->
+        <div class="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+            <!-- Status Connection Card -->
+            <div class="bg-gray-50 p-4 rounded-2xl border border-gray-200 space-y-3">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-bold text-gray-700">Status Koneksi:</span>
+                    <span id="modal-gdrive-status-badge" class="bg-gray-200 text-gray-700 text-xs font-bold px-3 py-1 rounded-full border border-gray-300">
+                        Belum Terhubung
+                    </span>
+                </div>
+
+                <!-- When Unauthenticated -->
+                <div id="modal-gdrive-unauthed" class="space-y-3 pt-2 border-t border-gray-200">
+                    <p class="text-xs text-gray-600 leading-relaxed">
+                        Hubungkan akun Google Drive Anda agar setiap pembuatan nota penjualan dan slip gaji otomatis diunggah ke Google Drive dan link download langsung dapat dibagikan di WhatsApp.
+                    </p>
+                    <div class="flex justify-center pt-1">
+                        <button type="button" class="gsi-material-button w-full justify-center" onclick="handleGoogleSignInClick()">
+                            <div class="gsi-material-button-state"></div>
+                            <div class="gsi-material-button-content-wrapper">
+                                <div class="gsi-material-button-icon">
+                                    <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style="display: block;">
+                                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                                        <path fill="none" d="M0 0h48v48H0z"></path>
+                                    </svg>
+                                </div>
+                                <span class="gsi-material-button-contents">Sign in with Google</span>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- When Authenticated -->
+                <div id="modal-gdrive-authed" class="hidden-view space-y-3 pt-2 border-t border-gray-200">
+                    <div class="flex items-center justify-between bg-emerald-50 p-3 rounded-xl border border-emerald-200">
+                        <div class="flex items-center gap-2.5">
+                            <div class="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-xs">
+                                <i class="fas fa-check"></i>
+                            </div>
+                            <div>
+                                <p class="text-xs font-extrabold text-emerald-900">Google Drive Aktif</p>
+                                <p class="text-[11px] text-emerald-700 font-mono" id="modal-gdrive-email">user@gmail.com</p>
+                            </div>
+                        </div>
+                        <button type="button" onclick="handleGoogleSignOutClick()" class="px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 rounded-lg border border-red-200 font-bold transition">
+                            Putuskan
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Target Folder Setup -->
+            <div class="space-y-2 bg-white p-4 rounded-2xl border border-gray-200">
+                <div class="flex items-center justify-between">
+                    <label class="block text-xs font-bold text-gray-800">Folder Google Drive Tujuan</label>
+                    <span class="text-[10px] text-gray-400">ID Folder</span>
+                </div>
+                <div class="flex gap-2">
+                    <input type="text" id="modal-gdrive-folder-id" value="1-Q_CN5nca3vKCMNH9ljM0p3BMalHwcGw" class="flex-1 border border-gray-300 rounded-xl px-3.5 py-2 text-xs bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono">
+                    <button type="button" onclick="saveGoogleDriveFolderId()" class="bg-gray-900 hover:bg-black text-white px-3.5 py-2 rounded-xl text-xs font-bold transition shrink-0 active:scale-95">
+                        Simpan
+                    </button>
+                </div>
+                <div class="pt-1 flex items-center justify-between text-[11px]">
+                    <a id="modal-gdrive-open-folder-link" href="https://drive.google.com/drive/folders/1-Q_CN5nca3vKCMNH9ljM0p3BMalHwcGw?usp=sharing" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 font-bold inline-flex items-center gap-1">
+                        <i class="fas fa-external-link-alt text-[10px]"></i> Buka Folder di Google Drive ↗
+                    </a>
+                    <span class="text-gray-400 text-[10px]">Folder Resmi Istana Bubur</span>
+                </div>
+            </div>
+
+            <!-- Feature Checklist -->
+            <div class="bg-blue-50/60 p-4 rounded-2xl border border-blue-100 text-xs text-blue-950 space-y-1.5">
+                <p class="font-bold text-blue-900 mb-1 flex items-center gap-1.5">
+                    <i class="fas fa-shield-alt text-blue-600"></i> Fitur Otomatisasi Cloud:
+                </p>
+                <div class="flex items-start gap-2 text-[11px]">
+                    <i class="fas fa-check-circle text-emerald-600 mt-0.5 shrink-0"></i>
+                    <span><b>Nota Transaksi:</b> Otomatis diunggah ke Google Drive saat cetak / kirim WhatsApp.</span>
+                </div>
+                <div class="flex items-start gap-2 text-[11px]">
+                    <i class="fas fa-check-circle text-emerald-600 mt-0.5 shrink-0"></i>
+                    <span><b>Slip Gaji Karyawan:</b> Otomatis tersimpan ke Google Drive & tautan unduh disertakan ke WA karyawan.</span>
+                </div>
+                <div class="flex items-start gap-2 text-[11px]">
+                    <i class="fas fa-check-circle text-emerald-600 mt-0.5 shrink-0"></i>
+                    <span><b>Link Download WhatsApp:</b> Pelanggan & karyawan bisa langsung mengunduh file asli dari Google Drive kapan saja.</span>
+                </div>
+            </div>
+
+            <!-- Test Upload Button -->
+            <div class="pt-2 flex items-center justify-between gap-3">
+                <button type="button" onclick="testUploadGoogleDrive()" id="modal-btn-test-gdrive" class="w-full bg-amber-600 hover:bg-amber-700 active:scale-95 text-white py-2.5 px-4 rounded-xl text-xs font-bold transition shadow-xs flex items-center justify-center gap-2">
+                    <i class="fas fa-cloud-upload-alt text-sm"></i>
+                    <span>Tes Unggah Dokumen Uji Coba ke Drive</span>
+                </button>
+            </div>
         </div>
     </div>
 </div>

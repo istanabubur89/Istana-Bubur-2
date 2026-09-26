@@ -669,6 +669,184 @@ app.post('/api/pdf/prepare-doc', (req, res) => {
   }
 });
 
+// ==========================================
+// GOOGLE DRIVE SESSION & UPLOAD PROXY (ANDROID APK & WEB READY)
+// ==========================================
+const DEFAULT_GDRIVE_TARGET_FOLDER = '1-Q_CN5nca3vKCMNH9ljM0p3BMalHwcGw';
+let globalGdriveSession: { token: string; email?: string; timestamp: number } | null = null;
+
+// Get active Google Drive token (for syncing to Android WebView APK)
+app.get('/api/gdrive/session', (req, res) => {
+  if (globalGdriveSession && globalGdriveSession.token) {
+    // Check if token is within reasonable lifespan (under 55 minutes)
+    const ageMs = Date.now() - globalGdriveSession.timestamp;
+    if (ageMs < 55 * 60 * 1000) {
+      return res.json({
+        connected: true,
+        email: globalGdriveSession.email || 'Akun Google Terhubung',
+        token: globalGdriveSession.token,
+        defaultFolderId: DEFAULT_GDRIVE_TARGET_FOLDER
+      });
+    }
+  }
+  res.json({
+    connected: false,
+    token: null,
+    defaultFolderId: DEFAULT_GDRIVE_TARGET_FOLDER
+  });
+});
+
+// Sync active Google Drive token from client (Desktop/Mobile Web to Server & APK)
+app.post('/api/gdrive/session', (req, res) => {
+  const { token, email } = req.body;
+  if (!token) {
+    globalGdriveSession = null;
+    return res.json({ success: true, message: 'Google Drive session cleared' });
+  }
+  globalGdriveSession = {
+    token: String(token).trim(),
+    email: email || '',
+    timestamp: Date.now()
+  };
+
+  // Broadcast to all active WebSocket clients (e.g. Android WebView APKs)
+  broadcast({
+    type: 'GDRIVE_SYNC',
+    email: globalGdriveSession.email,
+    token: globalGdriveSession.token,
+    defaultFolderId: DEFAULT_GDRIVE_TARGET_FOLDER
+  });
+
+  res.json({ success: true, message: 'Google Drive session synced successfully' });
+});
+
+// Server-side upload to Google Drive (Guaranteed to work for Android WebView APK)
+app.post('/api/gdrive/upload', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    let token = '';
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7).trim();
+    } else if (globalGdriveSession?.token) {
+      token = globalGdriveSession.token;
+    }
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: 'Belum terhubung ke Google Drive. Silakan hubungkan akun Google Drive terlebih dahulu.'
+      });
+    }
+
+    const { filename, base64Pdf, folderId } = req.body;
+    if (!base64Pdf) {
+      return res.status(400).json({ success: false, message: 'base64Pdf wajib disertakan' });
+    }
+
+    const targetFolder = (folderId && String(folderId).trim()) || DEFAULT_GDRIVE_TARGET_FOLDER;
+    const cleanBase64 = String(base64Pdf).replace(/^data:application\/pdf;base64,/, '');
+    const pdfBuffer = Buffer.from(cleanBase64, 'base64');
+    const safeFilename = (filename || 'Dokumen_Istana_Bubur.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+
+    // Multipart upload request to Google Drive v3
+    const metadata: any = {
+      name: safeFilename,
+      mimeType: 'application/pdf'
+    };
+    if (targetFolder) {
+      metadata.parents = [targetFolder];
+    }
+
+    const boundary = '-------IstanaBuburUploadBoundary' + Date.now();
+    const delimiter = `\r\n--${boundary}\r\n`;
+    const closeDelimiter = `\r\n--${boundary}--`;
+
+    const metadataPart = `${delimiter}Content-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}`;
+    const fileHeaderPart = `\r\n--${boundary}\r\nContent-Type: application/pdf\r\n\r\n`;
+
+    const bodyBuffer = Buffer.concat([
+      Buffer.from(metadataPart, 'utf-8'),
+      Buffer.from(fileHeaderPart, 'utf-8'),
+      pdfBuffer,
+      Buffer.from(closeDelimiter, 'utf-8')
+    ]);
+
+    let uploadResp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,webContentLink', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`,
+        'Content-Length': String(bodyBuffer.length)
+      },
+      body: bodyBuffer
+    });
+
+    // Fallback if target folder is permission restricted
+    if (!uploadResp.ok && (uploadResp.status === 404 || uploadResp.status === 403) && targetFolder) {
+      console.warn(`[server.ts gdrive upload] Folder ${targetFolder} rejected (${uploadResp.status}). Retrying to root...`);
+      const fallbackMetadata = { name: safeFilename, mimeType: 'application/pdf' };
+      const fallbackMetaPart = `${delimiter}Content-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(fallbackMetadata)}`;
+      const fallbackBody = Buffer.concat([
+        Buffer.from(fallbackMetaPart, 'utf-8'),
+        Buffer.from(fileHeaderPart, 'utf-8'),
+        pdfBuffer,
+        Buffer.from(closeDelimiter, 'utf-8')
+      ]);
+
+      uploadResp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,webContentLink', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': `multipart/related; boundary=${boundary}`,
+          'Content-Length': String(fallbackBody.length)
+        },
+        body: fallbackBody
+      });
+    }
+
+    if (!uploadResp.ok) {
+      const errText = await uploadResp.text();
+      console.error('[server.ts gdrive upload error]:', uploadResp.status, errText);
+      return res.status(uploadResp.status).json({
+        success: false,
+        message: `Gagal upload ke Google Drive (${uploadResp.status}): ${errText}`
+      });
+    }
+
+    const driveFile: any = await uploadResp.json();
+    const fileId = driveFile.id;
+
+    // Set permission to anyone with link (reader)
+    try {
+      await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ role: 'reader', type: 'anyone' })
+      });
+    } catch(permErr) {
+      console.warn('[server.ts gdrive permission warning]:', permErr);
+    }
+
+    const viewUrl = driveFile.webViewLink || `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
+    const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+
+    res.json({
+      success: true,
+      fileId,
+      viewUrl,
+      downloadUrl,
+      webContentLink: downloadUrl,
+      folderId: targetFolder
+    });
+  } catch(err: any) {
+    console.error('[server.ts gdrive upload exception]:', err);
+    res.status(500).json({ success: false, message: 'Server upload error: ' + err.message });
+  }
+});
+
 // Direct PDF File Download endpoint (forces attachment download in Android external browser)
 app.get('/api/pdf/download/:docId', async (req, res) => {
   const doc = await getStoredOrFirestoreDoc(req.params.docId);
@@ -914,6 +1092,20 @@ app.get('/view-doc/:docId', async (req, res) => {
 </body>
 </html>
   `);
+});
+
+// Handle root URL with query parameter ?doc=nota-xxx or ?doc=slip-xxx
+app.get('/', (req, res, next) => {
+  const docId = req.query.doc as string;
+  if (docId) {
+    const isDownload = req.query.download === '1' || req.query.download === 'true';
+    if (isDownload) {
+      return res.redirect(`/api/pdf/download/${encodeURIComponent(docId)}`);
+    } else {
+      return res.redirect(`/view-doc/${encodeURIComponent(docId)}`);
+    }
+  }
+  next();
 });
 
 app.get('/api/chat/messages', (req, res) => {
