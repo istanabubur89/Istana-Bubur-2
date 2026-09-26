@@ -1,18 +1,19 @@
 /**
- * Firebase Cloud Storage for Transaction & Payroll PDFs
- * Automatically uploads Nota Transaksi and Slip Gaji PDFs to Firebase Storage
- * Generates direct download links for WhatsApp sharing
- * Avoids duplicate uploads if file is already available
+ * Direct PDF Generator & WhatsApp File Sharer for Istana Bubur
+ * Generates Nota Transaksi & Slip Gaji PDFs locally in memory
+ * Shares the PDF file directly to WhatsApp without uploading to Firebase Storage or Google Drive
+ * Supports Android APK WebView, Mobile Browsers, and Web Desktop
  */
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { app, firestoreSaveDocument, firestoreUpdateTransaksiPdfLink, firestoreUpdateSlipPdfLink } from './firebase';
-
-export const storage = getStorage(app);
 
 /**
  * Converts HTML content to PDF Blob and Base64 string using html2pdf
+ * Pure client-side generation without uploading to any cloud storage
  */
-export async function generatePdfBlobFromHtml(htmlContent: string, filename: string, isNota: boolean = true): Promise<{ blob: Blob; base64: string }> {
+export async function generatePdfBlobFromHtml(
+  htmlContent: string,
+  filename: string,
+  isNota: boolean = true
+): Promise<{ blob: Blob; base64: string }> {
   if (typeof window === 'undefined') {
     throw new Error('generatePdfBlobFromHtml hanya dapat dijalankan di browser');
   }
@@ -51,231 +52,147 @@ export async function generatePdfBlobFromHtml(htmlContent: string, filename: str
 }
 
 /**
- * Uploads a PDF Blob to Firebase Storage (with Firestore Document fallback)
+ * Membagikan file PDF secara langsung ke WhatsApp tanpa perlu link unduh
+ * Berfungsi di APK Android WebView, HP Android / iOS, dan Web Desktop
  */
-export async function uploadPdfToFirebase(options: {
-  storagePath: string;
+export async function sharePdfDirectToWhatsApp(options: {
   blob: Blob;
   base64?: string;
   filename: string;
-  docId: string;
-  type: 'nota' | 'slip';
-  title?: string;
-  htmlContent?: string;
-}): Promise<string> {
-  const { storagePath, blob, base64, filename, docId, type, title, htmlContent } = options;
+  phone?: string;
+  text?: string;
+}): Promise<boolean> {
+  const { blob, base64, filename, phone, text } = options;
 
-  // 1. Coba upload langsung via Firebase Cloud Storage SDK jika bucket aktif
-  try {
-    const fileRef = ref(storage, storagePath);
-    await uploadBytes(fileRef, blob, {
-      contentType: 'application/pdf',
-      customMetadata: {
-        filename,
-        docId,
-        type,
-        uploadedAt: new Date().toISOString()
+  let cleanWa = (phone || '').replace(/[^0-9]/g, '');
+  if (cleanWa.startsWith('0')) {
+    cleanWa = '62' + cleanWa.slice(1);
+  } else if (cleanWa.startsWith('8')) {
+    cleanWa = '62' + cleanWa;
+  }
+
+  // 1. Cek Native Android Interface jika APK memiliki bridge Java/Kotlin
+  const native = (window as any).Android || (window as any).AndroidShare || (window as any).AndroidBridge || (window as any).AndroidApp || (window as any).JSInterface;
+  if (native) {
+    if (typeof native.sharePdfWithWhatsApp === 'function') {
+      try {
+        native.sharePdfWithWhatsApp(base64 || '', filename, cleanWa, text || '');
+        if (typeof (window as any).showToast === 'function') {
+          (window as any).showToast('Membagikan file PDF ke WhatsApp...', 'success');
+        }
+        return true;
+      } catch (e) {
+        console.warn('Native sharePdfWithWhatsApp error:', e);
       }
-    });
-    const downloadUrl = await getDownloadURL(fileRef);
-    if (downloadUrl && downloadUrl.startsWith('http')) {
-      console.log('[Firebase Storage] Berhasil upload ke Storage:', downloadUrl);
-      return downloadUrl;
     }
-  } catch (storageErr) {
-    console.warn('[Firebase Storage SDK] Upload bucket tidak aktif / gagal, menggunakan Firebase Firestore Document Cloud Storage:', storageErr);
+    if (typeof native.sharePdf === 'function') {
+      try {
+        native.sharePdf(base64 || '', filename, cleanWa, text || '');
+        if (typeof (window as any).showToast === 'function') {
+          (window as any).showToast('Membagikan file PDF ke WhatsApp...', 'success');
+        }
+        return true;
+      } catch (e) {
+        console.warn('Native sharePdf error:', e);
+      }
+    }
+    if (typeof native.shareFile === 'function') {
+      try {
+        native.shareFile(base64 || '', filename, 'application/pdf', text || '');
+        if (typeof (window as any).showToast === 'function') {
+          (window as any).showToast('Membagikan file PDF...', 'success');
+        }
+        return true;
+      } catch (e) {
+        console.warn('Native shareFile error:', e);
+      }
+    }
   }
 
-  // 2. Simpan ke Cloud Firestore (Koleksi 'documents') sebagai penyimpanan cloud utama
-  let b64 = base64 || '';
-  if (!b64) {
+  // 2. Buat File object standar untuk Web Share API
+  let pdfFile: File;
+  try {
+    pdfFile = new File([blob], filename, {
+      type: 'application/pdf',
+      lastModified: Date.now()
+    });
+  } catch (err) {
+    pdfFile = blob as any;
+    (pdfFile as any).name = filename;
+    (pdfFile as any).lastModifiedDate = new Date();
+  }
+
+  // 3. Web Share API dengan File Lampiran Langsung (Standar Resmi Android WebView & Chrome)
+  // Di Android WebView / Chrome, navigator.share dengan file memicu Android Share Sheet,
+  // di mana WhatsApp langsung membuka dan melampirkan file PDF tersebut.
+  if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+    let canShareFiles = false;
     try {
-      b64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const res = reader.result as string;
-          resolve(res.replace(/^data:[^;]+;base64,/, ''));
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-    } catch (e) {}
-  }
+      canShareFiles = typeof navigator.canShare === 'function' ? navigator.canShare({ files: [pdfFile] }) : true;
+    } catch (_) {
+      canShareFiles = false;
+    }
 
-  const cleanDocId = String(docId || Date.now()).replace(/[^a-zA-Z0-9._-]/g, '_');
-  try {
-    await firestoreSaveDocument({
-      id: cleanDocId,
-      type,
-      filename,
-      title: title || (type === 'slip' ? 'Slip Gaji Karyawan' : 'Nota Transaksi'),
-      htmlContent: htmlContent || '',
-      base64Pdf: b64
-    });
-    console.log('[Firebase Firestore] Dokumen PDF tersimpan di Cloud Firestore:', cleanDocId);
-  } catch (fsErr) {
-    console.warn('[Firebase Document Save] Warning:', fsErr);
-  }
-
-  // Simpan juga ke server Express cache jika server tersedia
-  try {
-    fetch('/api/pdf/prepare-doc', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        customId: cleanDocId,
-        type,
-        filename,
-        title: title || (type === 'slip' ? 'Slip Gaji Karyawan' : 'Nota Transaksi'),
-        htmlContent: htmlContent || '<p>PDF Dokumen</p>',
-        base64Pdf: b64
-      })
-    }).catch(() => {});
-  } catch (e) {}
-
-  // Helper origin publik resmi yang berfungsi di Vercel, APK Android, dan Web Desktop
-  let publicOrigin = 'https://istana-bubur-2.vercel.app';
-  if (typeof window !== 'undefined') {
-    const custom = (localStorage.getItem('IB_PUBLIC_URL') || '').trim();
-    if (custom.startsWith('http://') || custom.startsWith('https://')) {
-      publicOrigin = custom.replace(/\/+$/, '');
-    } else if (window.location && window.location.origin && window.location.origin !== 'null' && (window.location.protocol === 'http:' || window.location.protocol === 'https:') && !window.location.origin.startsWith('file:')) {
-      publicOrigin = window.location.origin.replace(/\/+$/, '');
+    if (canShareFiles) {
+      try {
+        if (typeof (window as any).showToast === 'function') {
+          (window as any).showToast('Membuka WhatsApp untuk melampirkan file PDF...', 'info');
+        }
+        await navigator.share({
+          files: [pdfFile],
+          title: filename,
+          text: text || ''
+        });
+        if (typeof (window as any).showToast === 'function') {
+          (window as any).showToast('File PDF berhasil dibagikan ke WhatsApp!', 'success');
+        }
+        return true;
+      } catch (shareErr: any) {
+        if (shareErr && (shareErr.name === 'AbortError' || shareErr.message?.includes('canceled') || shareErr.message?.includes('abort'))) {
+          // Pengguna membatalkan dialog share
+          return false;
+        }
+        console.warn('[WebShare] Gagal membagikan file via navigator.share:', shareErr);
+      }
     }
   }
 
-  return `${publicOrigin}/?doc=${cleanDocId}&download=1`;
-}
+  // 4. Fallback jika sistem / WebView tidak mengizinkan Web Share file:
+  // Unduh/simpan file PDF ke memori perangkat secara instan, lalu buka WhatsApp
+  if (typeof (window as any).showToast === 'function') {
+    (window as any).showToast('Menyimpan file PDF & membuka WhatsApp...', 'info');
+  }
 
-/**
- * Checks if a URL is already a valid Firebase / Cloud storage download link
- */
-export function isValidPdfDownloadUrl(url?: string): boolean {
-  if (!url || typeof url !== 'string') return false;
-  const trimmed = url.trim();
-  if (!trimmed || trimmed === '#' || trimmed.length < 10) return false;
-  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return false;
+  try {
+    const fileUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = fileUrl;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      a.remove();
+      URL.revokeObjectURL(fileUrl);
+    }, 3000);
+  } catch (dlErr) {
+    console.warn('Gagal unduh file lokal:', dlErr);
+  }
+
+  setTimeout(() => {
+    if (typeof (window as any).openWhatsAppApp === 'function') {
+      (window as any).openWhatsAppApp(cleanWa, text || '');
+    }
+    if (typeof (window as any).showToast === 'function') {
+      (window as any).showToast('File PDF telah tersimpan. Silakan kirim file tersebut di chat WhatsApp.', 'success');
+    }
+  }, 600);
+
   return true;
 }
 
-/**
- * 1. Simpan & Dapatkan URL PDF Transaksi ke Firebase Storage
- * Hindari duplikat jika linkPdf / pdfUrl sudah tersedia
- */
-export async function ensureTransactionFirebasePdfUrl(trx: any): Promise<string> {
-  if (!trx) throw new Error('Data transaksi tidak ditemukan');
-
-  const rawId = trx.id || trx['ID Transaksi'] || Date.now();
-  const cleanId = String(rawId).replace(/[^a-zA-Z0-9._-]/g, '_');
-  const docId = cleanId.startsWith('nota-') ? cleanId : `nota-${cleanId}`;
-
-  // 1. CEK APAKAH SUDAH TERSEDIA (HINDARI DUPLIKAT)
-  const existingUrl = trx.linkPdf || trx.pdfUrl || trx['Link PDF'];
-  if (isValidPdfDownloadUrl(existingUrl)) {
-    console.log('[Firebase Storage] Nota sudah memiliki URL, melewati upload:', existingUrl);
-    return existingUrl;
-  }
-
-  // 2. Generate PDF dari HTML nota
-  const filename = `Nota_${cleanId}.pdf`;
-  const generateReceiptHTML = (window as any).generateReceiptHTML;
-  if (typeof generateReceiptHTML !== 'function') {
-    throw new Error('generateReceiptHTML belum tersedia');
-  }
-  const htmlContent = generateReceiptHTML(trx);
-  const { blob, base64 } = await generatePdfBlobFromHtml(htmlContent, filename, true);
-
-  // 3. Upload ke Firebase Storage
-  const storagePath = `nota_transaksi/${filename}`;
-  const downloadUrl = await uploadPdfToFirebase({
-    storagePath,
-    blob,
-    base64,
-    filename,
-    docId,
-    type: 'nota',
-    title: `Nota Transaksi #${cleanId}`,
-    htmlContent
-  });
-
-  // 4. Simpan URL ke data transaksi lokal dan Cloud Firestore
-  trx.linkPdf = downloadUrl;
-  trx.pdfUrl = downloadUrl;
-  trx['Link PDF'] = downloadUrl;
-
-  try {
-    await firestoreUpdateTransaksiPdfLink(cleanId, downloadUrl);
-  } catch (err) {
-    console.warn('[firestoreUpdateTransaksiPdfLink warning]:', err);
-  }
-
-  return downloadUrl;
-}
-
-/**
- * 2. Simpan & Dapatkan URL PDF Slip Gaji ke Firebase Storage
- * Hindari duplikat jika 'Link PDF' / linkPdf sudah tersedia
- */
-export async function ensureSalarySlipFirebasePdfUrl(slip: any): Promise<string> {
-  if (!slip) throw new Error('Data slip gaji tidak ditemukan');
-
-  const cleanName = (slip['Nama'] || slip.nama || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
-  const cleanBulan = (slip['Bulan'] || slip.bulan || '').replace(/[^a-zA-Z0-9._-]/g, '_');
-  const rawId = slip['ID Slip'] || slip['ID Gaji'] || slip.id || `${cleanName}-${cleanBulan}`;
-  const cleanId = String(rawId).replace(/[^a-zA-Z0-9._-]/g, '_');
-  const docId = cleanId.startsWith('slip-') ? cleanId : `slip-${cleanId}`;
-
-  // 1. CEK APAKAH SUDAH TERSEDIA (HINDARI DUPLIKAT)
-  const existingUrl = slip['Link PDF'] || slip.linkPdf || slip.pdfUrl;
-  if (isValidPdfDownloadUrl(existingUrl)) {
-    console.log('[Firebase Storage] Slip gaji sudah memiliki URL, melewati upload:', existingUrl);
-    return existingUrl;
-  }
-
-  // 2. Generate PDF dari HTML slip gaji
-  const filename = `Slip_Gaji_${cleanName}_${cleanBulan}.pdf`;
-  const generateSlipGajiHTML = (window as any).generateSlipGajiHTML;
-  if (typeof generateSlipGajiHTML !== 'function') {
-    throw new Error('generateSlipGajiHTML belum tersedia');
-  }
-  const htmlContent = generateSlipGajiHTML(slip);
-  const { blob, base64 } = await generatePdfBlobFromHtml(htmlContent, filename, false);
-
-  // 3. Upload ke Firebase Storage
-  const storagePath = `slip_gaji/${filename}`;
-  const downloadUrl = await uploadPdfToFirebase({
-    storagePath,
-    blob,
-    base64,
-    filename,
-    docId,
-    type: 'slip',
-    title: `Slip Gaji - ${slip['Nama'] || 'Karyawan'} (${slip['Bulan'] || ''})`,
-    htmlContent
-  });
-
-  // 4. Simpan URL ke data slip gaji lokal dan Cloud Firestore
-  slip['Link PDF'] = downloadUrl;
-  slip.linkPdf = downloadUrl;
-  slip.pdfUrl = downloadUrl;
-
-  try {
-    const targetSlipId = slip['ID Slip'] || slip['ID Gaji'] || docId;
-    await firestoreUpdateSlipPdfLink(targetSlipId, downloadUrl);
-  } catch (err) {
-    console.warn('[firestoreUpdateSlipPdfLink warning]:', err);
-  }
-
-  return downloadUrl;
-}
-
-// Expose globally for app.js
+// Expose globally for convenience
 if (typeof window !== 'undefined') {
-  (window as any).FirebasePdfStorage = {
-    ensureTransactionFirebasePdfUrl,
-    ensureSalarySlipFirebasePdfUrl,
-    isValidPdfDownloadUrl,
-    uploadPdfToFirebase,
-    generatePdfBlobFromHtml
-  };
+  (window as any).generatePdfBlobFromHtml = generatePdfBlobFromHtml;
+  (window as any).sharePdfDirectToWhatsApp = sharePdfDirectToWhatsApp;
 }
