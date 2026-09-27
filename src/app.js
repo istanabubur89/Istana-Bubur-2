@@ -4022,6 +4022,9 @@ async function generateSlip(e) {
             showToast(res.message, 'success'); 
             HISTORI_GAJI_CACHE = []; 
 
+            // Otomatis simpan PDF slip gaji ke folder Google Drive
+            autoUploadSlipToGoogleDrive(slipObj);
+
             // Tampilkan pratinjau modal slip gaji secara otomatis
             setTimeout(() => {
                 previewSlipGajiModal(slipObj);
@@ -4765,6 +4768,9 @@ async function processCheckout(e) {
             document.getElementById('checkout-result').classList.remove('hidden-view');
             
             showToast(res.message || 'Transaksi berhasil!', 'success');
+
+            // Otomatis simpan PDF nota transaksi ke folder Google Drive
+            autoUploadTrxToGoogleDrive(LAST_TRX_DATA);
 
             // Reload transaction history cache & update cashier dashboard
             await loadHistoriTransaksi();
@@ -5578,6 +5584,10 @@ async function kirimWhatsApp(data = null) {
         const { blob, base64 } = await generatePdfBlobFromHtml(htmlContent, filename, true);
 
         const waMessage = generateReceiptWhatsAppMessage(trx);
+
+        // Pastikan nota tersimpan otomatis di Google Drive
+        autoUploadTrxToGoogleDrive(trx);
+
         await sharePdfDirectToWhatsApp({
             blob,
             base64,
@@ -5765,6 +5775,9 @@ function renderHistoriTransaksi() {
                     </button>
                     <button onclick="kirimWhatsAppFromHistory('${idTrx}')" title="Kirim Rincian & Link Unduh PDF via WhatsApp" class="bg-emerald-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-emerald-700 active:scale-95 transition font-bold text-[10px]">
                         <i class="fab fa-whatsapp"></i> WA
+                    </button>
+                    <button onclick="simpanTrxKeGoogleDrive('${idTrx}')" title="Simpan PDF Nota ke Google Drive" class="bg-amber-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-amber-700 active:scale-95 transition font-bold text-[10px]">
+                        <i class="fab fa-google-drive"></i> Drive
                     </button>
                     ${deleteButtonHtml}
                 </div>
@@ -5979,6 +5992,9 @@ function renderHistoriGaji() {
                 </button>
                 <button onclick="kirimWaSlipGaji(${idx})" title="Kirim Link Unduh PDF & Rincian Slip Gaji ke WhatsApp Karyawan" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
                     <i class="fab fa-whatsapp text-white text-sm"></i> Kirim WA
+                </button>
+                <button onclick="simpanSlipGajiKeGoogleDrive(${idx})" title="Simpan PDF Slip Gaji ke Google Drive" class="bg-amber-600 hover:bg-amber-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
+                    <i class="fab fa-google-drive text-white"></i> Drive
                 </button>
                 <button onclick="confirmHapusHistoriGaji(${idx})" title="Hapus Riwayat Slip Gaji" class="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
                     <i class="fas fa-trash-alt"></i> Hapus
@@ -6353,6 +6369,10 @@ async function kirimWaSlipGajiDirect(t) {
         const { blob, base64 } = await generatePdfBlobFromHtml(htmlContent, filename, false);
 
         const waMessage = generateSlipGajiWhatsAppMessage(t);
+
+        // Pastikan slip gaji tersimpan otomatis di Google Drive
+        autoUploadSlipToGoogleDrive(t);
+
         await sharePdfDirectToWhatsApp({
             blob,
             base64,
@@ -7321,15 +7341,78 @@ async function uploadCurrentSlipToDrive() {
 window.uploadCurrentSlipToDrive = uploadCurrentSlipToDrive;
 
 // ===================================================
-// PENYIMPANAN PDF CLOUD DINONAKTIFKAN (TIDAK MENYIMPAN KE DRIVE / FIREBASE)
+// OTOMATIS SIMPAN NOTA & SLIP GAJI KE GOOGLE DRIVE
+// Folder: 1-Q_CN5nca3vKCMNH9ljM0p3BMalHwcGw
 // ===================================================
+const TARGET_GDRIVE_FOLDER_ID = '1-Q_CN5nca3vKCMNH9ljM0p3BMalHwcGw';
+
 async function autoUploadTrxToGoogleDrive(trx) {
-    return;
+    if (!trx) return;
+    try {
+        const cleanTrxId = (trx.id || trx['ID Transaksi'] || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_');
+        const filename = `Nota_${cleanTrxId}.pdf`;
+        const htmlContent = generateReceiptHTML(trx);
+        const pdfBlob = await createPdfBlobFromHtml(htmlContent, filename, true);
+        const targetFolder = getTargetFolderId() || TARGET_GDRIVE_FOLDER_ID;
+
+        const driveRes = await uploadPdfToGoogleDrive({
+            filename,
+            blob: pdfBlob,
+            folderId: targetFolder
+        });
+
+        if (driveRes && (driveRes.downloadUrl || driveRes.viewUrl)) {
+            trx.linkPdf = driveRes.downloadUrl;
+            trx.driveDownloadUrl = driveRes.downloadUrl;
+            trx.driveViewUrl = driveRes.viewUrl;
+            trx['Link PDF'] = driveRes.downloadUrl;
+            const targetId = trx.id || trx['ID Transaksi'];
+            if (targetId) {
+                try {
+                    await firestoreUpdateTransaksiPdfLink(targetId, driveRes.downloadUrl);
+                } catch(_) {}
+            }
+            console.log('[Google Drive Auto-Saved Nota Berhasil]:', driveRes.downloadUrl);
+            showToast('✅ PDF Nota transaksi otomatis tersimpan di Google Drive!', 'success');
+        }
+    } catch(err) {
+        console.warn('[Google Drive auto-upload nota warning]:', err);
+    }
 }
 window.autoUploadTrxToGoogleDrive = autoUploadTrxToGoogleDrive;
 
 async function autoUploadSlipToGoogleDrive(slip) {
-    return;
+    if (!slip) return;
+    try {
+        const cleanName = (slip['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const cleanBulan = (slip['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const filename = `Slip_Gaji_${cleanName}_${cleanBulan}.pdf`;
+        const htmlContent = generateSlipGajiHTML(slip);
+        const pdfBlob = await createPdfBlobFromHtml(htmlContent, filename, false);
+        const targetFolder = getTargetFolderId() || TARGET_GDRIVE_FOLDER_ID;
+
+        const driveRes = await uploadPdfToGoogleDrive({
+            filename,
+            blob: pdfBlob,
+            folderId: targetFolder
+        });
+
+        if (driveRes && (driveRes.downloadUrl || driveRes.viewUrl)) {
+            slip['Link PDF'] = driveRes.downloadUrl;
+            slip.driveDownloadUrl = driveRes.downloadUrl;
+            slip.driveViewUrl = driveRes.viewUrl;
+            const targetId = slip['ID Slip'] || slip['ID Gaji'] || `${cleanName}-${cleanBulan}`;
+            if (targetId) {
+                try {
+                    await firestoreUpdateSlipPdfLink(targetId, driveRes.downloadUrl);
+                } catch(_) {}
+            }
+            console.log('[Google Drive Auto-Saved Slip Gaji Berhasil]:', driveRes.downloadUrl);
+            showToast('✅ PDF Slip gaji otomatis tersimpan di Google Drive!', 'success');
+        }
+    } catch(err) {
+        console.warn('[Google Drive auto-upload slip warning]:', err);
+    }
 }
 window.autoUploadSlipToGoogleDrive = autoUploadSlipToGoogleDrive;
 
