@@ -5464,12 +5464,14 @@ async function openDocPdfOutsideApp(options) {
     }
 }
 
-function generateReceiptWhatsAppMessage(trx) {
+function generateReceiptWhatsAppMessage(trx, downloadLink = '') {
     const itemsText = (trx.items || []).map(i => `• ${i.nama} (${i.qty}x @Rp ${formatRupiah(i.harga)}) = Rp ${formatRupiah(i.qty * i.harga)}`).join('\n');
+    const link = downloadLink || trx.linkPdf || trx.driveDownloadUrl || trx['Link PDF'] || '';
+    const linkText = link ? `📥 *Download File Dokumen PDF (Google Drive):*\n${link}\n===============================` : '';
 
     return `*NOTA TRANSAKSI - ISTANA BUBUR*
 ===============================
-*No. Trx:* #${trx.id}
+*No. Trx:* #${trx.id || trx['ID Transaksi'] || ''}
 *Tanggal:* ${trx.tanggal || getTodayStringFormatted()}
 *Cabang:* ${trx.cabang || 'Pusat'}
 *Kasir:* ${trx.kasir || '-'}
@@ -5481,9 +5483,7 @@ ${itemsText}
 *TOTAL BELANJA: Rp ${formatRupiah(trx.total)}*
 *Pembayaran:* ${trx.metode || 'Cash'}${trx.bayar ? `\n*Tunai:* Rp ${formatRupiah(trx.bayar)}\n*Kembalian:* Rp ${formatRupiah(trx.kembali)}` : ''}
 ===============================
-📎 *Terlampir File Dokumen Nota Resmi (PDF)*
-===============================
-_Terima kasih telah berbelanja di Istana Bubur!_
+${linkText ? `${linkText}\n` : ''}_Terima kasih telah berbelanja di Istana Bubur!_
 _Selamat menikmati hidangan kami._`;
 }
 
@@ -5586,7 +5586,7 @@ function printReceiptFallback(htmlContent) {
 }
 
 // ==========================================
-// FEATURE: KIRIM WHATSAPP (DENGAN LAMPIRAN FILE PDF LANGSUNG)
+// FEATURE: KIRIM WHATSAPP (DENGAN TAUTAN DOWNLOAD GOOGLE DRIVE)
 // ==========================================
 async function kirimWhatsApp(data = null) {
     const trx = data || LAST_TRX_DATA;
@@ -5602,29 +5602,20 @@ async function kirimWhatsApp(data = null) {
         noWa = noWa.trim();
     }
 
-    showToast('Menyiapkan file PDF nota transaksi...', 'info');
+    showToast('Menyiapkan link dokumen Google Drive...', 'info');
 
     try {
-        const cleanTrxId = (trx.id || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_');
-        const filename = `Nota_${cleanTrxId}.pdf`;
-        const htmlContent = generateReceiptHTML(trx);
-        const { blob, base64 } = await generatePdfBlobFromHtml(htmlContent, filename, true);
+        let driveUrl = trx.linkPdf || trx.driveDownloadUrl || trx['Link PDF'] || '';
+        if (!driveUrl) {
+            driveUrl = await autoUploadTrxToGoogleDrive(trx);
+        }
 
-        const waMessage = generateReceiptWhatsAppMessage(trx);
-
-        // Pastikan nota tersimpan otomatis di Google Drive
-        autoUploadTrxToGoogleDrive(trx);
-
-        await sharePdfDirectToWhatsApp({
-            blob,
-            base64,
-            filename,
-            phone: noWa,
-            text: waMessage
-        });
+        const waMessage = generateReceiptWhatsAppMessage(trx, driveUrl);
+        openWhatsAppApp(noWa, waMessage);
+        showToast('Membuka WhatsApp...', 'success');
     } catch(err) {
         console.error('Error kirimWhatsApp:', err);
-        showToast('Gagal menyiapkan PDF nota: ' + (err.message || err), 'error');
+        showToast('Gagal menyiapkan pesan WhatsApp: ' + (err.message || err), 'error');
     }
 }
 
@@ -6323,7 +6314,7 @@ window.previewSlipGajiModal = previewSlipGajiModal;
 window.previewSlipGajiTerbaru = previewSlipGajiTerbaru;
 window.previewSlipGajiFromHistori = previewSlipGajiFromHistori;
 
-function generateSlipGajiWhatsAppMessage(t) {
+function generateSlipGajiWhatsAppMessage(t, downloadLink = '') {
     const bulanFormatted = formatBulanIndo(t['Bulan']);
     const bonus = Number(t['Bonus']) || 0;
     const potongan = Number(t['Potongan']) || 0;
@@ -6331,6 +6322,8 @@ function generateSlipGajiWhatsAppMessage(t) {
     const harian = Number(t['Gaji Harian']) || 0;
     const hari = Number(t['Hari Masuk']) || 0;
     const pokok = (harian && hari) ? (harian * hari) : (totalGaji - bonus + potongan);
+    const link = downloadLink || t['Link PDF'] || t.driveDownloadUrl || '';
+    const linkText = link ? `📥 *Download File Dokumen Slip Gaji (Google Drive):*\n${link}\n================================` : '';
 
     return `*SLIP GAJI KARYAWAN - ISTANA BUBUR*
 ================================
@@ -6347,9 +6340,7 @@ ${hari ? `• Hari Masuk : ${hari} hari (@Rp ${formatRupiah(harian)})\n` : ''}�
 ${t['Keterangan Libur'] ? `• Keterangan : ${t['Keterangan Libur']}\n` : ''}--------------------------------
 *TOTAL DITERIMA : Rp ${formatRupiah(totalGaji)}*
 ================================
-📎 *Terlampir File Dokumen Slip Gaji (PDF)*
-================================
-_Terima kasih atas kerja keras, loyalitas, dan dedikasi Anda di Istana Bubur._`;
+${linkText ? `${linkText}\n` : ''}_Terima kasih atas kerja keras, loyalitas, dan dedikasi Anda di Istana Bubur._`;
 }
 
 // Function: Kirim WhatsApp Slip Gaji Karyawan from Riwayat Gaji
@@ -6386,30 +6377,20 @@ async function kirimWaSlipGajiDirect(t) {
         noWa = noWa.trim();
     }
 
-    showToast('Menyiapkan file PDF slip gaji...', 'info');
+    showToast('Menyiapkan link dokumen Google Drive...', 'info');
 
     try {
-        const cleanName = (t['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
-        const cleanBulan = (t['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
-        const filename = `Slip_Gaji_${cleanName}_${cleanBulan}.pdf`;
-        const htmlContent = generateSlipGajiHTML(t);
-        const { blob, base64 } = await generatePdfBlobFromHtml(htmlContent, filename, false);
+        let driveUrl = t['Link PDF'] || t.driveDownloadUrl || '';
+        if (!driveUrl) {
+            driveUrl = await autoUploadSlipToGoogleDrive(t);
+        }
 
-        const waMessage = generateSlipGajiWhatsAppMessage(t);
-
-        // Pastikan slip gaji tersimpan otomatis di Google Drive
-        autoUploadSlipToGoogleDrive(t);
-
-        await sharePdfDirectToWhatsApp({
-            blob,
-            base64,
-            filename,
-            phone: noWa,
-            text: waMessage
-        });
+        const waMessage = generateSlipGajiWhatsAppMessage(t, driveUrl);
+        openWhatsAppApp(noWa, waMessage);
+        showToast('Membuka WhatsApp...', 'success');
     } catch(err) {
         console.error('Error kirimWaSlipGajiDirect:', err);
-        showToast('Gagal menyiapkan slip gaji: ' + (err.message || err), 'error');
+        showToast('Gagal mengirim slip gaji ke WhatsApp: ' + (err.message || err), 'error');
     }
 }
 
@@ -7401,7 +7382,9 @@ window.uploadCurrentSlipToDrive = uploadCurrentSlipToDrive;
 const TARGET_GDRIVE_FOLDER_ID = '1-Q_CN5nca3vKCMNH9ljM0p3BMalHwcGw';
 
 async function autoUploadTrxToGoogleDrive(trx) {
-    if (!trx) return;
+    if (!trx) return null;
+    const existing = trx.linkPdf || trx.driveDownloadUrl || trx['Link PDF'];
+    if (existing) return existing;
     try {
         const cleanTrxId = (trx.id || trx['ID Transaksi'] || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_');
         const filename = `Nota_${cleanTrxId}.pdf`;
@@ -7416,27 +7399,31 @@ async function autoUploadTrxToGoogleDrive(trx) {
         });
 
         if (driveRes && (driveRes.downloadUrl || driveRes.viewUrl)) {
-            trx.linkPdf = driveRes.downloadUrl;
+            const finalUrl = driveRes.downloadUrl || driveRes.viewUrl;
+            trx.linkPdf = finalUrl;
             trx.driveDownloadUrl = driveRes.downloadUrl;
             trx.driveViewUrl = driveRes.viewUrl;
-            trx['Link PDF'] = driveRes.downloadUrl;
+            trx['Link PDF'] = finalUrl;
             const targetId = trx.id || trx['ID Transaksi'];
             if (targetId) {
                 try {
-                    await firestoreUpdateTransaksiPdfLink(targetId, driveRes.downloadUrl);
+                    await firestoreUpdateTransaksiPdfLink(targetId, finalUrl);
                 } catch(_) {}
             }
-            console.log('[Google Drive Auto-Saved Nota Berhasil]:', driveRes.downloadUrl);
-            showToast('✅ PDF Nota transaksi otomatis tersimpan di Google Drive!', 'success');
+            console.log('[Google Drive Auto-Saved Nota Berhasil]:', finalUrl);
+            return finalUrl;
         }
     } catch(err) {
         console.warn('[Google Drive auto-upload nota warning]:', err);
     }
+    return null;
 }
 window.autoUploadTrxToGoogleDrive = autoUploadTrxToGoogleDrive;
 
 async function autoUploadSlipToGoogleDrive(slip) {
-    if (!slip) return;
+    if (!slip) return null;
+    const existing = slip['Link PDF'] || slip.driveDownloadUrl;
+    if (existing) return existing;
     try {
         const cleanName = (slip['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
         const cleanBulan = (slip['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -7452,21 +7439,23 @@ async function autoUploadSlipToGoogleDrive(slip) {
         });
 
         if (driveRes && (driveRes.downloadUrl || driveRes.viewUrl)) {
-            slip['Link PDF'] = driveRes.downloadUrl;
+            const finalUrl = driveRes.downloadUrl || driveRes.viewUrl;
+            slip['Link PDF'] = finalUrl;
             slip.driveDownloadUrl = driveRes.downloadUrl;
             slip.driveViewUrl = driveRes.viewUrl;
             const targetId = slip['ID Slip'] || slip['ID Gaji'] || `${cleanName}-${cleanBulan}`;
             if (targetId) {
                 try {
-                    await firestoreUpdateSlipPdfLink(targetId, driveRes.downloadUrl);
+                    await firestoreUpdateSlipPdfLink(targetId, finalUrl);
                 } catch(_) {}
             }
-            console.log('[Google Drive Auto-Saved Slip Gaji Berhasil]:', driveRes.downloadUrl);
-            showToast('✅ PDF Slip gaji otomatis tersimpan di Google Drive!', 'success');
+            console.log('[Google Drive Auto-Saved Slip Gaji Berhasil]:', finalUrl);
+            return finalUrl;
         }
     } catch(err) {
         console.warn('[Google Drive auto-upload slip warning]:', err);
     }
+    return null;
 }
 window.autoUploadSlipToGoogleDrive = autoUploadSlipToGoogleDrive;
 

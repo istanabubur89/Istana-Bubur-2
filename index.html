@@ -252,10 +252,6 @@
                             <span id="badge-unread-chat" class="hidden-view bg-red-600 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full shadow-xs">0</span>
                         </button>
                         <button onclick="switchTab('printer'); toggleMenu();" id="tab-printer" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center gap-3 border-l-4 border-transparent transition"><i class="fas fa-print w-5 text-center"></i> Pengaturan Printer</button>
-                        <button onclick="openGoogleDriveModal(); toggleMenu();" id="menu-gdrive-item" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center justify-between border-l-4 border-transparent transition">
-                            <span class="flex items-center gap-3"><i class="fab fa-google-drive w-5 text-center text-amber-500"></i> Google Drive</span>
-                            <span id="menu-gdrive-status" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">Belum Terhubung</span>
-                        </button>
                         <div class="border-t border-gray-100 my-1"></div>
                         
                         <button onclick="openGuideModal('login'); toggleMenu();" id="tab-guide" class="nav-item-dropdown w-full text-left px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center gap-3 border-l-4 border-transparent transition text-indigo-700 bg-indigo-50/50"><i class="fas fa-book-open w-5 text-center text-indigo-600"></i> Buku Panduan</button>
@@ -274,12 +270,6 @@
                 </div>
             </div>
             <div class="flex items-center gap-2.5">
-                <!-- Tombol Status Google Drive di Header -->
-                <button type="button" onclick="openGoogleDriveModal()" id="header-btn-gdrive" title="Status Penyimpanan Google Drive" class="relative bg-white/15 hover:bg-white/25 active:scale-95 text-white h-9 px-2.5 rounded-full transition flex items-center gap-1.5 border border-white/20 shadow-sm text-xs font-bold">
-                    <i class="fab fa-google-drive text-amber-300 text-sm"></i>
-                    <span id="header-gdrive-text" class="hidden sm:inline text-[11px]">Drive</span>
-                    <span id="header-gdrive-dot" class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-                </button>
                 <button onclick="switchTab('chat')" id="header-btn-chat" title="Chat Bantuan Real-Time" class="relative bg-white/15 hover:bg-white/25 active:scale-95 text-white w-9 h-9 rounded-full transition flex items-center justify-center border border-white/20 shadow-sm">
                     <i id="header-chat-icon" class="fas fa-comment-dots text-sm transition-transform duration-200"></i>
                     <span id="header-unread-badge" class="hidden-view absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-black min-w-4 h-4 px-1 rounded-full flex items-center justify-center shadow-md border-2 border-white z-10 scale-100 transition-transform">0</span>
@@ -1029,90 +1019,6 @@
                     </div>
                 </div>
 
-                <!-- KARTU INTEGRASI GOOGLE DRIVE CLOUD (NOTA & SLIP GAJI) -->
-                <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 mb-4 space-y-4">
-                    <div class="flex items-center justify-between pb-3 border-b border-gray-100">
-                        <div class="flex items-center gap-3">
-                            <div class="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center text-xl shadow-xs border border-amber-100">
-                                <i class="fab fa-google-drive"></i>
-                            </div>
-                            <div>
-                                <h3 class="font-bold text-gray-900 text-sm">Penyimpanan Google Drive</h3>
-                                <p class="text-xs text-gray-500">Simpan otomatis PDF Nota Transaksi & Slip Gaji ke folder Google Drive</p>
-                            </div>
-                        </div>
-                        <span id="gdrive-status-badge" class="bg-gray-100 text-gray-600 text-[10px] font-bold px-2.5 py-1 rounded-full border border-gray-200">
-                            Belum Terhubung
-                        </span>
-                    </div>
-
-                    <!-- Auth Box: When Not Connected -->
-                    <div id="gdrive-unauthed-box" class="bg-gray-50 p-4 rounded-xl border border-gray-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                        <div>
-                            <p class="text-xs font-bold text-gray-800">Hubungkan Akun Google</p>
-                            <p class="text-[11px] text-gray-500 mt-0.5">Izin akses penyimpanan file Google Drive untuk menyimpan dokumen otomatis.</p>
-                        </div>
-                        <div>
-                            <button type="button" class="gsi-material-button" onclick="handleGoogleSignInClick()" id="btn-gdrive-signin">
-                                <div class="gsi-material-button-state"></div>
-                                <div class="gsi-material-button-content-wrapper">
-                                    <div class="gsi-material-button-icon">
-                                        <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style="display: block;">
-                                            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                                            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                                            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                                            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                                            <path fill="none" d="M0 0h48v48H0z"></path>
-                                        </svg>
-                                    </div>
-                                    <span class="gsi-material-button-contents">Sign in with Google</span>
-                                </div>
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Authed Info Box: When Connected -->
-                    <div id="gdrive-authed-box" class="hidden-view bg-emerald-50/70 p-4 rounded-xl border border-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                        <div class="flex items-center gap-3">
-                            <div class="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
-                                <i class="fas fa-check"></i>
-                            </div>
-                            <div>
-                                <p class="text-xs font-bold text-emerald-950">Terhubung ke Google Drive</p>
-                                <p class="text-[11px] text-emerald-800" id="gdrive-user-email">istanabubur89@gmail.com</p>
-                            </div>
-                        </div>
-                        <button type="button" onclick="handleGoogleSignOutClick()" class="px-3 py-1.5 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-xl text-xs font-bold transition active:scale-95 shadow-2xs">
-                            <i class="fas fa-sign-out-alt mr-1"></i> Putuskan
-                        </button>
-                    </div>
-
-                    <!-- Folder Config -->
-                    <div class="space-y-2">
-                        <label class="block text-xs font-bold text-gray-700">Folder Google Drive Tujuan</label>
-                        <div class="flex gap-2">
-                            <input type="text" id="gdrive-folder-id" value="1-Q_CN5nca3vKCMNH9ljM0p3BMalHwcGw" class="flex-1 border border-gray-300 rounded-xl px-3.5 py-2.5 text-xs bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-red-500 font-mono">
-                            <button type="button" onclick="saveGoogleDriveFolderId()" class="bg-gray-900 hover:bg-black text-white px-4 py-2.5 rounded-xl text-xs font-bold transition shrink-0 active:scale-95">
-                                Simpan
-                            </button>
-                        </div>
-                        <div class="flex items-center justify-between text-[11px] pt-1">
-                            <a id="gdrive-open-folder-link" href="https://drive.google.com/drive/folders/1-Q_CN5nca3vKCMNH9ljM0p3BMalHwcGw?usp=sharing" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 font-bold inline-flex items-center gap-1">
-                                <i class="fas fa-external-link-alt text-[10px]"></i> Buka Folder di Google Drive ↗
-                            </a>
-                            <span class="text-gray-400">Folder Resmi Istana Bubur</span>
-                        </div>
-                    </div>
-
-                    <!-- Action Test Upload -->
-                    <div class="pt-3 border-t border-gray-100 flex items-center justify-between flex-wrap gap-2">
-                        <button type="button" onclick="testUploadGoogleDrive()" id="btn-test-gdrive" class="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition active:scale-95 inline-flex items-center gap-1.5 shadow-xs">
-                            <i class="fas fa-cloud-upload-alt"></i> Tes Unggah PDF ke Drive
-                        </button>
-                        <span class="text-[10px] text-gray-500">Link download Google Drive otomatis disertakan di pesan WhatsApp</span>
-                    </div>
-                </div>
-
                 <!-- PANDUAN KHUSUS PENGGUNAAN DI APK ANDROID -->
                 <div class="bg-gradient-to-br from-blue-50 to-indigo-50/60 p-4 sm:p-5 rounded-2xl border border-blue-100 text-xs text-blue-950 space-y-2.5">
                     <div class="flex items-center gap-2 font-bold text-sm text-blue-900">
@@ -1723,22 +1629,6 @@
                         <button onclick="kirimWhatsApp()" class="flex-1 bg-emerald-600 text-white py-2.5 rounded-xl font-bold shadow-md hover:bg-emerald-700 active:scale-95 transition flex items-center justify-center gap-1.5 text-xs">
                             <i class="fab fa-whatsapp"></i> WhatsApp
                         </button>
-                    </div>
-
-                    <!-- Status & Aksi Google Drive -->
-                    <div id="checkout-gdrive-box" class="mb-3 p-3 rounded-xl border border-amber-300 bg-amber-50 text-xs text-left">
-                        <div class="flex items-center justify-between gap-2">
-                            <div class="flex items-center gap-2">
-                                <i class="fab fa-google-drive text-amber-600 text-xl"></i>
-                                <div>
-                                    <p class="font-bold text-amber-950">Google Drive</p>
-                                    <p class="text-[10px] text-amber-800">Menyimpan otomatis ke folder Google Drive</p>
-                                </div>
-                            </div>
-                            <button type="button" onclick="uploadCurrentNotaToDrive()" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shrink-0 active:scale-95 shadow-2xs">
-                                <i class="fas fa-cloud-upload-alt"></i> Simpan Drive
-                            </button>
-                        </div>
                     </div>
 
                     <button onclick="resetCart()" class="w-full mt-3 text-xs font-bold text-gray-500 py-2.5 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 transition">
