@@ -19,6 +19,7 @@ SCOPES.forEach(scope => provider.addScope(scope));
 // In-memory token cache (MUST NOT store in localStorage or sessionStorage)
 let cachedAccessToken: string | null = null;
 let currentUser: User | null = null;
+let serverConnected = false;
 let isSigningIn = false;
 
 type AuthCallback = (user: User | null, token: string | null) => void;
@@ -49,11 +50,18 @@ export async function syncTokenWithServer(): Promise<string | null> {
     const res = await fetch('/api/gdrive/session');
     if (res.ok) {
       const data = await res.json();
-      if (data && data.connected && data.token) {
-        cachedAccessToken = data.token;
-        notifyListeners();
-        return data.token;
+      serverConnected = !!(data && data.connected);
+      if (data && data.connected) {
+        if (data.token) cachedAccessToken = data.token;
+        if (!currentUser) {
+          currentUser = {
+            email: data.email || 'istanabubur89@gmail.com',
+            displayName: 'Google Drive Auto-Sync'
+          } as any;
+        }
       }
+      notifyListeners();
+      return cachedAccessToken;
     }
   } catch (e) {
     console.warn('Failed to sync gdrive token from server:', e);
@@ -128,7 +136,7 @@ export async function signOutGoogleDrive(): Promise<void> {
 }
 
 export function isGoogleDriveConnected(): boolean {
-  return !!cachedAccessToken;
+  return !!cachedAccessToken || serverConnected;
 }
 
 export function getGoogleDriveUser(): User | null {
@@ -160,17 +168,30 @@ export function setTargetFolderId(folderId: string): void {
 
 /**
  * Creates a PDF Blob from an HTML string using html2pdf
+ * Guarantees crisp, non-blank output by:
+ * 1. Mounting in visible viewport coordinate space (top: 0, left: 0) behind body (z-index: -999999)
+ * 2. Pre-loading all images (logos, signatures, QR codes) before rasterization
+ * 3. Setting html2canvas scroll coordinates (scrollX: 0, scrollY: 0, x: 0, y: 0)
+ * 4. Waiting for complete DOM layout recalculation
  */
 export async function createPdfBlobFromHtml(htmlContent: string, filename: string, isNota = true): Promise<Blob> {
   if (typeof window === 'undefined') {
     throw new Error('createPdfBlobFromHtml hanya dapat dijalankan di browser');
   }
+
   const container = document.createElement('div');
+  container.id = 'gdrive-pdf-render-' + Date.now();
   container.style.position = 'fixed';
-  container.style.top = '-99999px';
-  container.style.left = '-99999px';
-  container.style.width = isNota ? '794px' : '595px';
+  container.style.top = '0px';
+  container.style.left = '0px';
+  container.style.width = isNota ? '760px' : '535px';
   container.style.backgroundColor = '#ffffff';
+  container.style.zIndex = '-999999';
+  container.style.opacity = '1';
+  container.style.visibility = 'visible';
+  container.style.pointerEvents = 'none';
+  container.style.margin = '0';
+  container.style.padding = '0';
   container.innerHTML = htmlContent;
   document.body.appendChild(container);
 
@@ -179,14 +200,53 @@ export async function createPdfBlobFromHtml(htmlContent: string, filename: strin
     if (typeof html2pdf !== 'function') {
       throw new Error('Pustaka html2pdf belum tersedia di browser.');
     }
+
+    // Tunggu semua gambar (logo istana bubur, watermark) selesai dimuat sepenuhnya
+    const images = Array.from(container.querySelectorAll('img'));
+    await Promise.all(
+      images.map(img => {
+        if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+        return new Promise(resolve => {
+          img.addEventListener('load', resolve, { once: true });
+          img.addEventListener('error', resolve, { once: true });
+          setTimeout(resolve, 800);
+        });
+      })
+    );
+
+    // Beri jeda agar rendering layout CSS dan font selesai
+    await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 150)));
+
+    const targetEl = (container.firstElementChild as HTMLElement) || container;
+    const targetWidth = targetEl.scrollWidth || (isNota ? 760 : 535);
+    const targetHeight = targetEl.scrollHeight || (isNota ? 1050 : 750);
+
     const opt = {
       margin: [4, 4, 4, 4],
       filename: filename,
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, logging: false },
-      jsPDF: { unit: 'mm', format: isNota ? 'a4' : 'a5', orientation: 'portrait' }
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        scrollX: 0,
+        scrollY: 0,
+        x: 0,
+        y: 0,
+        width: targetWidth,
+        height: targetHeight,
+        windowWidth: targetWidth,
+        windowHeight: targetHeight
+      },
+      jsPDF: {
+        unit: 'mm',
+        format: isNota ? 'a4' : 'a5',
+        orientation: 'portrait'
+      },
+      pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
     };
-    const worker = html2pdf().set(opt).from(container);
+
+    const worker = html2pdf().set(opt).from(targetEl);
     const blob: Blob = await worker.outputPdf('blob');
     return blob;
   } finally {
@@ -220,7 +280,10 @@ export async function uploadPdfToGoogleDrive(params: {
   if (params.blob) {
     fileBlob = params.blob;
   } else if (params.base64Pdf) {
-    const cleanBase64 = params.base64Pdf.replace(/^data:application\/pdf;base64,/, '');
+    let cleanBase64 = params.base64Pdf.trim();
+    if (cleanBase64.includes('base64,')) {
+      cleanBase64 = cleanBase64.split('base64,')[1].trim();
+    }
     const byteCharacters = atob(cleanBase64);
     const byteNumbers = new Array(byteCharacters.length);
     for (let i = 0; i < byteCharacters.length; i++) {
@@ -243,13 +306,16 @@ export async function uploadPdfToGoogleDrive(params: {
   }> => {
     let base64Str = '';
     if (params.base64Pdf) {
-      base64Str = params.base64Pdf.replace(/^data:application\/pdf;base64,/, '');
+      base64Str = params.base64Pdf.trim();
+      if (base64Str.includes('base64,')) {
+        base64Str = base64Str.split('base64,')[1].trim();
+      }
     } else {
       base64Str = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onloadend = () => {
           const res = reader.result as string;
-          resolve(res.replace(/^data:[^;]+;base64,/, ''));
+          resolve(res.includes('base64,') ? res.split('base64,')[1].trim() : res);
         };
         reader.onerror = reject;
         reader.readAsDataURL(fileBlob);
@@ -287,12 +353,12 @@ export async function uploadPdfToGoogleDrive(params: {
     };
   };
 
-  // If token is completely absent on client, try server proxy immediately
-  if (!token) {
-    try {
-      return await tryServerProxyUpload();
-    } catch (proxyErr: any) {
-      throw new Error('Belum terhubung ke Google Drive. Silakan hubungkan akun Google terlebih dahulu.');
+  // Always try server proxy upload first (Uses automated Webhook or server session with zero login)
+  try {
+    return await tryServerProxyUpload();
+  } catch (proxyErr: any) {
+    if (!token) {
+      throw new Error(proxyErr.message || 'Gagal menyimpan ke Google Drive.');
     }
   }
 

@@ -5498,12 +5498,29 @@ async function cetakNotaPDF(data = null) {
 
     const tempContainer = document.createElement('div');
     tempContainer.style.position = 'fixed';
-    tempContainer.style.left = '-9999px';
-    tempContainer.style.top = '0';
+    tempContainer.style.left = '0px';
+    tempContainer.style.top = '0px';
+    tempContainer.style.width = '760px';
+    tempContainer.style.zIndex = '-999999';
+    tempContainer.style.opacity = '1';
+    tempContainer.style.visibility = 'visible';
+    tempContainer.style.pointerEvents = 'none';
     tempContainer.innerHTML = generateReceiptHTML(trx);
     document.body.appendChild(tempContainer);
 
-    const receiptElement = tempContainer.firstElementChild;
+    // Tunggu gambar selesai dimuat sebelum capture
+    const tempImgs = Array.from(tempContainer.querySelectorAll('img'));
+    await Promise.all(tempImgs.map(img => {
+        if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+        return new Promise(res => {
+            img.addEventListener('load', res, { once: true });
+            img.addEventListener('error', res, { once: true });
+            setTimeout(res, 800);
+        });
+    }));
+    await new Promise(res => requestAnimationFrame(() => setTimeout(res, 150)));
+
+    const receiptElement = tempContainer.firstElementChild || tempContainer;
     const filename = `Nota_${trx.id || 'Transaksi'}.pdf`;
     const title = `Nota Transaksi #${trx.id || ''}`;
     const htmlContent = generateReceiptHTML(trx);
@@ -5513,7 +5530,17 @@ async function cetakNotaPDF(data = null) {
         margin: [6, 6, 6, 6],
         filename: filename,
         image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+        html2canvas: {
+            scale: 2,
+            useCORS: true,
+            logging: false,
+            scrollX: 0,
+            scrollY: 0,
+            x: 0,
+            y: 0,
+            width: receiptElement.scrollWidth || 760,
+            height: receiptElement.scrollHeight || 1050
+        },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
         pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
     };
@@ -6413,17 +6440,44 @@ async function cetakSlipGajiPDF(t) {
 
     const tempContainer = document.createElement('div');
     tempContainer.style.position = 'fixed';
-    tempContainer.style.left = '-9999px';
-    tempContainer.style.top = '0';
+    tempContainer.style.left = '0px';
+    tempContainer.style.top = '0px';
+    tempContainer.style.width = '535px';
+    tempContainer.style.zIndex = '-999999';
+    tempContainer.style.opacity = '1';
+    tempContainer.style.visibility = 'visible';
+    tempContainer.style.pointerEvents = 'none';
     tempContainer.innerHTML = htmlContent;
     document.body.appendChild(tempContainer);
 
-    const el = tempContainer.firstElementChild;
+    // Tunggu gambar & SVG selesai dimuat
+    const tempImgs = Array.from(tempContainer.querySelectorAll('img'));
+    await Promise.all(tempImgs.map(img => {
+        if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+        return new Promise(res => {
+            img.addEventListener('load', res, { once: true });
+            img.addEventListener('error', res, { once: true });
+            setTimeout(res, 800);
+        });
+    }));
+    await new Promise(res => requestAnimationFrame(() => setTimeout(res, 150)));
+
+    const el = tempContainer.firstElementChild || tempContainer;
     const jsPdfOpt = {
         margin: [4, 4, 4, 4],
         filename: filename,
         image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true },
+        html2canvas: {
+            scale: 2,
+            useCORS: true,
+            logging: false,
+            scrollX: 0,
+            scrollY: 0,
+            x: 0,
+            y: 0,
+            width: el.scrollWidth || 535,
+            height: el.scrollHeight || 750
+        },
         jsPDF: { unit: 'mm', format: 'a5', orientation: 'portrait' }
     };
 
@@ -7120,12 +7174,14 @@ window.openGoogleDriveModal = openGoogleDriveModal;
 
 async function testUploadGoogleDrive() {
     if (!isGoogleDriveConnected()) {
-        const confirmLogin = confirm('Google Drive belum terhubung. Hubungkan akun Google Drive sekarang untuk melakukan tes unggah?');
-        if (confirmLogin) {
-            await handleGoogleSignInClick();
+        await syncTokenWithServer();
+        if (!isGoogleDriveConnected()) {
+            try {
+                await handleGoogleSignInClick();
+            } catch (authErr) {
+                console.warn('Otorisasi Google Drive dibatalkan/gagal:', authErr);
+            }
             if (!isGoogleDriveConnected()) return;
-        } else {
-            return;
         }
     }
 
@@ -7192,12 +7248,14 @@ async function simpanTrxKeGoogleDrive(idTrx) {
     }
 
     if (!isGoogleDriveConnected()) {
-        const doLogin = confirm('Akun Google Drive belum terhubung. Hubungkan sekarang untuk menyimpan nota ini ke Google Drive?');
-        if (doLogin) {
-            await handleGoogleSignInClick();
+        await syncTokenWithServer();
+        if (!isGoogleDriveConnected()) {
+            try {
+                await handleGoogleSignInClick();
+            } catch (authErr) {
+                console.warn('Otorisasi Google Drive dibatalkan/gagal:', authErr);
+            }
             if (!isGoogleDriveConnected()) return;
-        } else {
-            return;
         }
     }
 
@@ -7221,11 +7279,6 @@ async function simpanTrxKeGoogleDrive(idTrx) {
         await firestoreUpdateTransaksiPdfLink(trx.id || trx['ID Transaksi'], driveRes.downloadUrl);
         showToast('✅ Nota berhasil disimpan ke Google Drive!', 'success');
         renderHistoriTransaksi();
-
-        const shareWa = confirm('Nota berhasil disimpan di Google Drive!\n\nIngin langsung mengirim pesan WhatsApp ke pelanggan dengan link download Google Drive ini?');
-        if (shareWa) {
-            kirimWhatsApp(trx);
-        }
     } catch (e) {
         console.error('Gagal menyimpan nota ke Drive:', e);
         showToast('Gagal menyimpan ke Google Drive: ' + e.message, 'error');
@@ -7241,12 +7294,14 @@ async function simpanSlipGajiKeGoogleDrive(idx) {
     }
 
     if (!isGoogleDriveConnected()) {
-        const doLogin = confirm('Akun Google Drive belum terhubung. Hubungkan sekarang untuk menyimpan slip gaji ini ke Google Drive?');
-        if (doLogin) {
-            await handleGoogleSignInClick();
+        await syncTokenWithServer();
+        if (!isGoogleDriveConnected()) {
+            try {
+                await handleGoogleSignInClick();
+            } catch (authErr) {
+                console.warn('Otorisasi Google Drive dibatalkan/gagal:', authErr);
+            }
             if (!isGoogleDriveConnected()) return;
-        } else {
-            return;
         }
     }
 
@@ -7271,11 +7326,6 @@ async function simpanSlipGajiKeGoogleDrive(idx) {
         await firestoreUpdateSlipPdfLink(targetSlipId, driveRes.downloadUrl);
         showToast('✅ Slip gaji berhasil disimpan ke Google Drive!', 'success');
         renderHistoriGaji();
-
-        const shareWa = confirm('Slip gaji berhasil disimpan di Google Drive!\n\nIngin langsung mengirim slip ke WhatsApp karyawan dengan link download Google Drive ini?');
-        if (shareWa) {
-            kirimWaSlipGajiDirect(t);
-        }
     } catch (e) {
         console.error('Gagal menyimpan slip gaji ke Drive:', e);
         showToast('Gagal menyimpan slip gaji ke Google Drive: ' + e.message, 'error');
@@ -7306,11 +7356,15 @@ async function uploadCurrentSlipToDrive() {
     );
     if (idx === -1) {
         if (!isGoogleDriveConnected()) {
-            const doLogin = confirm('Hubungkan Google Drive sekarang untuk menyimpan slip gaji ini?');
-            if (doLogin) {
-                await handleGoogleSignInClick();
+            await syncTokenWithServer();
+            if (!isGoogleDriveConnected()) {
+                try {
+                    await handleGoogleSignInClick();
+                } catch (authErr) {
+                    console.warn('Otorisasi Google Drive dibatalkan/gagal:', authErr);
+                }
                 if (!isGoogleDriveConnected()) return;
-            } else return;
+            }
         }
         showToast('Mengunggah slip gaji ke Google Drive...', 'info');
         try {

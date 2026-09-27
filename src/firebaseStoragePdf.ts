@@ -19,11 +19,18 @@ export async function generatePdfBlobFromHtml(
   }
 
   const container = document.createElement('div');
+  container.id = 'direct-pdf-render-' + Date.now();
   container.style.position = 'fixed';
-  container.style.left = '-99999px';
-  container.style.top = '-99999px';
+  container.style.top = '0px';
+  container.style.left = '0px';
   container.style.width = isNota ? '760px' : '535px';
   container.style.backgroundColor = '#ffffff';
+  container.style.zIndex = '-999999';
+  container.style.opacity = '1';
+  container.style.visibility = 'visible';
+  container.style.pointerEvents = 'none';
+  container.style.margin = '0';
+  container.style.padding = '0';
   container.innerHTML = htmlContent;
   document.body.appendChild(container);
 
@@ -32,17 +39,56 @@ export async function generatePdfBlobFromHtml(
     if (typeof html2pdf !== 'function') {
       throw new Error('Pustaka html2pdf belum tersedia di browser.');
     }
+
+    // Tunggu semua gambar (logo, watermark, tanda tangan) selesai dimuat sepenuhnya
+    const images = Array.from(container.querySelectorAll('img'));
+    await Promise.all(
+      images.map(img => {
+        if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+        return new Promise(resolve => {
+          img.addEventListener('load', resolve, { once: true });
+          img.addEventListener('error', resolve, { once: true });
+          setTimeout(resolve, 800);
+        });
+      })
+    );
+
+    // Beri jeda agar rendering layout CSS dan font selesai
+    await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 150)));
+
+    const targetEl = (container.firstElementChild as HTMLElement) || container;
+    const targetWidth = targetEl.scrollWidth || (isNota ? 760 : 535);
+    const targetHeight = targetEl.scrollHeight || (isNota ? 1050 : 750);
+
     const opt = {
       margin: [4, 4, 4, 4],
       filename: filename,
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, logging: false },
-      jsPDF: { unit: 'mm', format: isNota ? 'a4' : 'a5', orientation: 'portrait' }
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        scrollX: 0,
+        scrollY: 0,
+        x: 0,
+        y: 0,
+        width: targetWidth,
+        height: targetHeight,
+        windowWidth: targetWidth,
+        windowHeight: targetHeight
+      },
+      jsPDF: {
+        unit: 'mm',
+        format: isNota ? 'a4' : 'a5',
+        orientation: 'portrait'
+      },
+      pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
     };
-    const worker = html2pdf().set(opt).from(container);
+
+    const worker = html2pdf().set(opt).from(targetEl);
     const blob: Blob = await worker.outputPdf('blob');
     const dataUri: string = await worker.outputPdf('datauristring');
-    const base64 = (dataUri && dataUri.includes('base64,')) ? dataUri.split('base64,')[1] : '';
+    const base64 = (dataUri && dataUri.includes('base64,')) ? dataUri.split('base64,')[1].trim() : '';
     return { blob, base64 };
   } finally {
     if (container.parentNode) {

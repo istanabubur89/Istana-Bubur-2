@@ -1,6 +1,7 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import fs from 'fs';
 import crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
@@ -673,51 +674,84 @@ app.post('/api/pdf/prepare-doc', (req, res) => {
 // GOOGLE DRIVE SESSION & UPLOAD PROXY (ANDROID APK & WEB READY)
 // ==========================================
 const DEFAULT_GDRIVE_TARGET_FOLDER = '1-Q_CN5nca3vKCMNH9ljM0p3BMalHwcGw';
-let globalGdriveSession: { token: string; email?: string; timestamp: number } | null = null;
+const DEFAULT_GDRIVE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxcAfUOAHKDzEthKGDSEFuIWEtk_y0fecBz7U-kUKS39p6WQPR5BaXt_H1TcIoTIcUH/exec';
+const GDRIVE_SESSION_FILE = path.join(process.cwd(), 'gdrive_session.json');
+
+let globalGdriveSession: { token?: string; email?: string; timestamp?: number; scriptUrl?: string } | null = {
+  scriptUrl: DEFAULT_GDRIVE_SCRIPT_URL,
+  email: 'istanabubur89@gmail.com',
+  timestamp: Date.now()
+};
+
+// Load persisted session from disk on boot
+try {
+  if (fs.existsSync(GDRIVE_SESSION_FILE)) {
+    const raw = fs.readFileSync(GDRIVE_SESSION_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    globalGdriveSession = {
+      ...globalGdriveSession,
+      ...parsed,
+      scriptUrl: parsed.scriptUrl || DEFAULT_GDRIVE_SCRIPT_URL
+    };
+    console.log('[Google Drive] Loaded persistent session:', globalGdriveSession?.email || 'Active');
+  }
+} catch (e) {
+  console.warn('[Google Drive] Failed reading persistent session:', e);
+}
 
 // Get active Google Drive token (for syncing to Android WebView APK)
 app.get('/api/gdrive/session', (req, res) => {
-  if (globalGdriveSession && globalGdriveSession.token) {
-    // Check if token is within reasonable lifespan (under 55 minutes)
-    const ageMs = Date.now() - globalGdriveSession.timestamp;
-    if (ageMs < 55 * 60 * 1000) {
-      return res.json({
-        connected: true,
-        email: globalGdriveSession.email || 'Akun Google Terhubung',
-        token: globalGdriveSession.token,
-        defaultFolderId: DEFAULT_GDRIVE_TARGET_FOLDER
-      });
-    }
+  if (globalGdriveSession && (globalGdriveSession.token || globalGdriveSession.scriptUrl)) {
+    return res.json({
+      connected: true,
+      email: globalGdriveSession.email || 'Akun Google Terhubung',
+      token: globalGdriveSession.token || null,
+      scriptUrl: globalGdriveSession.scriptUrl || null,
+      defaultFolderId: DEFAULT_GDRIVE_TARGET_FOLDER
+    });
   }
   res.json({
     connected: false,
     token: null,
+    scriptUrl: null,
     defaultFolderId: DEFAULT_GDRIVE_TARGET_FOLDER
   });
 });
 
 // Sync active Google Drive token from client (Desktop/Mobile Web to Server & APK)
 app.post('/api/gdrive/session', (req, res) => {
-  const { token, email } = req.body;
-  if (!token) {
+  const { token, email, scriptUrl } = req.body;
+  if (!token && !scriptUrl) {
     globalGdriveSession = null;
+    try {
+      if (fs.existsSync(GDRIVE_SESSION_FILE)) fs.unlinkSync(GDRIVE_SESSION_FILE);
+    } catch (_) {}
     return res.json({ success: true, message: 'Google Drive session cleared' });
   }
+
   globalGdriveSession = {
-    token: String(token).trim(),
-    email: email || '',
+    token: token ? String(token).trim() : (globalGdriveSession?.token || ''),
+    email: email || globalGdriveSession?.email || 'Akun Google Terhubung',
+    scriptUrl: scriptUrl !== undefined ? String(scriptUrl).trim() : (globalGdriveSession?.scriptUrl || ''),
     timestamp: Date.now()
   };
+
+  try {
+    fs.writeFileSync(GDRIVE_SESSION_FILE, JSON.stringify(globalGdriveSession, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('[Google Drive] Failed to save session to disk:', err);
+  }
 
   // Broadcast to all active WebSocket clients (e.g. Android WebView APKs)
   broadcast({
     type: 'GDRIVE_SYNC',
     email: globalGdriveSession.email,
     token: globalGdriveSession.token,
+    scriptUrl: globalGdriveSession.scriptUrl,
     defaultFolderId: DEFAULT_GDRIVE_TARGET_FOLDER
   });
 
-  res.json({ success: true, message: 'Google Drive session synced successfully' });
+  res.json({ success: true, message: 'Google Drive session synced and saved successfully' });
 });
 
 // Server-side upload to Google Drive (Guaranteed to work for Android WebView APK)
@@ -731,6 +765,51 @@ app.post('/api/gdrive/upload', async (req, res) => {
       token = globalGdriveSession.token;
     }
 
+    const { filename, base64Pdf, folderId } = req.body;
+    if (!base64Pdf) {
+      return res.status(400).json({ success: false, message: 'base64Pdf wajib disertakan' });
+    }
+
+    const targetFolder = (folderId && String(folderId).trim()) || DEFAULT_GDRIVE_TARGET_FOLDER;
+
+    // Check if Google Apps Script Webhook is active (Zero-login instant upload)
+    if (globalGdriveSession?.scriptUrl) {
+      try {
+        let gasResp = await fetch(globalGdriveSession.scriptUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: filename || 'Dokumen_Istana_Bubur.pdf',
+            base64Pdf: base64Pdf,
+            folderId: targetFolder
+          }),
+          redirect: 'follow'
+        });
+
+        const gasText = await gasResp.text();
+        let gasData: any = null;
+        try {
+          gasData = JSON.parse(gasText);
+        } catch (_) {}
+
+        if (gasData && gasData.success) {
+          return res.json({
+            success: true,
+            fileId: gasData.fileId || ('gdrive-' + Date.now()),
+            viewUrl: gasData.url || `https://drive.google.com/drive/folders/${targetFolder}?usp=sharing`,
+            downloadUrl: gasData.downloadUrl || gasData.url,
+            webContentLink: gasData.downloadUrl || gasData.url
+          });
+        } else if (gasData && gasData.message) {
+          console.warn('[Google Drive GAS Error Message]:', gasData.message);
+        } else if (gasText.includes('Access denied: DriveApp')) {
+          console.warn('[Google Drive GAS Access denied: DriveApp detected in response]');
+        }
+      } catch (gasErr) {
+        console.warn('[Google Drive] Google Apps Script upload error:', gasErr);
+      }
+    }
+
     if (!token) {
       return res.status(401).json({
         success: false,
@@ -738,14 +817,14 @@ app.post('/api/gdrive/upload', async (req, res) => {
       });
     }
 
-    const { filename, base64Pdf, folderId } = req.body;
-    if (!base64Pdf) {
-      return res.status(400).json({ success: false, message: 'base64Pdf wajib disertakan' });
+    let cleanBase64 = String(base64Pdf).trim();
+    if (cleanBase64.includes('base64,')) {
+      cleanBase64 = cleanBase64.split('base64,')[1].trim();
     }
-
-    const targetFolder = (folderId && String(folderId).trim()) || DEFAULT_GDRIVE_TARGET_FOLDER;
-    const cleanBase64 = String(base64Pdf).replace(/^data:application\/pdf;base64,/, '');
     const pdfBuffer = Buffer.from(cleanBase64, 'base64');
+    if (pdfBuffer.length < 50) {
+      return res.status(400).json({ success: false, message: 'File PDF kosong atau tidak valid' });
+    }
     const safeFilename = (filename || 'Dokumen_Istana_Bubur.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
 
     // Multipart upload request to Google Drive v3
