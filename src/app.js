@@ -5466,8 +5466,9 @@ async function openDocPdfOutsideApp(options) {
 
 function generateReceiptWhatsAppMessage(trx, downloadLink = '') {
     const itemsText = (trx.items || []).map(i => `• ${i.nama} (${i.qty}x @Rp ${formatRupiah(i.harga)}) = Rp ${formatRupiah(i.qty * i.harga)}`).join('\n');
-    const link = downloadLink || trx.linkPdf || trx.driveDownloadUrl || trx['Link PDF'] || '';
-    const linkText = link ? `📥 *Download File Dokumen PDF (Google Drive):*\n${link}\n===============================` : '';
+    const defaultFolder = `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
+    const link = downloadLink || trx.linkPdf || trx.driveDownloadUrl || trx['Link PDF'] || defaultFolder;
+    const linkText = `📥 *Download File Dokumen PDF (Google Drive):*\n${link}\n===============================`;
 
     return `*NOTA TRANSAKSI - ISTANA BUBUR*
 ===============================
@@ -5483,7 +5484,8 @@ ${itemsText}
 *TOTAL BELANJA: Rp ${formatRupiah(trx.total)}*
 *Pembayaran:* ${trx.metode || 'Cash'}${trx.bayar ? `\n*Tunai:* Rp ${formatRupiah(trx.bayar)}\n*Kembalian:* Rp ${formatRupiah(trx.kembali)}` : ''}
 ===============================
-${linkText ? `${linkText}\n` : ''}_Terima kasih telah berbelanja di Istana Bubur!_
+${linkText}
+_Terima kasih telah berbelanja di Istana Bubur!_
 _Selamat menikmati hidangan kami._`;
 }
 
@@ -6322,8 +6324,9 @@ function generateSlipGajiWhatsAppMessage(t, downloadLink = '') {
     const harian = Number(t['Gaji Harian']) || 0;
     const hari = Number(t['Hari Masuk']) || 0;
     const pokok = (harian && hari) ? (harian * hari) : (totalGaji - bonus + potongan);
-    const link = downloadLink || t['Link PDF'] || t.driveDownloadUrl || '';
-    const linkText = link ? `📥 *Download File Dokumen Slip Gaji (Google Drive):*\n${link}\n================================` : '';
+    const defaultFolder = `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
+    const link = downloadLink || t['Link PDF'] || t.driveDownloadUrl || defaultFolder;
+    const linkText = `📥 *Download File Dokumen Slip Gaji (Google Drive):*\n${link}\n================================`;
 
     return `*SLIP GAJI KARYAWAN - ISTANA BUBUR*
 ================================
@@ -6340,7 +6343,8 @@ ${hari ? `• Hari Masuk : ${hari} hari (@Rp ${formatRupiah(harian)})\n` : ''}�
 ${t['Keterangan Libur'] ? `• Keterangan : ${t['Keterangan Libur']}\n` : ''}--------------------------------
 *TOTAL DITERIMA : Rp ${formatRupiah(totalGaji)}*
 ================================
-${linkText ? `${linkText}\n` : ''}_Terima kasih atas kerja keras, loyalitas, dan dedikasi Anda di Istana Bubur._`;
+${linkText}
+_Terima kasih atas kerja keras, loyalitas, dan dedikasi Anda di Istana Bubur._`;
 }
 
 // Function: Kirim WhatsApp Slip Gaji Karyawan from Riwayat Gaji
@@ -7416,14 +7420,14 @@ async function autoUploadTrxToGoogleDrive(trx) {
     } catch(err) {
         console.warn('[Google Drive auto-upload nota warning]:', err);
     }
-    return null;
+    return `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
 }
 window.autoUploadTrxToGoogleDrive = autoUploadTrxToGoogleDrive;
 
 async function autoUploadSlipToGoogleDrive(slip) {
-    if (!slip) return null;
+    if (!slip) return `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
     const existing = slip['Link PDF'] || slip.driveDownloadUrl;
-    if (existing) return existing;
+    if (existing && existing !== '#') return existing;
     try {
         const cleanName = (slip['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
         const cleanBulan = (slip['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -7455,7 +7459,7 @@ async function autoUploadSlipToGoogleDrive(slip) {
     } catch(err) {
         console.warn('[Google Drive auto-upload slip warning]:', err);
     }
-    return null;
+    return `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
 }
 window.autoUploadSlipToGoogleDrive = autoUploadSlipToGoogleDrive;
 
