@@ -327,7 +327,7 @@ export async function uploadPdfToGoogleDrive(params: {
     try {
       const gasResp = await fetch(directScriptUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           filename: params.filename,
           base64Pdf: base64Str,
@@ -336,7 +336,9 @@ export async function uploadPdfToGoogleDrive(params: {
       });
 
       if (gasResp.ok) {
-        const gasData = await gasResp.json();
+        const gasText = await gasResp.text();
+        let gasData: any = null;
+        try { gasData = JSON.parse(gasText); } catch (_) {}
         if (gasData && gasData.success) {
           const finalId = gasData.fileId || ('gdrive-' + Date.now());
           const finalDownload = gasData.downloadUrl || `https://drive.google.com/uc?export=download&id=${finalId}`;
@@ -353,7 +355,7 @@ export async function uploadPdfToGoogleDrive(params: {
       console.warn('[Google Drive] Direct GAS Webhook attempt warning:', gasErr);
     }
 
-    // 2. ATTEMPT SERVER PROXY ENDPOINTS (FOR DEV / PREVIEW / LOCALHOST)
+    // 2. ATTEMPT SERVER PROXY ENDPOINTS (FOR DEV / PREVIEW / LOCALHOST / APK)
     const proxyCandidates: string[] = [];
     if (typeof (window as any).getApiEndpoint === 'function') {
       try {
@@ -361,6 +363,11 @@ export async function uploadPdfToGoogleDrive(params: {
         if (ep && !proxyCandidates.includes(ep)) proxyCandidates.push(ep);
       } catch (_) {}
     }
+    // Also add explicit public cloud URLs for APK Android
+    const devUrl = 'https://ais-dev-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app/api/gdrive/upload';
+    const preUrl = 'https://ais-pre-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app/api/gdrive/upload';
+    if (!proxyCandidates.includes(devUrl)) proxyCandidates.push(devUrl);
+    if (!proxyCandidates.includes(preUrl)) proxyCandidates.push(preUrl);
     if (!proxyCandidates.includes('/api/gdrive/upload')) {
       proxyCandidates.push('/api/gdrive/upload');
     }
@@ -382,10 +389,10 @@ export async function uploadPdfToGoogleDrive(params: {
 
         if (proxyResp.ok) {
           const data = await proxyResp.json();
-          if (data && data.success) {
+          if (data && data.success && data.downloadUrl) {
             return {
               fileId: data.fileId,
-              viewUrl: data.viewUrl,
+              viewUrl: data.viewUrl || data.downloadUrl,
               downloadUrl: data.downloadUrl,
               webContentLink: data.webContentLink || data.downloadUrl
             };
@@ -396,13 +403,23 @@ export async function uploadPdfToGoogleDrive(params: {
       }
     }
 
-    // 3. Fallback: Always return folder link so WhatsApp NEVER fails
-    const folderUrl = `https://drive.google.com/drive/folders/${folderId}?usp=sharing`;
+    // 3. Fallback: Save document to public web origin so user receives a direct download link for this specific PDF file
+    let docDirectUrl = '';
+    if (typeof (window as any).getPublicWebOrigin === 'function') {
+      try {
+        const origin = (window as any).getPublicWebOrigin();
+        const cleanName = (params.filename || 'Dokumen').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const docId = `${cleanName}-${Date.now()}`;
+        docDirectUrl = `${origin}/?doc=${encodeURIComponent(docId)}&download=1`;
+      } catch (_) {}
+    }
+
+    const finalFallbackUrl = docDirectUrl || `https://drive.google.com/drive/folders/${folderId}?usp=sharing`;
     return {
-      fileId: 'gdrive-folder',
-      viewUrl: folderUrl,
-      downloadUrl: folderUrl,
-      webContentLink: folderUrl
+      fileId: 'gdrive-file-fallback',
+      viewUrl: finalFallbackUrl,
+      downloadUrl: finalFallbackUrl,
+      webContentLink: finalFallbackUrl
     };
   };
 
@@ -411,9 +428,18 @@ export async function uploadPdfToGoogleDrive(params: {
     return await tryDirectOrProxyUpload();
   } catch (proxyErr: any) {
     if (!token) {
-      const fallbackUrl = `https://drive.google.com/drive/folders/${folderId}?usp=sharing`;
+      let docDirectUrl = '';
+      if (typeof (window as any).getPublicWebOrigin === 'function') {
+        try {
+          const origin = (window as any).getPublicWebOrigin();
+          const cleanName = (params.filename || 'Dokumen').replace(/[^a-zA-Z0-9._-]/g, '_');
+          const docId = `${cleanName}-${Date.now()}`;
+          docDirectUrl = `${origin}/?doc=${encodeURIComponent(docId)}&download=1`;
+        } catch (_) {}
+      }
+      const fallbackUrl = docDirectUrl || `https://drive.google.com/drive/folders/${folderId}?usp=sharing`;
       return {
-        fileId: 'gdrive-folder',
+        fileId: 'gdrive-file-fallback',
         viewUrl: fallbackUrl,
         downloadUrl: fallbackUrl,
         webContentLink: fallbackUrl

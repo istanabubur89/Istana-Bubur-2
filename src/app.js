@@ -7388,7 +7388,7 @@ const TARGET_GDRIVE_FOLDER_ID = '1-Q_CN5nca3vKCMNH9ljM0p3BMalHwcGw';
 async function autoUploadTrxToGoogleDrive(trx) {
     if (!trx) return null;
     const existing = trx.linkPdf || trx.driveDownloadUrl || trx['Link PDF'];
-    if (existing) return existing;
+    if (existing && existing !== '#' && !existing.includes('/drive/folders/')) return existing;
     try {
         const cleanTrxId = (trx.id || trx['ID Transaksi'] || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_');
         const filename = `Nota_${cleanTrxId}.pdf`;
@@ -7420,14 +7420,24 @@ async function autoUploadTrxToGoogleDrive(trx) {
     } catch(err) {
         console.warn('[Google Drive auto-upload nota warning]:', err);
     }
+
+    // Fallback: Siapkan direct doc link publik dari server/firestore jika upload Google Drive terkendala
+    try {
+        const cleanTrxId = (trx.id || trx['ID Transaksi'] || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_');
+        const origin = typeof getPublicWebOrigin === 'function' ? getPublicWebOrigin() : 'https://' + PUBLIC_PRODUCTION_HOST;
+        const directDocUrl = `${origin}/?doc=${encodeURIComponent(cleanTrxId)}&download=1`;
+        trx.linkPdf = directDocUrl;
+        return directDocUrl;
+    } catch (_) {}
+
     return `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
 }
 window.autoUploadTrxToGoogleDrive = autoUploadTrxToGoogleDrive;
 
 async function autoUploadSlipToGoogleDrive(slip) {
-    if (!slip) return `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
+    if (!slip) return null;
     const existing = slip['Link PDF'] || slip.driveDownloadUrl;
-    if (existing && existing !== '#') return existing;
+    if (existing && existing !== '#' && !existing.includes('/drive/folders/')) return existing;
     try {
         const cleanName = (slip['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
         const cleanBulan = (slip['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -7459,6 +7469,18 @@ async function autoUploadSlipToGoogleDrive(slip) {
     } catch(err) {
         console.warn('[Google Drive auto-upload slip warning]:', err);
     }
+
+    // Fallback: Siapkan direct doc link publik dari server/firestore jika upload Google Drive terkendala
+    try {
+        const cleanName = (slip['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const cleanBulan = (slip['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const targetSlipId = slip['ID Slip'] || slip['ID Gaji'] || `${cleanName}-${cleanBulan}`;
+        const origin = typeof getPublicWebOrigin === 'function' ? getPublicWebOrigin() : 'https://' + PUBLIC_PRODUCTION_HOST;
+        const directDocUrl = `${origin}/?doc=${encodeURIComponent(targetSlipId)}&download=1`;
+        slip['Link PDF'] = directDocUrl;
+        return directDocUrl;
+    } catch (_) {}
+
     return `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
 }
 window.autoUploadSlipToGoogleDrive = autoUploadSlipToGoogleDrive;
