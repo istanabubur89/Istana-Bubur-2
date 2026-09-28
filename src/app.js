@@ -5739,7 +5739,8 @@ function renderHistoriTransaksi() {
         filtered = filtered.filter(t => {
             const id = String(t['ID Transaksi'] || '').toLowerCase();
             const nama = (t['Nama Pelanggan'] || '').toLowerCase();
-            return id.includes(keyword) || nama.includes(keyword);
+            const kasir = (t['Kasir'] || '').toLowerCase();
+            return id.includes(keyword) || nama.includes(keyword) || kasir.includes(keyword);
         });
     }
     
@@ -5760,6 +5761,7 @@ function renderHistoriTransaksi() {
         }
 
         const idTrx = t['ID Transaksi'];
+        const namaKasir = t['Kasir'] || 'Kasir';
 
         // Tombol hapus HANYA TAMPIL untuk Admin. Kasir TIDAK MENAMPILKAN tombol hapus.
         const deleteButtonHtml = isAdmin ? `
@@ -5772,8 +5774,13 @@ function renderHistoriTransaksi() {
         <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-2 hover:border-gray-200 transition">
             <div class="flex justify-between items-start">
                 <div>
-                    <p class="font-bold text-sm text-gray-900">#${idTrx}</p>
-                    <p class="text-[10px] text-gray-500">${t['Tanggal']} &bull; ${t['Cabang']}</p>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <p class="font-bold text-sm text-gray-900">#${idTrx}</p>
+                        <span class="bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <i class="fas fa-user-tag text-[9px] text-amber-600"></i> Kasir: <b>${namaKasir}</b>
+                        </span>
+                    </div>
+                    <p class="text-[10px] text-gray-500 mt-0.5">${t['Tanggal']} &bull; ${t['Cabang']}</p>
                 </div>
                 <p class="font-extrabold text-green-600 text-sm">Rp ${formatRupiah(t['Total Belanja'])}</p>
             </div>
