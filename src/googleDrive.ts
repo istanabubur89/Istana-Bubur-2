@@ -256,6 +256,14 @@ export async function createPdfBlobFromHtml(htmlContent: string, filename: strin
   }
 }
 
+// In-flight upload cache to prevent simultaneous duplicate uploads of the same file
+const inFlightGoogleDriveUploads = new Map<string, Promise<{
+  fileId: string;
+  viewUrl: string;
+  downloadUrl: string;
+  webContentLink?: string;
+}>>();
+
 /**
  * Upload a PDF Blob or Base64 string to the user's Google Drive folder
  * and set permissions to anyone with link (reader) so WhatsApp recipients can download it.
@@ -271,10 +279,17 @@ export async function uploadPdfToGoogleDrive(params: {
   downloadUrl: string;
   webContentLink?: string;
 }> {
-  let token = cachedAccessToken;
-  if (!token) {
-    token = await syncTokenWithServer();
+  const uploadKey = (params.filename || 'Dokumen.pdf').trim();
+  if (inFlightGoogleDriveUploads.has(uploadKey)) {
+    console.log(`[Google Drive SDK] Upload already in progress for ${uploadKey}. Sharing in-flight promise.`);
+    return await inFlightGoogleDriveUploads.get(uploadKey)!;
   }
+
+  const uploadTask = (async () => {
+    let token = cachedAccessToken;
+    if (!token) {
+      token = await syncTokenWithServer();
+    }
 
   let fileBlob: Blob;
   if (params.blob) {
@@ -357,6 +372,9 @@ export async function uploadPdfToGoogleDrive(params: {
 
     // 2. ATTEMPT SERVER PROXY ENDPOINTS (FOR DEV / PREVIEW / LOCALHOST / APK)
     const proxyCandidates: string[] = [];
+    if (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin !== 'null') {
+      proxyCandidates.push(`${window.location.origin}/api/gdrive/upload`);
+    }
     if (typeof (window as any).getApiEndpoint === 'function') {
       try {
         const ep = (window as any).getApiEndpoint('/api/gdrive/upload');
@@ -403,18 +421,8 @@ export async function uploadPdfToGoogleDrive(params: {
       }
     }
 
-    // 3. Fallback: Save document to public web origin so user receives a direct download link for this specific PDF file
-    let docDirectUrl = '';
-    if (typeof (window as any).getPublicWebOrigin === 'function') {
-      try {
-        const origin = (window as any).getPublicWebOrigin();
-        const cleanName = (params.filename || 'Dokumen').replace(/[^a-zA-Z0-9._-]/g, '_');
-        const docId = `${cleanName}-${Date.now()}`;
-        docDirectUrl = `${origin}/?doc=${encodeURIComponent(docId)}&download=1`;
-      } catch (_) {}
-    }
-
-    const finalFallbackUrl = docDirectUrl || `https://drive.google.com/drive/folders/${folderId}?usp=sharing`;
+    // 3. Fallback: Google Drive Folder URL (Never Vercel ?doc=)
+    const finalFallbackUrl = `https://drive.google.com/drive/folders/${folderId}?usp=sharing`;
     return {
       fileId: 'gdrive-file-fallback',
       viewUrl: finalFallbackUrl,
@@ -428,16 +436,7 @@ export async function uploadPdfToGoogleDrive(params: {
     return await tryDirectOrProxyUpload();
   } catch (proxyErr: any) {
     if (!token) {
-      let docDirectUrl = '';
-      if (typeof (window as any).getPublicWebOrigin === 'function') {
-        try {
-          const origin = (window as any).getPublicWebOrigin();
-          const cleanName = (params.filename || 'Dokumen').replace(/[^a-zA-Z0-9._-]/g, '_');
-          const docId = `${cleanName}-${Date.now()}`;
-          docDirectUrl = `${origin}/?doc=${encodeURIComponent(docId)}&download=1`;
-        } catch (_) {}
-      }
-      const fallbackUrl = docDirectUrl || `https://drive.google.com/drive/folders/${folderId}?usp=sharing`;
+      const fallbackUrl = `https://drive.google.com/drive/folders/${folderId}?usp=sharing`;
       return {
         fileId: 'gdrive-file-fallback',
         viewUrl: fallbackUrl,
@@ -562,6 +561,15 @@ export async function uploadPdfToGoogleDrive(params: {
   } catch (err: any) {
     console.warn('Direct upload error, trying direct/proxy upload:', err);
     return await tryDirectOrProxyUpload();
+  }
+  })();
+
+  inFlightGoogleDriveUploads.set(uploadKey, uploadTask);
+  try {
+    const result = await uploadTask;
+    return result;
+  } finally {
+    inFlightGoogleDriveUploads.delete(uploadKey);
   }
 }
 

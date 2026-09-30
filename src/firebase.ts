@@ -565,7 +565,7 @@ export async function firestoreProcessTransaksiKasir(trx: any) {
     kembalian: Number(trx.kembali || 0),
     metode: trx.metode || 'Cash',
     items: itemsJson,
-    linkPdf: (trx.linkPdf && trx.linkPdf !== '#') ? trx.linkPdf : `https://istana-bubur-2.vercel.app/?doc=nota-${trxId}&download=1`,
+    linkPdf: (trx.linkPdf && trx.linkPdf !== '#' && trx.linkPdf.includes('drive.google.com')) ? trx.linkPdf : '',
     createdAt: Date.now()
   };
 
@@ -655,7 +655,7 @@ export async function firestoreProcessSlipGaji(sData: any) {
     jabatan: sData.jabatan || '-',
     noWa: sData.wa || '',
     keteranganLibur: sData.keteranganLibur || '',
-    linkPdf: (sData.linkPdf && sData.linkPdf !== '#') ? sData.linkPdf : `https://istana-bubur-2.vercel.app/?doc=slip-${slipId}&download=1`,
+    linkPdf: (sData.linkPdf && sData.linkPdf !== '#' && sData.linkPdf.includes('drive.google.com')) ? sData.linkPdf : '',
     createdAt: Date.now()
   };
 
