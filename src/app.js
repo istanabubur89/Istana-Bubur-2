@@ -5588,27 +5588,84 @@ function printReceiptFallback(htmlContent) {
 }
 
 // ==========================================
-// FEATURE: KIRIM WHATSAPP (DENGAN TAUTAN DOWNLOAD GOOGLE DRIVE)
+// FEATURE: ANTI-DUPLIKASI & KIRIM WHATSAPP DENGAN TAUTAN DOWNLOAD GOOGLE DRIVE
 // ==========================================
-async function kirimWhatsApp(data = null) {
+const WA_PROCESSING_TRX_SET = new Set();
+const WA_PROCESSING_SLIP_SET = new Set();
+const IN_FLIGHT_TRX_UPLOADS = new Map();
+const IN_FLIGHT_SLIP_UPLOADS = new Map();
+
+function setButtonLoading(btn, isLoading, loadingText = 'Tunggu...') {
+    if (!btn) return;
+    if (isLoading) {
+        btn.disabled = true;
+        if (!btn.dataset.origHtml) {
+            btn.dataset.origHtml = btn.innerHTML;
+        }
+        btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${loadingText}`;
+        btn.classList.add('opacity-70', 'cursor-not-allowed', 'pointer-events-none');
+    } else {
+        btn.disabled = false;
+        if (btn.dataset.origHtml) {
+            btn.innerHTML = btn.dataset.origHtml;
+            delete btn.dataset.origHtml;
+        }
+        btn.classList.remove('opacity-70', 'cursor-not-allowed', 'pointer-events-none');
+    }
+}
+
+async function kirimWhatsApp(data = null, btnElement = null) {
     const trx = data || LAST_TRX_DATA;
     if (!trx) {
         showToast('Tidak ada data transaksi untuk dikirim ke WhatsApp', 'error');
         return;
     }
 
+    const trxId = String(trx.id || trx['ID Transaksi'] || 'latest');
+    if (WA_PROCESSING_TRX_SET.has(trxId)) {
+        showToast('Mohon tunggu, link download sedang diproses...', 'info');
+        return;
+    }
+
+    let btn = btnElement;
+    if (!btn && trx.id) {
+        btn = document.getElementById(`btn-wa-trx-${trx.id}`);
+    }
+    if (!btn) {
+        btn = document.getElementById('btn-modal-nota-kirim-wa') || document.getElementById('btn-checkout-modal-wa');
+    }
+
+    setButtonLoading(btn, true, 'Tunggu...');
+    WA_PROCESSING_TRX_SET.add(trxId);
+
     let noWa = (trx.no_wa || '').trim();
     if (!noWa) {
         noWa = prompt('Masukkan nomor WhatsApp pelanggan (contoh: 08123456789):', '');
-        if (noWa === null) return; // Batal
+        if (noWa === null) {
+            WA_PROCESSING_TRX_SET.delete(trxId);
+            setButtonLoading(btn, false);
+            return; // Batal
+        }
         noWa = noWa.trim();
+        trx.no_wa = noWa;
     }
 
-    showToast('Menyiapkan link dokumen Google Drive...', 'info');
+    // Tampilkan notifikasi tunggu download link sedang diproses
+    showToast('Mohon tunggu, link download sedang diproses...', 'info');
 
     try {
-        let driveUrl = trx.linkPdf || trx.driveDownloadUrl || trx['Link PDF'] || '';
-        if (!driveUrl) {
+        let driveUrl = trx.linkPdf || trx.driveDownloadUrl || trx['Link PDF'] || trx.pdfUrl || '';
+        if (!driveUrl || driveUrl === '#' || driveUrl.includes('/drive/folders/')) {
+            const cached = (HISTORI_TRX_CACHE || []).find(t => String(t['ID Transaksi']) === trxId);
+            if (cached) {
+                const cLink = cached['Link PDF'] || cached.linkPdf || cached.driveDownloadUrl;
+                if (cLink && cLink !== '#' && !cLink.includes('/drive/folders/')) {
+                    driveUrl = cLink;
+                }
+            }
+        }
+
+        if (!driveUrl || driveUrl === '#' || driveUrl.includes('/drive/folders/')) {
             driveUrl = await autoUploadTrxToGoogleDrive(trx);
         }
 
@@ -5618,6 +5675,9 @@ async function kirimWhatsApp(data = null) {
     } catch(err) {
         console.error('Error kirimWhatsApp:', err);
         showToast('Gagal menyiapkan pesan WhatsApp: ' + (err.message || err), 'error');
+    } finally {
+        WA_PROCESSING_TRX_SET.delete(trxId);
+        setButtonLoading(btn, false);
     }
 }
 
@@ -5800,7 +5860,7 @@ function renderHistoriTransaksi() {
                     <button onclick="previewNotaFromHistory('${idTrx}')" title="Lihat Dokumen Nota" class="bg-blue-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-blue-700 active:scale-95 transition font-bold text-[10px]">
                         <i class="fas fa-eye"></i> Lihat
                     </button>
-                    <button onclick="kirimWhatsAppFromHistory('${idTrx}')" title="Kirim Rincian & Link Unduh PDF via WhatsApp" class="bg-emerald-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-emerald-700 active:scale-95 transition font-bold text-[10px]">
+                    <button id="btn-wa-trx-${idTrx}" onclick="kirimWhatsAppFromHistory('${idTrx}', this)" title="Kirim Rincian & Link Unduh PDF via WhatsApp" class="btn-wa-trx bg-emerald-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-emerald-700 active:scale-95 transition font-bold text-[10px]">
                         <i class="fab fa-whatsapp"></i> WA
                     </button>
                     <button onclick="simpanTrxKeGoogleDrive('${idTrx}')" title="Simpan PDF Nota ke Google Drive" class="bg-amber-600 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shadow-sm hover:bg-amber-700 active:scale-95 transition font-bold text-[10px]">
@@ -5900,7 +5960,10 @@ function getTrxDataFromHistory(idTrx) {
         metode: trx['Metode'] || (trx['Bayar'] ? (trx['Kembalian'] >= 0 ? 'Cash' : 'Transfer') : 'Cash'),
         bayar: Number(trx['Bayar']) || 0,
         kembali: Number(trx['Kembalian']) || 0,
-        pdfUrl: trx['Link PDF'] || null
+        pdfUrl: trx['Link PDF'] || trx.linkPdf || trx.driveDownloadUrl || null,
+        linkPdf: trx['Link PDF'] || trx.linkPdf || trx.driveDownloadUrl || null,
+        'Link PDF': trx['Link PDF'] || trx.linkPdf || trx.driveDownloadUrl || null,
+        driveDownloadUrl: trx['Link PDF'] || trx.linkPdf || trx.driveDownloadUrl || null
     };
 }
 
@@ -5922,13 +5985,34 @@ function cetakNotaPDFFromHistory(idTrx) {
     cetakNotaPDF(data);
 }
 
-function kirimWhatsAppFromHistory(idTrx) {
-    const data = getTrxDataFromHistory(idTrx);
-    if (!data) {
-        showToast('Data transaksi tidak ditemukan', 'error');
+async function kirimWhatsAppFromHistory(idTrx, btnElement = null) {
+    if (!idTrx) return;
+    const strId = String(idTrx);
+
+    if (WA_PROCESSING_TRX_SET.has(strId)) {
+        showToast('Mohon tunggu, link download sedang diproses...', 'info');
         return;
     }
-    kirimWhatsApp(data);
+
+    const btn = btnElement || document.getElementById(`btn-wa-trx-${strId}`);
+    setButtonLoading(btn, true, 'Tunggu...');
+    WA_PROCESSING_TRX_SET.add(strId);
+    showToast('Mohon tunggu, link download sedang diproses...', 'info');
+
+    try {
+        const data = getTrxDataFromHistory(strId);
+        if (!data) {
+            showToast('Data transaksi tidak ditemukan', 'error');
+            return;
+        }
+        await kirimWhatsApp(data, btn);
+    } catch (err) {
+        console.error('Error kirimWhatsAppFromHistory:', err);
+        showToast('Gagal memproses link WhatsApp: ' + (err.message || err), 'error');
+    } finally {
+        WA_PROCESSING_TRX_SET.delete(strId);
+        setButtonLoading(btn, false);
+    }
 }
 
 async function reprintStrukTrx(idTrx) {
@@ -6017,7 +6101,7 @@ function renderHistoriGaji() {
                 <button onclick="previewSlipGajiFromHistori(${idx})" title="Lihat Dokumen Slip Gaji Resmi" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
                     <i class="fas fa-eye text-white"></i> Lihat
                 </button>
-                <button onclick="kirimWaSlipGaji(${idx})" title="Kirim Link Unduh PDF & Rincian Slip Gaji ke WhatsApp Karyawan" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
+                <button id="btn-wa-slip-${idx}" onclick="kirimWaSlipGaji(${idx}, this)" title="Kirim Link Unduh PDF & Rincian Slip Gaji ke WhatsApp Karyawan" class="btn-wa-slip bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
                     <i class="fab fa-whatsapp text-white text-sm"></i> Kirim WA
                 </button>
                 <button onclick="simpanSlipGajiKeGoogleDrive(${idx})" title="Simpan PDF Slip Gaji ke Google Drive" class="bg-amber-600 hover:bg-amber-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 active:scale-95">
@@ -6276,7 +6360,7 @@ function previewSlipGajiModal(slipData) {
     }
     const btnWa = document.getElementById('btn-modal-kirim-wa');
     if (btnWa) {
-        btnWa.onclick = () => kirimWaSlipGajiDirect(t);
+        btnWa.onclick = () => kirimWaSlipGajiDirect(t, btnWa);
     }
     openModal('modal-preview-slip');
 }
@@ -6355,20 +6439,39 @@ _Terima kasih atas kerja keras, loyalitas, dan dedikasi Anda di Istana Bubur._`;
 }
 
 // Function: Kirim WhatsApp Slip Gaji Karyawan from Riwayat Gaji
-function kirimWaSlipGaji(idx) {
+function kirimWaSlipGaji(idx, btnElement = null) {
     const t = (HISTORI_GAJI_CACHE || [])[idx];
     if (!t) {
         showToast('Data slip gaji tidak ditemukan', 'error');
         return;
     }
-    kirimWaSlipGajiDirect(t);
+    const btn = btnElement || document.getElementById(`btn-wa-slip-${idx}`);
+    kirimWaSlipGajiDirect(t, btn);
 }
 
-async function kirimWaSlipGajiDirect(t) {
+async function kirimWaSlipGajiDirect(t, btnElement = null) {
     if (!t) {
         showToast('Data slip gaji tidak ditemukan', 'error');
         return;
     }
+
+    const cleanName = (t['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const cleanBulan = (t['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const slipKey = t['ID Slip'] || t['ID Gaji'] || `${cleanName}-${cleanBulan}`;
+
+    // Hentikan tombol kirim WA bila sudah di klik & sedang diproses
+    if (WA_PROCESSING_SLIP_SET.has(slipKey)) {
+        showToast('Mohon tunggu, link download sedang diproses...', 'info');
+        return;
+    }
+
+    let btn = btnElement;
+    if (!btn) {
+        btn = document.getElementById('btn-modal-kirim-wa');
+    }
+
+    setButtonLoading(btn, true, 'Tunggu...');
+    WA_PROCESSING_SLIP_SET.add(slipKey);
 
     // 1. Cari nomor WhatsApp karyawan
     let noWa = (t['No WA'] || '').trim();
@@ -6384,15 +6487,35 @@ async function kirimWaSlipGajiDirect(t) {
 
     if (!noWa) {
         noWa = prompt(`Masukkan nomor WhatsApp untuk karyawan ${t['Nama']} (contoh: 08123456789):`, '');
-        if (noWa === null) return; // Dibatalkan pengguna
+        if (noWa === null) {
+            WA_PROCESSING_SLIP_SET.delete(slipKey);
+            setButtonLoading(btn, false);
+            return; // Dibatalkan pengguna
+        }
         noWa = noWa.trim();
+        t['No WA'] = noWa;
     }
 
-    showToast('Menyiapkan link dokumen Google Drive...', 'info');
+    // Tampilkan notifikasi tunggu download link sedang diproses
+    showToast('Mohon tunggu, link download sedang diproses...', 'info');
 
     try {
-        let driveUrl = t['Link PDF'] || t.driveDownloadUrl || '';
-        if (!driveUrl) {
+        let driveUrl = t['Link PDF'] || t.linkPdf || t.driveDownloadUrl || '';
+        if (!driveUrl || driveUrl === '#' || driveUrl.includes('/drive/folders/')) {
+            const cached = (HISTORI_GAJI_CACHE || []).find(item => 
+                (t['ID Slip'] && item['ID Slip'] === t['ID Slip']) ||
+                (t['ID Gaji'] && item['ID Gaji'] === t['ID Gaji']) ||
+                ((item['Nama'] || '') === (t['Nama'] || '') && (item['Bulan'] || '') === (t['Bulan'] || ''))
+            );
+            if (cached) {
+                const cLink = cached['Link PDF'] || cached.linkPdf || cached.driveDownloadUrl;
+                if (cLink && cLink !== '#' && !cLink.includes('/drive/folders/')) {
+                    driveUrl = cLink;
+                }
+            }
+        }
+
+        if (!driveUrl || driveUrl === '#' || driveUrl.includes('/drive/folders/')) {
             driveUrl = await autoUploadSlipToGoogleDrive(t);
         }
 
@@ -6402,6 +6525,9 @@ async function kirimWaSlipGajiDirect(t) {
     } catch(err) {
         console.error('Error kirimWaSlipGajiDirect:', err);
         showToast('Gagal mengirim slip gaji ke WhatsApp: ' + (err.message || err), 'error');
+    } finally {
+        WA_PROCESSING_SLIP_SET.delete(slipKey);
+        setButtonLoading(btn, false);
     }
 }
 
@@ -7394,101 +7520,188 @@ const TARGET_GDRIVE_FOLDER_ID = '1-Q_CN5nca3vKCMNH9ljM0p3BMalHwcGw';
 
 async function autoUploadTrxToGoogleDrive(trx) {
     if (!trx) return null;
-    const existing = trx.linkPdf || trx.driveDownloadUrl || trx['Link PDF'];
+    const cleanTrxId = (trx.id || trx['ID Transaksi'] || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_');
+
+    // 1. Cek apakah dokumen ini sudah memiliki link download tersimpan yang valid (bukan folder umum)
+    const existing = trx.linkPdf || trx.driveDownloadUrl || trx['Link PDF'] || trx.pdfUrl;
     if (existing && existing !== '#' && !existing.includes('/drive/folders/')) return existing;
-    try {
-        const cleanTrxId = (trx.id || trx['ID Transaksi'] || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_');
-        const filename = `Nota_${cleanTrxId}.pdf`;
-        const htmlContent = generateReceiptHTML(trx);
-        const pdfBlob = await createPdfBlobFromHtml(htmlContent, filename, true);
-        const targetFolder = getTargetFolderId() || TARGET_GDRIVE_FOLDER_ID;
 
-        const driveRes = await uploadPdfToGoogleDrive({
-            filename,
-            blob: pdfBlob,
-            folderId: targetFolder
-        });
-
-        if (driveRes && (driveRes.downloadUrl || driveRes.viewUrl)) {
-            const finalUrl = driveRes.downloadUrl || driveRes.viewUrl;
-            trx.linkPdf = finalUrl;
-            trx.driveDownloadUrl = driveRes.downloadUrl;
-            trx.driveViewUrl = driveRes.viewUrl;
-            trx['Link PDF'] = finalUrl;
-            const targetId = trx.id || trx['ID Transaksi'];
-            if (targetId) {
-                try {
-                    await firestoreUpdateTransaksiPdfLink(targetId, finalUrl);
-                } catch(_) {}
-            }
-            console.log('[Google Drive Auto-Saved Nota Berhasil]:', finalUrl);
-            return finalUrl;
+    // Cek di cache histori transaksi
+    const cached = (HISTORI_TRX_CACHE || []).find(t => String(t['ID Transaksi']) === String(cleanTrxId) || String(t['ID Transaksi']) === String(trx.id));
+    if (cached) {
+        const cachedLink = cached['Link PDF'] || cached.linkPdf || cached.driveDownloadUrl;
+        if (cachedLink && cachedLink !== '#' && !cachedLink.includes('/drive/folders/')) {
+            trx.linkPdf = cachedLink;
+            trx.driveDownloadUrl = cachedLink;
+            trx['Link PDF'] = cachedLink;
+            trx.pdfUrl = cachedLink;
+            return cachedLink;
         }
-    } catch(err) {
-        console.warn('[Google Drive auto-upload nota warning]:', err);
     }
 
-    // Fallback: Siapkan direct doc link publik dari server/firestore jika upload Google Drive terkendala
-    try {
-        const cleanTrxId = (trx.id || trx['ID Transaksi'] || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_');
-        const origin = typeof getPublicWebOrigin === 'function' ? getPublicWebOrigin() : 'https://' + PUBLIC_PRODUCTION_HOST;
-        const directDocUrl = `${origin}/?doc=${encodeURIComponent(cleanTrxId)}&download=1`;
-        trx.linkPdf = directDocUrl;
-        return directDocUrl;
-    } catch (_) {}
+    // 2. CEK IN-FLIGHT: Jika transaksi ini sedang dalam proses upload, tunggu proses yang sedang berjalan (cegah duplikat)
+    if (IN_FLIGHT_TRX_UPLOADS.has(cleanTrxId)) {
+        console.log(`[Google Drive] Menunggu proses upload aktif untuk #${cleanTrxId} (mencegah duplikat)...`);
+        return await IN_FLIGHT_TRX_UPLOADS.get(cleanTrxId);
+    }
 
-    return `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
+    const uploadPromise = (async () => {
+        try {
+            const filename = `Nota_${cleanTrxId}.pdf`;
+            const htmlContent = generateReceiptHTML(trx);
+            const pdfBlob = await createPdfBlobFromHtml(htmlContent, filename, true);
+            const targetFolder = getTargetFolderId() || TARGET_GDRIVE_FOLDER_ID;
+
+            const driveRes = await uploadPdfToGoogleDrive({
+                filename,
+                blob: pdfBlob,
+                folderId: targetFolder
+            });
+
+            if (driveRes && (driveRes.downloadUrl || driveRes.viewUrl)) {
+                const finalUrl = driveRes.downloadUrl || driveRes.viewUrl;
+                trx.linkPdf = finalUrl;
+                trx.driveDownloadUrl = driveRes.downloadUrl;
+                trx.driveViewUrl = driveRes.viewUrl;
+                trx['Link PDF'] = finalUrl;
+                trx.pdfUrl = finalUrl;
+
+                if (cached) {
+                    cached['Link PDF'] = finalUrl;
+                    cached.linkPdf = finalUrl;
+                    cached.driveDownloadUrl = finalUrl;
+                }
+
+                const targetId = trx.id || trx['ID Transaksi'];
+                if (targetId) {
+                    try {
+                        await firestoreUpdateTransaksiPdfLink(targetId, finalUrl);
+                    } catch(_) {}
+                }
+                console.log('[Google Drive Auto-Saved Nota Berhasil]:', finalUrl);
+                return finalUrl;
+            }
+        } catch(err) {
+            console.warn('[Google Drive auto-upload nota warning]:', err);
+        }
+
+        // Fallback: Siapkan direct doc link publik dari server/firestore jika upload Google Drive terkendala
+        try {
+            const origin = typeof getPublicWebOrigin === 'function' ? getPublicWebOrigin() : 'https://' + PUBLIC_PRODUCTION_HOST;
+            const directDocUrl = `${origin}/?doc=${encodeURIComponent(cleanTrxId)}&download=1`;
+            trx.linkPdf = directDocUrl;
+            trx['Link PDF'] = directDocUrl;
+            trx.pdfUrl = directDocUrl;
+            if (cached) {
+                cached['Link PDF'] = directDocUrl;
+                cached.linkPdf = directDocUrl;
+            }
+            return directDocUrl;
+        } catch (_) {}
+
+        return `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
+    })();
+
+    IN_FLIGHT_TRX_UPLOADS.set(cleanTrxId, uploadPromise);
+    try {
+        return await uploadPromise;
+    } finally {
+        IN_FLIGHT_TRX_UPLOADS.delete(cleanTrxId);
+    }
 }
 window.autoUploadTrxToGoogleDrive = autoUploadTrxToGoogleDrive;
 
 async function autoUploadSlipToGoogleDrive(slip) {
     if (!slip) return null;
-    const existing = slip['Link PDF'] || slip.driveDownloadUrl;
+    const cleanName = (slip['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const cleanBulan = (slip['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const targetSlipId = slip['ID Slip'] || slip['ID Gaji'] || `${cleanName}-${cleanBulan}`;
+
+    // 1. Cek apakah dokumen ini sudah memiliki link download tersimpan yang valid (bukan folder umum)
+    const existing = slip['Link PDF'] || slip.linkPdf || slip.driveDownloadUrl;
     if (existing && existing !== '#' && !existing.includes('/drive/folders/')) return existing;
-    try {
-        const cleanName = (slip['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
-        const cleanBulan = (slip['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
-        const filename = `Slip_Gaji_${cleanName}_${cleanBulan}.pdf`;
-        const htmlContent = generateSlipGajiHTML(slip);
-        const pdfBlob = await createPdfBlobFromHtml(htmlContent, filename, false);
-        const targetFolder = getTargetFolderId() || TARGET_GDRIVE_FOLDER_ID;
 
-        const driveRes = await uploadPdfToGoogleDrive({
-            filename,
-            blob: pdfBlob,
-            folderId: targetFolder
-        });
-
-        if (driveRes && (driveRes.downloadUrl || driveRes.viewUrl)) {
-            const finalUrl = driveRes.downloadUrl || driveRes.viewUrl;
-            slip['Link PDF'] = finalUrl;
-            slip.driveDownloadUrl = driveRes.downloadUrl;
-            slip.driveViewUrl = driveRes.viewUrl;
-            const targetId = slip['ID Slip'] || slip['ID Gaji'] || `${cleanName}-${cleanBulan}`;
-            if (targetId) {
-                try {
-                    await firestoreUpdateSlipPdfLink(targetId, finalUrl);
-                } catch(_) {}
-            }
-            console.log('[Google Drive Auto-Saved Slip Gaji Berhasil]:', finalUrl);
-            return finalUrl;
+    const cached = (HISTORI_GAJI_CACHE || []).find(item => 
+        (slip['ID Slip'] && item['ID Slip'] === slip['ID Slip']) ||
+        (slip['ID Gaji'] && item['ID Gaji'] === slip['ID Gaji']) ||
+        ((item['Nama'] || '') === (slip['Nama'] || '') && (item['Bulan'] || '') === (slip['Bulan'] || ''))
+    );
+    if (cached) {
+        const cLink = cached['Link PDF'] || cached.linkPdf || cached.driveDownloadUrl;
+        if (cLink && cLink !== '#' && !cLink.includes('/drive/folders/')) {
+            slip['Link PDF'] = cLink;
+            slip.linkPdf = cLink;
+            slip.driveDownloadUrl = cLink;
+            return cLink;
         }
-    } catch(err) {
-        console.warn('[Google Drive auto-upload slip warning]:', err);
     }
 
-    // Fallback: Siapkan direct doc link publik dari server/firestore jika upload Google Drive terkendala
-    try {
-        const cleanName = (slip['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
-        const cleanBulan = (slip['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
-        const targetSlipId = slip['ID Slip'] || slip['ID Gaji'] || `${cleanName}-${cleanBulan}`;
-        const origin = typeof getPublicWebOrigin === 'function' ? getPublicWebOrigin() : 'https://' + PUBLIC_PRODUCTION_HOST;
-        const directDocUrl = `${origin}/?doc=${encodeURIComponent(targetSlipId)}&download=1`;
-        slip['Link PDF'] = directDocUrl;
-        return directDocUrl;
-    } catch (_) {}
+    // 2. CEK IN-FLIGHT: Jika slip ini sedang dalam proses upload, tunggu proses yang sedang berjalan (cegah duplikat)
+    if (IN_FLIGHT_SLIP_UPLOADS.has(targetSlipId)) {
+        console.log(`[Google Drive] Menunggu proses upload aktif untuk slip ${targetSlipId} (mencegah duplikat)...`);
+        return await IN_FLIGHT_SLIP_UPLOADS.get(targetSlipId);
+    }
 
-    return `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
+    const uploadPromise = (async () => {
+        try {
+            const filename = `Slip_Gaji_${cleanName}_${cleanBulan}.pdf`;
+            const htmlContent = generateSlipGajiHTML(slip);
+            const pdfBlob = await createPdfBlobFromHtml(htmlContent, filename, false);
+            const targetFolder = getTargetFolderId() || TARGET_GDRIVE_FOLDER_ID;
+
+            const driveRes = await uploadPdfToGoogleDrive({
+                filename,
+                blob: pdfBlob,
+                folderId: targetFolder
+            });
+
+            if (driveRes && (driveRes.downloadUrl || driveRes.viewUrl)) {
+                const finalUrl = driveRes.downloadUrl || driveRes.viewUrl;
+                slip['Link PDF'] = finalUrl;
+                slip.linkPdf = finalUrl;
+                slip.driveDownloadUrl = driveRes.downloadUrl;
+                slip.driveViewUrl = driveRes.viewUrl;
+
+                if (cached) {
+                    cached['Link PDF'] = finalUrl;
+                    cached.linkPdf = finalUrl;
+                    cached.driveDownloadUrl = driveRes.downloadUrl;
+                }
+
+                if (targetSlipId) {
+                    try {
+                        await firestoreUpdateSlipPdfLink(targetSlipId, finalUrl);
+                    } catch(_) {}
+                }
+                console.log('[Google Drive Auto-Saved Slip Gaji Berhasil]:', finalUrl);
+                return finalUrl;
+            }
+        } catch(err) {
+            console.warn('[Google Drive auto-upload slip warning]:', err);
+        }
+
+        // Fallback: Siapkan direct doc link publik dari server/firestore jika upload Google Drive terkendala
+        try {
+            const origin = typeof getPublicWebOrigin === 'function' ? getPublicWebOrigin() : 'https://' + PUBLIC_PRODUCTION_HOST;
+            const directDocUrl = `${origin}/?doc=${encodeURIComponent(targetSlipId)}&download=1`;
+            slip['Link PDF'] = directDocUrl;
+            slip.linkPdf = directDocUrl;
+            if (cached) {
+                cached['Link PDF'] = directDocUrl;
+                cached.linkPdf = directDocUrl;
+            }
+            return directDocUrl;
+        } catch (_) {}
+
+        return `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
+    })();
+
+    IN_FLIGHT_SLIP_UPLOADS.set(targetSlipId, uploadPromise);
+    try {
+        return await uploadPromise;
+    } finally {
+        IN_FLIGHT_SLIP_UPLOADS.delete(targetSlipId);
+    }
 }
 window.autoUploadSlipToGoogleDrive = autoUploadSlipToGoogleDrive;
 
