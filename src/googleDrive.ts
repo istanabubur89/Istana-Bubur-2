@@ -256,14 +256,6 @@ export async function createPdfBlobFromHtml(htmlContent: string, filename: strin
   }
 }
 
-// Deduplication map to prevent multiple simultaneous uploads of the same file
-const IN_FLIGHT_GDRIVE_UPLOADS = new Map<string, Promise<{
-  fileId: string;
-  viewUrl: string;
-  downloadUrl: string;
-  webContentLink?: string;
-}>>();
-
 /**
  * Upload a PDF Blob or Base64 string to the user's Google Drive folder
  * and set permissions to anyone with link (reader) so WhatsApp recipients can download it.
@@ -279,45 +271,39 @@ export async function uploadPdfToGoogleDrive(params: {
   downloadUrl: string;
   webContentLink?: string;
 }> {
-  if (IN_FLIGHT_GDRIVE_UPLOADS.has(params.filename)) {
-    console.log(`[Google Drive] Menunggu upload yang sedang berjalan untuk file: ${params.filename}`);
-    return await IN_FLIGHT_GDRIVE_UPLOADS.get(params.filename)!;
+  let token = cachedAccessToken;
+  if (!token) {
+    token = await syncTokenWithServer();
   }
 
-  const uploadProcess = (async () => {
-    let token = cachedAccessToken;
-    if (!token) {
-      token = await syncTokenWithServer();
+  let fileBlob: Blob;
+  if (params.blob) {
+    fileBlob = params.blob;
+  } else if (params.base64Pdf) {
+    let cleanBase64 = params.base64Pdf.trim();
+    if (cleanBase64.includes('base64,')) {
+      cleanBase64 = cleanBase64.split('base64,')[1].trim();
     }
-
-    let fileBlob: Blob;
-    if (params.blob) {
-      fileBlob = params.blob;
-    } else if (params.base64Pdf) {
-      let cleanBase64 = params.base64Pdf.trim();
-      if (cleanBase64.includes('base64,')) {
-        cleanBase64 = cleanBase64.split('base64,')[1].trim();
-      }
-      const byteCharacters = atob(cleanBase64);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
-      }
-      const byteArray = new Uint8Array(byteNumbers);
-      fileBlob = new Blob([byteArray], { type: 'application/pdf' });
-    } else {
-      throw new Error('Data file PDF tidak ditemukan untuk diunggah');
+    const byteCharacters = atob(cleanBase64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
     }
+    const byteArray = new Uint8Array(byteNumbers);
+    fileBlob = new Blob([byteArray], { type: 'application/pdf' });
+  } else {
+    throw new Error('Data file PDF tidak ditemukan untuk diunggah');
+  }
 
-    const folderId = params.folderId || getTargetFolderId();
+  const folderId = params.folderId || getTargetFolderId();
 
-    // Helper function to upload via Google Apps Script directly OR server proxy
-    const tryDirectOrProxyUpload = async (): Promise<{
-      fileId: string;
-      viewUrl: string;
-      downloadUrl: string;
-      webContentLink?: string;
-    }> => {
+  // Helper function to upload via Google Apps Script directly OR server proxy
+  const tryDirectOrProxyUpload = async (): Promise<{
+    fileId: string;
+    viewUrl: string;
+    downloadUrl: string;
+    webContentLink?: string;
+  }> => {
     let base64Str = '';
     if (params.base64Pdf) {
       base64Str = params.base64Pdf.trim();
@@ -576,14 +562,6 @@ export async function uploadPdfToGoogleDrive(params: {
   } catch (err: any) {
     console.warn('Direct upload error, trying direct/proxy upload:', err);
     return await tryDirectOrProxyUpload();
-  }
-  })();
-
-  IN_FLIGHT_GDRIVE_UPLOADS.set(params.filename, uploadProcess);
-  try {
-    return await uploadProcess;
-  } finally {
-    IN_FLIGHT_GDRIVE_UPLOADS.delete(params.filename);
   }
 }
 
