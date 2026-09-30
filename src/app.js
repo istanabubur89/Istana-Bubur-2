@@ -714,9 +714,9 @@ const DEFAULT_HISTORI_GAJI = [
 ];
 
 const DEFAULT_KARYAWAN = [
-    { rowIndex: 1, 'ID Karyawan': 'KRY-001', 'Nama': 'Budi Santoso', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Kasir', 'Lokasi Cabang': 'Sempajak', 'No WA': '081234567890', 'Gaji Harian': 90000, 'Email': 'budi@istanabubur.com' },
-    { rowIndex: 2, 'ID Karyawan': 'KRY-002', 'Nama': 'Siti Rahma', 'Jenis Kelamin': 'Perempuan', 'Jabatan': 'Dapur Bubur', 'Lokasi Cabang': 'Sempajak', 'No WA': '081298765432', 'Gaji Harian': 100000, 'Email': 'siti@istanabubur.com' },
-    { rowIndex: 3, 'ID Karyawan': 'KRY-003', 'Nama': 'Agus Prayogo', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Driver', 'Lokasi Cabang': 'M Yamin', 'No WA': '081345678901', 'Gaji Harian': 85000, 'Email': 'agus@istanabubur.com' }
+    { rowIndex: 1, 'ID Karyawan': 'KRY-001', 'Nama': 'Budi Santoso', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Kasir', 'Penempatan': 'Sempajak', 'Lokasi Cabang': 'Sempajak', 'No WA': '081234567890', 'Gaji Harian': 90000, 'Email': 'budi@istanabubur.com' },
+    { rowIndex: 2, 'ID Karyawan': 'KRY-002', 'Nama': 'Siti Rahma', 'Jenis Kelamin': 'Perempuan', 'Jabatan': 'Dapur Bubur', 'Penempatan': 'Dapur Bubur', 'Lokasi Cabang': 'Dapur Bubur', 'No WA': '081298765432', 'Gaji Harian': 100000, 'Email': 'siti@istanabubur.com' },
+    { rowIndex: 3, 'ID Karyawan': 'KRY-003', 'Nama': 'Agus Prayogo', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Driver', 'Penempatan': 'M Yamin', 'Lokasi Cabang': 'M Yamin', 'No WA': '081345678901', 'Gaji Harian': 85000, 'Email': 'agus@istanabubur.com' }
 ];
 
 function getSampleTransactions() {
@@ -1650,94 +1650,44 @@ function checkAutoLogin() {
 }
 
 // ==========================================
-// REGISTRASI, REFERRAL EMAIL & KODE AUTENTIKASI ADMIN
+// REGISTRASI AKUN BARU DENGAN KODE AUTENTIKASI ADMIN (TANPA OTP)
 // ==========================================
 let tempRegistration = null;
-let activeReferralCode = null;
-let referralExpiryTime = 0;
-let referralTimerInterval = null;
 
 function openRegisterModal() {
     tempRegistration = null;
-    activeReferralCode = null;
-    if (referralTimerInterval) clearInterval(referralTimerInterval);
 
-    document.getElementById('register-step-1').classList.remove('hidden-view');
-    document.getElementById('register-step-2').classList.add('hidden-view');
-    document.getElementById('register-step-3').classList.add('hidden-view');
-    
-    updateRegisterStepIndicator(1);
-
-    document.getElementById('reg-nama').value = '';
-    document.getElementById('reg-user').value = '';
-    document.getElementById('reg-email').value = '';
-    document.getElementById('reg-wa').value = '';
-    document.getElementById('reg-role').value = currentLoginRole || 'Kasir';
-    document.getElementById('reg-pass').value = '';
-    document.getElementById('reg-pass-conf').value = '';
-    document.getElementById('reg-input-referral').value = '';
-    document.getElementById('reg-auth-code').value = '';
-
-    // Siapkan pilihan cabang pendaftaran (Sempajak, M Yamin, dan tambah baru)
-    selectRegisterBranch(activeRegisterCabang || 'Sempajak');
-    renderRegisterBranchChips();
+    if (document.getElementById('reg-nama')) document.getElementById('reg-nama').value = '';
+    if (document.getElementById('reg-user')) document.getElementById('reg-user').value = '';
+    if (document.getElementById('reg-email')) document.getElementById('reg-email').value = '';
+    if (document.getElementById('reg-wa')) document.getElementById('reg-wa').value = '';
+    if (document.getElementById('reg-role')) document.getElementById('reg-role').value = currentLoginRole || 'Kasir';
+    if (document.getElementById('reg-pass')) document.getElementById('reg-pass').value = '';
+    if (document.getElementById('reg-pass-conf')) document.getElementById('reg-pass-conf').value = '';
+    if (document.getElementById('reg-auth-code')) document.getElementById('reg-auth-code').value = '';
 
     const m = document.getElementById('modal-register');
     if (m) m.classList.remove('hidden-view');
 }
 
-function updateRegisterStepIndicator(step) {
-    const s1B = document.getElementById('step-badge-1');
-    const s1L = document.getElementById('step-label-1');
-    const s2B = document.getElementById('step-badge-2');
-    const s2L = document.getElementById('step-label-2');
-    const s3B = document.getElementById('step-badge-3');
-    const s3L = document.getElementById('step-label-3');
-    const line1 = document.getElementById('step-line-1');
-    const line2 = document.getElementById('step-line-2');
-
-    if (step === 1) {
-        if (s1B) s1B.className = 'w-6 h-6 rounded-full bg-red-600 text-white font-bold text-xs flex items-center justify-center';
-        if (s1L) s1L.className = 'text-xs font-bold text-gray-800';
-        if (s2B) s2B.className = 'w-6 h-6 rounded-full bg-gray-200 text-gray-500 font-bold text-xs flex items-center justify-center';
-        if (s2L) s2L.className = 'text-xs font-bold text-gray-400';
-        if (s3B) s3B.className = 'w-6 h-6 rounded-full bg-gray-200 text-gray-500 font-bold text-xs flex items-center justify-center';
-        if (s3L) s3L.className = 'text-xs font-bold text-gray-400';
-        if (line1) line1.className = 'flex-1 h-0.5 bg-gray-200 mx-2';
-        if (line2) line2.className = 'flex-1 h-0.5 bg-gray-200 mx-2';
-    } else if (step === 2) {
-        if (s1B) s1B.className = 'w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center';
-        if (s1L) s1L.className = 'text-xs font-bold text-gray-800';
-        if (s2B) s2B.className = 'w-6 h-6 rounded-full bg-red-600 text-white font-bold text-xs flex items-center justify-center';
-        if (s2L) s2L.className = 'text-xs font-bold text-gray-800';
-        if (s3B) s3B.className = 'w-6 h-6 rounded-full bg-gray-200 text-gray-500 font-bold text-xs flex items-center justify-center';
-        if (s3L) s3L.className = 'text-xs font-bold text-gray-400';
-        if (line1) line1.className = 'flex-1 h-0.5 bg-emerald-600 mx-2';
-        if (line2) line2.className = 'flex-1 h-0.5 bg-gray-200 mx-2';
-    } else if (step === 3) {
-        if (s1B) s1B.className = 'w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center';
-        if (s1L) s1L.className = 'text-xs font-bold text-gray-800';
-        if (s2B) s2B.className = 'w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center';
-        if (s2L) s2L.className = 'text-xs font-bold text-gray-800';
-        if (s3B) s3B.className = 'w-6 h-6 rounded-full bg-red-600 text-white font-bold text-xs flex items-center justify-center';
-        if (s3L) s3L.className = 'text-xs font-bold text-gray-800';
-        if (line1) line1.className = 'flex-1 h-0.5 bg-emerald-600 mx-2';
-        if (line2) line2.className = 'flex-1 h-0.5 bg-emerald-600 mx-2';
-    }
-}
-
-async function submitRegisterStep1() {
-    const nama = (document.getElementById('reg-nama').value || '').trim();
-    const user = (document.getElementById('reg-user').value || '').trim();
-    const email = (document.getElementById('reg-email').value || '').trim();
-    const wa = (document.getElementById('reg-wa').value || '').trim();
-    const role = document.getElementById('reg-role').value;
-    const cabang = (document.getElementById('reg-cabang')?.value || activeRegisterCabang || 'Sempajak').trim();
-    const pass = (document.getElementById('reg-pass').value || '').trim();
-    const passConf = (document.getElementById('reg-pass-conf').value || '').trim();
+async function submitRegisterDirect() {
+    const nama = (document.getElementById('reg-nama')?.value || '').trim();
+    const user = (document.getElementById('reg-user')?.value || '').trim();
+    const email = (document.getElementById('reg-email')?.value || '').trim();
+    const wa = (document.getElementById('reg-wa')?.value || '').trim();
+    const role = document.getElementById('reg-role')?.value || 'Kasir';
+    const pass = (document.getElementById('reg-pass')?.value || '').trim();
+    const passConf = (document.getElementById('reg-pass-conf')?.value || '').trim();
+    const inputAuthCode = (document.getElementById('reg-auth-code')?.value || '').trim().toUpperCase();
 
     if (!nama || !user || !email || !wa || !pass || !passConf) {
-        showToast('Semua data wajib diisi!', 'warning');
+        showToast('Semua data diri wajib diisi!', 'warning');
+        return;
+    }
+
+    if (!inputAuthCode) {
+        showToast('Kode autentikasi admin wajib diisi!', 'warning');
+        document.getElementById('reg-auth-code')?.focus();
         return;
     }
 
@@ -1764,333 +1714,14 @@ async function submitRegisterStep1() {
         return;
     }
 
-    const deliveryMethod = document.querySelector('input[name="reg-otp-method"]:checked')?.value || 'both';
-
-    const btn = document.querySelector('#register-step-1 button[type="submit"]') || document.getElementById('btn-submit-step1') || document.querySelector('#register-step-1 button');
-    const originalBtnText = btn ? btn.innerHTML : '<i class="fas fa-paper-plane"></i> Lanjut & Minta Kode OTP Verifikasi';
+    const btn = document.getElementById('btn-submit-register');
+    const originalBtnText = btn ? btn.innerHTML : '<i class="fas fa-user-plus"></i> Buat Akun Baru Sekarang';
     if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Memproses Kode OTP...';
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Memvalidasi & Membuat Akun...';
     }
 
-    showToast(`Memproses kode OTP untuk pendaftar (${email} / ${wa})...`, 'info');
-
-    // Simpan data pendaftaran sementara
-    tempRegistration = {
-        fullName: nama,
-        username: user,
-        email: email,
-        phone: wa,
-        role: role,
-        cabang: cabang,
-        password: pass,
-        isActive: false,
-        deliveryMethod: deliveryMethod
-    };
-
-    let sendSuccess = false;
-    let emailDelivered = false;
-
-    try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-        const resp = await fetch(getApiEndpoint('/api/auth/send-referral-code'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                email: email,
-                username: user,
-                phone: wa,
-                deliveryMethod: deliveryMethod
-            }),
-            signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-
-        let res = null;
-        try {
-            res = await resp.json();
-        } catch(pe) {
-            console.warn('Respon non-JSON diterima:', pe);
-        }
-
-        if (res && res.success) {
-            sendSuccess = true;
-            emailDelivered = !!res.emailDelivered;
-            referralExpiryTime = res.expiresAt || (Date.now() + 10 * 60 * 1000);
-            if (res.otpCode || res.codeForTesting) {
-                activeReferralCode = res.otpCode || res.codeForTesting;
-            }
-
-            if (emailDelivered) {
-                showToast(`Kode OTP berhasil dikirim ke email ${email}. Anda juga dapat menerimanya via WhatsApp.`, 'success');
-            } else {
-                showToast(`Kode OTP siap dikirim ke WhatsApp ${wa}. Klik tombol WhatsApp untuk membukanya.`, 'info');
-            }
-
-            // Jika memilih WhatsApp langsung, otomatis buka WhatsApp
-            if (deliveryMethod === 'whatsapp') {
-                setTimeout(() => {
-                    sendReferralViaWhatsApp();
-                }, 600);
-            }
-        } else {
-            throw new Error((res && res.message) ? res.message : 'Gagal memproses kode OTP dari server');
-        }
-    } catch (err) {
-        console.warn('[Kirim Kode OTP Fallback Internal]:', err);
-        // Fallback internal jika server email atau jaringan terkendala
-        activeReferralCode = Math.floor(100000 + Math.random() * 900000).toString();
-        referralExpiryTime = Date.now() + 10 * 60 * 1000;
-        sendSuccess = true;
-        emailDelivered = false;
-        showToast('Server email sedang terkendala. Silakan gunakan tombol WhatsApp untuk menerima kode OTP Anda.', 'info');
-    } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = originalBtnText;
-        }
-    }
-
-    if (sendSuccess) {
-        // Perbarui tampilan kontak penerima di Step 2
-        const emailDisplay = document.getElementById('reg-display-email');
-        if (emailDisplay) emailDisplay.innerText = email;
-        const waDisplay = document.getElementById('reg-display-wa');
-        if (waDisplay) waDisplay.innerText = wa;
-        const btnWaPhone = document.getElementById('reg-btn-wa-phone');
-        if (btnWaPhone) btnWaPhone.innerText = wa;
-
-        const emailBadge = document.getElementById('reg-email-badge');
-        if (emailBadge) {
-            if (emailDelivered) {
-                emailBadge.innerText = 'Email Terkirim';
-                emailBadge.className = 'text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold';
-            } else {
-                emailBadge.innerText = 'Email Diproses';
-                emailBadge.className = 'text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold';
-            }
-        }
-
-        const waBadge = document.getElementById('reg-wa-badge');
-        if (waBadge) {
-            waBadge.innerText = 'WhatsApp Siap';
-            waBadge.className = 'text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold';
-        }
-
-        const inputRef = document.getElementById('reg-input-referral');
-        if (inputRef) inputRef.value = '';
-
-        // Sembunyikan fallback box lama jika ada
-        const fallbackBox = document.getElementById('reg-fallback-box');
-        if (fallbackBox) fallbackBox.classList.add('hidden-view');
-
-        // Pindah ke Step 2
-        document.getElementById('register-step-1').classList.add('hidden-view');
-        document.getElementById('register-step-2').classList.remove('hidden-view');
-        document.getElementById('register-step-3').classList.add('hidden-view');
-        updateRegisterStepIndicator(2);
-        startReferralTimer();
-    }
-}
-
-function startReferralTimer() {
-    if (referralTimerInterval) clearInterval(referralTimerInterval);
-    const timerEl = document.getElementById('reg-timer');
-
-    function update() {
-        const remaining = Math.max(0, referralExpiryTime - Date.now());
-        const mins = Math.floor(remaining / 60000);
-        const secs = Math.floor((remaining % 60000) / 1000);
-        if (timerEl) timerEl.innerText = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-        if (remaining <= 0) {
-            clearInterval(referralTimerInterval);
-            if (timerEl) timerEl.innerText = 'Kedaluwarsa';
-        }
-    }
-    update();
-    referralTimerInterval = setInterval(update, 1000);
-}
-
-async function resendReferralCode() {
-    if (!tempRegistration || !tempRegistration.email) {
-        showToast('Data pendaftar tidak ditemukan!', 'error');
-        return;
-    }
-
-    const btn = document.getElementById('btn-resend-referral');
-    if (btn) {
-        btn.disabled = true;
-        setTimeout(() => { if (btn) btn.disabled = false; }, 4000);
-    }
-
-    showToast(`Mengirim ulang kode OTP ke ${tempRegistration.email}...`, 'info');
-
-    try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 12000);
-
-        const resp = await fetch(getApiEndpoint('/api/auth/send-referral-code'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                email: tempRegistration.email,
-                username: tempRegistration.username,
-                phone: tempRegistration.phone,
-                deliveryMethod: 'both'
-            }),
-            signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-
-        let res = null;
-        try { res = await resp.json(); } catch(e) {}
-
-        if (res && res.success) {
-            referralExpiryTime = res.expiresAt || (Date.now() + 10 * 60 * 1000);
-            if (res.otpCode || res.codeForTesting) {
-                activeReferralCode = res.otpCode || res.codeForTesting;
-            }
-            startReferralTimer();
-
-            const emailBadge = document.getElementById('reg-email-badge');
-            if (emailBadge) {
-                if (res.emailDelivered) {
-                    emailBadge.innerText = 'Email Terkirim';
-                    emailBadge.className = 'text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold';
-                    showToast(`Kode OTP baru berhasil dikirim ke email ${tempRegistration.email}`, 'success');
-                } else {
-                    emailBadge.innerText = 'Email Diproses';
-                    emailBadge.className = 'text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold';
-                    showToast(`Kode OTP baru siap di WhatsApp. Silakan klik tombol "Buka di WhatsApp".`, 'info');
-                }
-            }
-            return;
-        }
-        throw new Error(res ? res.message : 'Gagal mengirim');
-    } catch (e) {
-        // Fallback jika koneksi terputus
-        const newCode = Math.floor(100000 + Math.random() * 900000).toString();
-        activeReferralCode = newCode;
-        referralExpiryTime = Date.now() + 10 * 60 * 1000;
-        startReferralTimer();
-        showToast('Kode OTP telah diperbarui. Silakan gunakan tombol WhatsApp untuk menerima kode Anda.', 'info');
-    }
-}
-
-function backToRegisterStep1() {
-    if (referralTimerInterval) clearInterval(referralTimerInterval);
-    document.getElementById('register-step-1').classList.remove('hidden-view');
-    document.getElementById('register-step-2').classList.add('hidden-view');
-    document.getElementById('register-step-3').classList.add('hidden-view');
-    updateRegisterStepIndicator(1);
-}
-
-async function verifyReferralStep2() {
-    const inputCode = (document.getElementById('reg-input-referral').value || '').trim();
-    if (!inputCode || inputCode.length !== 6) {
-        showToast('Masukkan 6-digit kode OTP verifikasi!', 'warning');
-        return;
-    }
-
-    if (Date.now() > referralExpiryTime) {
-        showToast('Kode OTP telah kedaluwarsa! Silakan klik "Kirim Ulang Email" atau tombol WhatsApp.', 'error');
-        return;
-    }
-
-    if (!tempRegistration || !tempRegistration.email) {
-        showToast('Data pendaftaran tidak valid. Silakan ulangi langkah pertama.', 'error');
-        backToRegisterStep1();
-        return;
-    }
-
-    const verifyBtn = document.getElementById('btn-verify-referral') || document.querySelector('#register-step-2 button.bg-emerald-600') || document.querySelector('#register-step-2 button');
-    const originalText = verifyBtn ? verifyBtn.innerHTML : 'Verifikasi OTP';
-    if (verifyBtn) {
-        verifyBtn.disabled = true;
-        verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Memverifikasi OTP...';
-    }
-
-    let isVerified = false;
-
-    // 1. Cek langsung kecocokan kode aktif (yang dikirim ke email / WhatsApp)
-    if (activeReferralCode && inputCode === activeReferralCode) {
-        isVerified = true;
-    }
-
-    // 2. Jika belum cocok lokal, coba verifikasi ke server API
-    if (!isVerified) {
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 7000);
-
-            const resp = await fetch(getApiEndpoint('/api/auth/verify-referral-code'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    email: tempRegistration.email,
-                    phone: tempRegistration.phone,
-                    code: inputCode
-                }),
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-
-            const res = await resp.json();
-            if (res && res.success) {
-                isVerified = true;
-            }
-        } catch (err) {
-            console.warn('[Verify OTP Network Warning]:', err);
-        }
-    }
-
-    if (verifyBtn) {
-        verifyBtn.disabled = false;
-        verifyBtn.innerHTML = originalText;
-    }
-
-    if (isVerified) {
-        if (referralTimerInterval) clearInterval(referralTimerInterval);
-
-        // Beralih ke Step 3: Masukkan Kode Autentikasi Admin
-        document.getElementById('register-step-1').classList.add('hidden-view');
-        document.getElementById('register-step-2').classList.add('hidden-view');
-        document.getElementById('register-step-3').classList.remove('hidden-view');
-        updateRegisterStepIndicator(3);
-
-        showToast('Kode OTP berhasil diverifikasi! Masukkan Kode Autentikasi Admin.', 'success');
-    } else {
-        showToast('Kode OTP tidak sesuai! Periksa kembali kode yang diterima di Email atau WhatsApp Anda.', 'error');
-    }
-}
-
-function backToRegisterStep2() {
-    document.getElementById('register-step-1').classList.add('hidden-view');
-    document.getElementById('register-step-2').classList.remove('hidden-view');
-    document.getElementById('register-step-3').classList.add('hidden-view');
-    updateRegisterStepIndicator(2);
-}
-
-async function activateAccountStep3() {
-    const inputAuthCode = (document.getElementById('reg-auth-code').value || '').trim().toUpperCase();
-    if (!inputAuthCode) {
-        showToast('Kode autentikasi wajib diisi!', 'warning');
-        return;
-    }
-
-    if (!tempRegistration) {
-        showToast('Data pendaftaran tidak ditemukan. Ulangi proses pendaftaran.', 'error');
-        return;
-    }
-
-    const btn = document.getElementById('btn-activate-account');
-    if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Memvalidasi Otorisasi Admin...</span>';
-    }
-
+    // Validasi Kode Autentikasi Admin Pusat
     let isValid = false;
     try {
         const resp = await fetch(getApiEndpoint('/api/auth/verify-admin-code'), {
@@ -2108,42 +1739,36 @@ async function activateAccountStep3() {
         isValid = (inputAuthCode === master || VALID_AUTH_CODES.map(c => c.toUpperCase()).includes(inputAuthCode));
     }
 
-    if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="fas fa-check-circle"></i> <span>Aktivasi Akun Sekarang</span>';
-    }
-
     if (!isValid) {
-        showToast('Kode autentikasi salah atau tidak valid! Hanya Admin/Owner Pusat yang mengetahui kode ini.', 'error');
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalBtnText;
+        }
+        showToast('Kode autentikasi salah atau tidak valid! Hubungi Admin/Owner Pusat untuk mendapatkan kode autentikasi.', 'error');
         return;
     }
 
-    // Aktivasi akun berhasil!
-    tempRegistration.isActive = true;
-    tempRegistration.authCode = inputAuthCode;
+    const newUser = {
+        fullName: nama,
+        username: user,
+        email: email,
+        phone: wa,
+        role: role,
+        cabang: 'Pusat',
+        password: pass,
+        isActive: true,
+        authCode: inputAuthCode
+    };
 
     // 1. Simpan ke local storage perangkat
-    saveUserAccount(tempRegistration);
+    saveUserAccount(newUser);
 
     // 2. Simpan langsung ke Cloud Database Firebase Firestore (Client SDK)
     try {
-        await firestoreRegister(tempRegistration);
-        console.log('[Firestore] Akun berhasil didaftarkan ke Firestore:', tempRegistration.username);
+        await firestoreRegister(newUser);
+        console.log('[Firestore] Akun baru berhasil didaftarkan:', newUser.username);
     } catch (fsErr) {
         console.warn('[Firestore Direct Register Warning]:', fsErr);
-    }
-
-    // Pastikan cabang pengguna tersinkronisasi ke daftar cabang
-    if (tempRegistration.cabang) {
-        const cName = tempRegistration.cabang.trim();
-        if (cName && !BRANCHES_CACHE.includes(cName)) {
-            BRANCHES_CACHE.push(cName);
-            try { localStorage.setItem('ib_saved_branches_list', JSON.stringify(BRANCHES_CACHE)); } catch(e){}
-            firestoreSaveBranch(cName).catch(() => {});
-            renderLoginBranchChips();
-            renderRegisterBranchChips();
-            populateCabangFilterDashboard();
-        }
     }
 
     // 3. Simpan juga melalui backend API (redundansi sinkronisasi cloud)
@@ -2151,35 +1776,38 @@ async function activateAccountStep3() {
         await fetch(getApiEndpoint('/api/auth/register-user'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(tempRegistration)
+            body: JSON.stringify(newUser)
         });
     } catch (apiErr) {
         console.warn('[Backend Register User Warning]:', apiErr);
     }
 
-    showToast('Pendaftaran berhasil! Akun Anda telah disimpan di Cloud Firestore.', 'success');
+    if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalBtnText;
+    }
+
+    showToast('Pendaftaran berhasil! Akun Anda aktif dan siap digunakan.', 'success');
     closeModal('modal-register');
 
     // Isi ke form login agar pengguna bisa langsung masuk
     const uInput = document.getElementById('l-user');
     const pInput = document.getElementById('l-pass');
-    if (uInput) uInput.value = tempRegistration.username;
-    if (pInput) pInput.value = tempRegistration.password;
+    if (uInput) uInput.value = newUser.username;
+    if (pInput) pInput.value = newUser.password;
 
-    setLoginRole(tempRegistration.role);
+    setLoginRole(newUser.role);
 }
+
+// Backward-compatibility aliases
+const submitRegisterStep1 = submitRegisterDirect;
+const verifyReferralStep2 = submitRegisterDirect;
+const activateAccountStep3 = submitRegisterDirect;
 
 function openActivateAccountPrompt(username) {
     openRegisterModal();
-    const users = getAllUsers();
-    const u = users.find(x => x.username.toLowerCase() === (username || '').toLowerCase());
-    if (u) {
-        tempRegistration = u;
-        document.getElementById('register-step-1').classList.add('hidden-view');
-        document.getElementById('register-step-2').classList.add('hidden-view');
-        document.getElementById('register-step-3').classList.remove('hidden-view');
-        updateRegisterStepIndicator(3);
-    }
+    const uInput = document.getElementById('reg-user');
+    if (uInput) uInput.value = username || '';
 }
 
 // ==========================================
@@ -3759,21 +3387,54 @@ function updateDashboardCharts() {
         });
     }
 
-    // Chart Karyawan per Cabang
-    const branchCounts = {};
+    // Chart Karyawan per Penempatan (Membedakan dengan Cabang Outlet)
+    const penempatanCounts = {};
     (KARYAWAN_CACHE || []).forEach(k => { 
-        const branch = k['Lokasi Cabang'] || 'Pusat'; 
-        branchCounts[branch] = (branchCounts[branch] || 0) + 1; 
+        const loc = (k['Penempatan'] || k['Lokasi Cabang'] || k['Cabang'] || 'Pusat').trim(); 
+        penempatanCounts[loc] = (penempatanCounts[loc] || 0) + 1; 
     });
+
+    const statPenempatanCountEl = document.getElementById('stat-penempatan-count');
+    if (statPenempatanCountEl) {
+        statPenempatanCountEl.innerText = `${Object.keys(penempatanCounts).length} Penempatan`;
+    }
 
     const canvasBar = document.getElementById('chart-karyawan');
     if (canvasBar && typeof Chart !== 'undefined') {
         const ctxBar = canvasBar.getContext('2d');
         if (chartKaryawan) chartKaryawan.destroy();
+        const penempatanLabels = Object.keys(penempatanCounts);
+        const penempatanData = Object.values(penempatanCounts);
         chartKaryawan = new Chart(ctxBar, { 
             type: 'bar', 
-            data: { labels: Object.keys(branchCounts).length ? Object.keys(branchCounts) : ['Belum Ada Data'], datasets: [{ label: 'Karyawan', data: Object.values(branchCounts).length ? Object.values(branchCounts) : [0], backgroundColor: '#ef4444', borderRadius: 4 }] }, 
-            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { stepSize: 1, font: {size: 10} } }, x: { ticks: { font: {size: 10} } } }, plugins: { legend: { display: false } } } 
+            data: { 
+                labels: penempatanLabels.length ? penempatanLabels : ['Belum Ada Data'], 
+                datasets: [{ 
+                    label: 'Jumlah Karyawan', 
+                    data: penempatanData.length ? penempatanData : [0], 
+                    backgroundColor: '#ef4444', 
+                    borderRadius: 6,
+                    maxBarThickness: 36
+                }] 
+            }, 
+            options: { 
+                responsive: true, 
+                maintainAspectRatio: false, 
+                scales: { 
+                    y: { beginAtZero: true, ticks: { stepSize: 1, font: {size: 10} } }, 
+                    x: { ticks: { font: {size: 10} } } 
+                }, 
+                plugins: { 
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return ` ${context.parsed.y} Karyawan (Penempatan)`;
+                            }
+                        }
+                    }
+                } 
+            } 
         });
     }
 
@@ -4019,18 +3680,28 @@ async function loadKaryawan() {
         if (KARYAWAN_CACHE.length === 0) { 
             list.innerHTML = `<div class="text-center text-gray-400 py-10"><i class="fas fa-users-slash text-4xl mb-3"></i><p class="text-sm">Belum ada karyawan</p></div>`; 
         } else { 
-            list.innerHTML = KARYAWAN_CACHE.map(k => `
-                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center gap-2">
+            list.innerHTML = KARYAWAN_CACHE.map(k => {
+                const penempatanStr = k['Penempatan'] || k['Lokasi Cabang'] || k['Cabang'] || 'Pusat';
+                return `
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center gap-3 hover:border-red-100 transition">
                     <div class="flex-1 overflow-hidden">
-                        <p class="font-bold text-sm text-gray-800 truncate">${k['Nama']}</p>
-                        <p class="text-[10px] text-gray-500 truncate">${k['Lokasi Cabang']} &bull; ${k['Jabatan']}</p>
-                        <p class="text-[10px] text-gray-400 mt-0.5">Rp ${formatRupiah(k['Gaji Harian'])}/hari</p>
+                        <p class="font-extrabold text-sm text-gray-800 truncate">${escapeHtml(k['Nama'])}</p>
+                        <div class="flex items-center gap-1.5 flex-wrap mt-1">
+                            <span class="inline-flex items-center text-red-700 bg-red-50 border border-red-200/80 px-2 py-0.5 rounded-lg text-[10px] font-extrabold shadow-2xs">
+                                <i class="fas fa-location-dot mr-1 text-[9px] text-red-500"></i>Penempatan: ${escapeHtml(penempatanStr)}
+                            </span>
+                            <span class="text-[10px] text-gray-500 font-semibold bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-lg">
+                                ${escapeHtml(k['Jabatan'] || '-')}
+                            </span>
+                        </div>
+                        <p class="text-[10px] text-gray-400 mt-1 font-semibold">Rp ${formatRupiah(k['Gaji Harian'])}/hari</p>
                     </div>
-                    <div class="flex gap-2">
-                        <button onclick='editKaryawan(${JSON.stringify(k)})' class="bg-blue-50 text-blue-600 w-8 h-8 flex items-center justify-center rounded-lg text-xs font-bold hover:bg-blue-100 transition"><i class="fas fa-edit"></i></button>
-                        <button onclick="confirmHapusKaryawan(${k.rowIndex})" class="bg-red-50 text-red-600 w-8 h-8 flex items-center justify-center rounded-lg text-xs font-bold hover:bg-red-100 transition"><i class="fas fa-trash"></i></button>
+                    <div class="flex gap-1.5 shrink-0">
+                        <button onclick='editKaryawan(${JSON.stringify(k)})' class="bg-blue-50 text-blue-600 hover:bg-blue-100 w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold transition cursor-pointer" title="Edit Karyawan"><i class="fas fa-edit"></i></button>
+                        <button onclick="confirmHapusKaryawan(${k.rowIndex})" class="bg-red-50 text-red-600 hover:bg-red-100 w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold transition cursor-pointer" title="Hapus Karyawan"><i class="fas fa-trash"></i></button>
                     </div>
-                </div>`).join(''); 
+                </div>`;
+            }).join(''); 
         }
         if (CURRENT_USER.role === 'Admin') initDashboardCharts(); 
     } catch (e) { 
@@ -4039,76 +3710,183 @@ async function loadKaryawan() {
     if (loading) loading.classList.add('hidden-view');
 }
 
-function openFormKaryawan() { 
-    document.getElementById('form-karyawan').reset(); 
-    document.getElementById('k-rowIndex').value = ''; 
-    document.getElementById('modal-title').innerHTML = 'Tambah Karyawan <button onclick="closeModal(\'modal-karyawan\')"><i class="fas fa-times text-gray-400"></i></button>'; 
-    
-    // Isi pilihan cabang karyawan hanya dengan cabang resmi terdaftar
-    const kCabangSelect = document.getElementById('k-cabang');
-    if (kCabangSelect) {
-        const branches = typeof getAllRegisteredBranches === 'function' ? getAllRegisteredBranches() : ['Sempajak', 'M Yamin'];
-        kCabangSelect.innerHTML = branches.map(b => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
+function populateKaryawanPenempatanOptions(selectedVal = '') {
+    const select = document.getElementById('k-penempatan');
+    if (!select) return;
+
+    const locSet = new Set();
+
+    // 1. Cabang resmi outlet
+    const branches = typeof getAllRegisteredBranches === 'function' ? getAllRegisteredBranches() : ['Sempajak', 'M Yamin'];
+    branches.forEach(b => { if (b) locSet.add(b.trim()); });
+
+    // 2. Lokasi operasional & departemen umum
+    const standardDepts = ['Dapur Pusat', 'Dapur Bubur', 'Dapur Kue', 'Gudang Pusat', 'Kantor Pusat'];
+    standardDepts.forEach(d => locSet.add(d));
+
+    // 3. Penempatan yang sudah ada dari database karyawan
+    if (Array.isArray(KARYAWAN_CACHE)) {
+        KARYAWAN_CACHE.forEach(k => {
+            const loc = k['Penempatan'] || k['Lokasi Cabang'] || k['Cabang'];
+            if (loc && loc.trim()) locSet.add(loc.trim());
+        });
     }
 
-    document.getElementById('modal-karyawan').classList.remove('hidden-view'); 
+    if (selectedVal && selectedVal.trim()) {
+        locSet.add(selectedVal.trim());
+    }
+
+    let html = '';
+    locSet.forEach(loc => {
+        const isSel = (selectedVal && loc.toLowerCase() === selectedVal.toLowerCase()) ? 'selected' : '';
+        html += `<option value="${escapeHtml(loc)}" ${isSel}>${escapeHtml(loc)}</option>`;
+    });
+
+    html += `<option value="__custom__">+ Lainnya (Ketik Manual Penempatan)</option>`;
+    select.innerHTML = html;
+
+    const customInput = document.getElementById('k-penempatan-custom');
+    const previewLabel = document.getElementById('k-penempatan-preview-label');
+    const hiddenCabang = document.getElementById('k-cabang');
+
+    let isKnown = false;
+    for (const loc of locSet) {
+        if (selectedVal && loc.toLowerCase() === selectedVal.toLowerCase()) {
+            isKnown = true;
+            select.value = loc;
+            break;
+        }
+    }
+
+    if (!isKnown && selectedVal && selectedVal !== '__custom__') {
+        select.value = '__custom__';
+        if (customInput) {
+            customInput.value = selectedVal;
+            customInput.classList.remove('hidden-view');
+        }
+        if (previewLabel) previewLabel.innerText = selectedVal;
+        if (hiddenCabang) hiddenCabang.value = selectedVal;
+    } else {
+        if (customInput) {
+            customInput.value = '';
+            customInput.classList.add('hidden-view');
+        }
+        const activeVal = select.value || 'Sempajak';
+        if (previewLabel) previewLabel.innerText = activeVal;
+        if (hiddenCabang) hiddenCabang.value = activeVal;
+    }
+}
+
+function onKaryawanPenempatanSelect(val) {
+    const customInput = document.getElementById('k-penempatan-custom');
+    const previewLabel = document.getElementById('k-penempatan-preview-label');
+    const hiddenCabang = document.getElementById('k-cabang');
+
+    if (val === '__custom__') {
+        if (customInput) {
+            customInput.classList.remove('hidden-view');
+            customInput.focus();
+            if (previewLabel) previewLabel.innerText = customInput.value || 'Penempatan Baru';
+            if (hiddenCabang) hiddenCabang.value = customInput.value || 'Pusat';
+        }
+    } else {
+        if (customInput) {
+            customInput.classList.add('hidden-view');
+        }
+        if (previewLabel) previewLabel.innerText = val;
+        if (hiddenCabang) hiddenCabang.value = val;
+    }
+}
+
+function openFormKaryawan() { 
+    const form = document.getElementById('form-karyawan');
+    if (form) form.reset(); 
+    const rowInput = document.getElementById('k-rowIndex');
+    if (rowInput) rowInput.value = ''; 
+    const titleEl = document.getElementById('modal-title');
+    if (titleEl) {
+        titleEl.innerText = 'Tambah Data Karyawan'; 
+    }
+    
+    // Siapkan opsi penempatan karyawan
+    populateKaryawanPenempatanOptions('Sempajak');
+
+    const m = document.getElementById('modal-karyawan');
+    if (m) m.classList.remove('hidden-view'); 
 }
 
 function editKaryawan(k) { 
     openFormKaryawan(); 
-    document.getElementById('modal-title').innerHTML = 'Edit Karyawan <button onclick="closeModal(\'modal-karyawan\')"><i class="fas fa-times text-gray-400"></i></button>'; 
-    document.getElementById('k-rowIndex').value = k.rowIndex; 
-    document.getElementById('k-nama').value = k['Nama'] || ''; 
-    document.getElementById('k-gender').value = k['Jenis Kelamin'] || 'Laki-laki'; 
-    document.getElementById('k-jabatan').value = k['Jabatan'] || 'Kasir'; 
-    
-    const kCabangSelect = document.getElementById('k-cabang');
-    const branchVal = normalizeBranchName(k['Lokasi Cabang'] || k['Cabang'] || k.cabang) || 'Sempajak';
-    if (kCabangSelect) {
-        // Pastikan opsi cabang ada
-        let exists = Array.from(kCabangSelect.options).some(o => o.value.toLowerCase() === branchVal.toLowerCase());
-        if (!exists) {
-            const opt = document.createElement('option');
-            opt.value = branchVal;
-            opt.textContent = branchVal;
-            kCabangSelect.appendChild(opt);
-        }
-        kCabangSelect.value = branchVal;
+    const titleEl = document.getElementById('modal-title');
+    if (titleEl) {
+        titleEl.innerText = 'Edit Data Karyawan'; 
     }
-    document.getElementById('k-wa').value = k['No WA'] || ''; 
-    document.getElementById('k-gaji').value = k['Gaji Harian'] || ''; 
-    document.getElementById('k-email').value = k['Email'] || ''; 
+    const rowInput = document.getElementById('k-rowIndex');
+    if (rowInput) rowInput.value = k.rowIndex; 
+    const namaInput = document.getElementById('k-nama');
+    if (namaInput) namaInput.value = k['Nama'] || ''; 
+    const genderInput = document.getElementById('k-gender');
+    if (genderInput) genderInput.value = k['Jenis Kelamin'] || 'Laki-laki'; 
+    const jabatanInput = document.getElementById('k-jabatan');
+    if (jabatanInput) jabatanInput.value = k['Jabatan'] || 'Kasir'; 
+    
+    // Set penempatan terpilih
+    const loc = k['Penempatan'] || k['Lokasi Cabang'] || k['Cabang'] || 'Sempajak';
+    populateKaryawanPenempatanOptions(loc);
+
+    const waInput = document.getElementById('k-wa');
+    if (waInput) waInput.value = k['No WA'] || ''; 
+    const gajiInput = document.getElementById('k-gaji');
+    if (gajiInput) gajiInput.value = k['Gaji Harian'] || ''; 
+    const emailInput = document.getElementById('k-email');
+    if (emailInput) emailInput.value = k['Email'] || ''; 
 }
 
 async function saveKaryawanData(e) { 
     e.preventDefault(); 
     const btn = document.getElementById('btn-save-karyawan'); 
-    btn.innerHTML = '<div class="loader border-white"></div> Menyimpan...'; 
-    btn.disabled = true; 
+    const originalBtnHtml = btn ? btn.innerHTML : 'Simpan Data Karyawan';
+    if (btn) {
+        btn.innerHTML = '<div class="loader border-white inline-block mr-1"></div> Menyimpan...'; 
+        btn.disabled = true; 
+    }
+
+    let penempatanVal = (document.getElementById('k-penempatan')?.value || 'Sempajak').trim();
+    if (penempatanVal === '__custom__') {
+        penempatanVal = (document.getElementById('k-penempatan-custom')?.value || '').trim() || 'Pusat';
+    }
+
     const data = { 
-        rowIndex: document.getElementById('k-rowIndex').value, 
-        'Nama': document.getElementById('k-nama').value, 
-        'Jenis Kelamin': document.getElementById('k-gender').value, 
-        'Jabatan': document.getElementById('k-jabatan').value, 
-        'Lokasi Cabang': document.getElementById('k-cabang').value, 
-        'No WA': document.getElementById('k-wa').value, 
-        'Gaji Harian': document.getElementById('k-gaji').value, 
-        'Email': document.getElementById('k-email').value 
+        rowIndex: document.getElementById('k-rowIndex')?.value || '', 
+        'Nama': (document.getElementById('k-nama')?.value || '').trim(), 
+        'Jenis Kelamin': document.getElementById('k-gender')?.value || 'Laki-laki', 
+        'Jabatan': document.getElementById('k-jabatan')?.value || 'Kasir', 
+        'Penempatan': penempatanVal,
+        'Lokasi Cabang': penempatanVal, 
+        'No WA': (document.getElementById('k-wa')?.value || '').trim(), 
+        'Gaji Harian': document.getElementById('k-gaji')?.value || 0, 
+        'Email': (document.getElementById('k-email')?.value || '').trim() 
     }; 
     try { 
         const res = await callBackend('saveKaryawan', data); 
         if (res.success) { 
-            showToast(res.message, 'success'); 
+            showToast(res.message || 'Data karyawan berhasil disimpan!', 'success'); 
             closeModal('modal-karyawan'); 
-            loadKaryawan(); 
+            await loadKaryawan(); 
+            if (typeof updateDashboardCharts === 'function') {
+                updateDashboardCharts();
+            }
         } else { 
-            showToast(res.message, 'error'); 
+            showToast(res.message || 'Gagal menyimpan data karyawan', 'error'); 
         } 
     } catch(err) { 
-        showToast('Gagal menyimpan karyawan', 'error'); 
-    } 
-    btn.innerHTML = 'Simpan'; 
-    btn.disabled = false; 
+        showToast('Gagal menyimpan karyawan: ' + (err.message || err), 'error'); 
+    } finally {
+        if (btn) {
+            btn.innerHTML = originalBtnHtml; 
+            btn.disabled = false; 
+        }
+    }
 }
 
 function confirmHapusKaryawan(id) { 
@@ -4139,7 +3917,10 @@ async function loadKaryawanForSlip() {
     } 
     const select = document.getElementById('s-karyawan'); 
     if (select) {
-        select.innerHTML = '<option value="">-- Pilih Karyawan --</option>' + (KARYAWAN_CACHE || []).map(k => `<option value="${k['ID Karyawan']}">${k['Nama']} - ${k['Lokasi Cabang']}</option>`).join(''); 
+        select.innerHTML = '<option value="">-- Pilih Karyawan --</option>' + (KARYAWAN_CACHE || []).map(k => {
+            const loc = k['Penempatan'] || k['Lokasi Cabang'] || k['Cabang'] || 'Pusat';
+            return `<option value="${escapeHtml(k['ID Karyawan'])}">${escapeHtml(k['Nama'])} - Penempatan: ${escapeHtml(loc)}</option>`;
+        }).join(''); 
     }
 }
 
@@ -8388,6 +8169,8 @@ window.renderListProduk = renderListProduk;
 window.openFormKaryawan = openFormKaryawan;
 window.editKaryawan = editKaryawan;
 window.saveKaryawanData = saveKaryawanData;
+window.onKaryawanPenempatanSelect = onKaryawanPenempatanSelect;
+window.populateKaryawanPenempatanOptions = populateKaryawanPenempatanOptions;
 window.confirmHapusKaryawan = confirmHapusKaryawan;
 window.autoFillSlipGaji = autoFillSlipGaji;
 window.hitungTotalGaji = hitungTotalGaji;
@@ -10175,6 +9958,7 @@ window.handleLogin = handleLogin;
 window.checkAutoLogin = checkAutoLogin;
 
 window.openRegisterModal = openRegisterModal;
+window.submitRegisterDirect = submitRegisterDirect;
 window.submitRegisterStep1 = submitRegisterStep1;
 window.resendReferralCode = resendReferralCode;
 window.openGmailApp = openGmailApp;

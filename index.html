@@ -501,8 +501,11 @@
                         <!-- Grafik Penjualan -->
                         <div class="mt-4 pt-3 border-t border-gray-100">
                             <div class="flex items-center justify-between mb-2">
-                                <h3 class="text-xs font-bold text-gray-700" id="chart-penjualan-title">Penjualan per Cabang</h3>
-                                <span class="text-[10px] text-gray-400 font-medium" id="chart-penjualan-subtitle">Grafik Omset</span>
+                                <h3 class="text-xs font-bold text-gray-700 flex items-center gap-1.5" id="chart-penjualan-title">
+                                    <i class="fas fa-store text-red-600"></i>
+                                    <span>Penjualan per Cabang Outlet</span>
+                                </h3>
+                                <span class="text-[10px] text-gray-400 font-medium" id="chart-penjualan-subtitle">Grafik Omset Outlet</span>
                             </div>
                             <div class="relative h-48 w-full flex justify-center">
                                 <canvas id="chart-penjualan"></canvas>
@@ -552,8 +555,14 @@
                             </div>
                         </div>
                         <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-                            <h3 class="text-xs font-bold text-gray-800 mb-1">Karyawan per Cabang</h3>
-                            <p class="text-[9px] text-gray-400 mb-4">Distribusi lokasi penempatan</p>
+                            <div class="flex items-center justify-between mb-1">
+                                <h3 class="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                                    <i class="fas fa-users-gear text-red-600"></i>
+                                    <span>Karyawan per Penempatan</span>
+                                </h3>
+                                <span class="text-[10px] text-gray-500 font-bold bg-gray-100 px-2 py-0.5 rounded-full" id="stat-penempatan-count">0 Penempatan</span>
+                            </div>
+                            <p class="text-[9px] text-gray-400 mb-4">Distribusi lokasi penempatan kerja karyawan</p>
                             <div class="relative h-48 w-full">
                                 <canvas id="chart-karyawan"></canvas>
                             </div>
@@ -1716,23 +1725,86 @@
         </div>
     </div>
 
-    <!-- MODAL KARYAWAN -->
+    <!-- MODAL KARYAWAN (DENGAN FORM PENEMPATAN) -->
     <div id="modal-karyawan" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden-view flex items-center justify-center p-4">
-        <div class="bg-white w-full max-w-sm rounded-2xl overflow-hidden p-5 flex flex-col max-h-[90vh]">
-            <h3 class="font-extrabold mb-4 flex justify-between text-gray-800" id="modal-title">Tambah Karyawan <button type="button" onclick="closeModal('modal-karyawan')"><i class="fas fa-times text-gray-400"></i></button></h3>
-            <form id="form-karyawan" onsubmit="saveKaryawanData(event)" class="space-y-3 overflow-y-auto hide-scrollbar">
+        <div class="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-gray-100 flex flex-col max-h-[92vh]">
+            <div class="bg-gradient-to-r from-red-600 via-rose-600 to-red-700 px-5 py-4 flex items-center justify-between text-white shrink-0">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center"><i class="fas fa-user-gear text-sm"></i></div>
+                    <div>
+                        <h3 class="font-black text-sm text-white leading-tight" id="modal-title">Tambah Data Karyawan</h3>
+                        <p class="text-[10px] text-red-100 font-medium">Manajemen Data & Penempatan Karyawan</p>
+                    </div>
+                </div>
+                <button type="button" onclick="closeModal('modal-karyawan')" class="w-8 h-8 rounded-xl bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition cursor-pointer"><i class="fas fa-times text-sm"></i></button>
+            </div>
+            <form id="form-karyawan" onsubmit="saveKaryawanData(event)" class="p-5 space-y-3.5 overflow-y-auto hide-scrollbar text-left">
                 <input type="hidden" id="k-rowIndex">
-                <input type="text" id="k-nama" required placeholder="Nama Lengkap" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
-                <select id="k-gender" required class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none"><option value="Laki-laki">Laki-laki</option><option value="Perempuan">Perempuan</option></select>
-                <select id="k-jabatan" required class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none"><option value="Driver">Driver</option><option value="Jaga Outlet">Jaga Outlet</option><option value="Dapur Bubur">Dapur Bubur</option><option value="Dapur Kue">Dapur Kue</option></select> 
-                <select id="k-cabang" required class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
-                    <option value="Sempajak">Sempajak</option>
-                    <option value="M Yamin">M Yamin</option>
-                </select>
-                <input type="number" id="k-wa" required placeholder="No WA" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
-                <input type="number" id="k-gaji" required placeholder="Gaji Harian" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
-                <input type="email" id="k-email" placeholder="Email (Ops)" class="w-full border border-gray-200 rounded-xl p-3 text-sm bg-gray-50 focus:outline-none">
-                <button type="submit" id="btn-save-karyawan" class="w-full bg-red-600 text-white py-3.5 rounded-xl font-bold shadow mt-2">Simpan</button>
+                
+                <div class="space-y-1">
+                    <label class="block text-xs font-bold text-gray-700">Nama Lengkap <span class="text-red-500">*</span></label>
+                    <input type="text" id="k-nama" required placeholder="Nama Lengkap Karyawan" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                </div>
+
+                <div class="grid grid-cols-2 gap-2.5">
+                    <div class="space-y-1">
+                        <label class="block text-xs font-bold text-gray-700">Jenis Kelamin <span class="text-red-500">*</span></label>
+                        <select id="k-gender" required class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600 font-semibold">
+                            <option value="Laki-laki">Laki-laki</option>
+                            <option value="Perempuan">Perempuan</option>
+                        </select>
+                    </div>
+                    <div class="space-y-1">
+                        <label class="block text-xs font-bold text-gray-700">Jabatan <span class="text-red-500">*</span></label>
+                        <select id="k-jabatan" required class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600 font-semibold">
+                            <option value="Kasir">Kasir</option>
+                            <option value="Jaga Outlet">Jaga Outlet</option>
+                            <option value="Driver">Driver</option>
+                            <option value="Dapur Bubur">Dapur Bubur</option>
+                            <option value="Dapur Kue">Dapur Kue</option>
+                            <option value="Staf Operasional">Staf Operasional</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Form Penempatan Karyawan -->
+                <div class="space-y-1.5 bg-red-50/70 p-3.5 rounded-2xl border border-red-200">
+                    <div class="flex items-center justify-between">
+                        <label class="block text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                            <i class="fas fa-location-dot text-red-600"></i>
+                            <span>Penempatan Karyawan</span>
+                            <span class="text-red-500">*</span>
+                        </label>
+                        <span class="text-[10px] text-red-700 font-black bg-white px-2 py-0.5 rounded-full border border-red-200 shadow-2xs" id="k-penempatan-preview-label">Sempajak</span>
+                    </div>
+                    <p class="text-[10px] text-gray-500 leading-tight">Pilih lokasi penempatan kerja (cabang outlet, dapur, gudang, dll.):</p>
+                    <select id="k-penempatan" onchange="onKaryawanPenempatanSelect(this.value)" required class="w-full border border-gray-200 rounded-xl p-2.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-red-600 font-bold text-gray-800 cursor-pointer">
+                        <!-- Populated dynamically with registered branches and departments -->
+                    </select>
+                    <input type="text" id="k-penempatan-custom" placeholder="Ketik nama lokasi penempatan baru..." class="w-full border border-gray-200 rounded-xl p-2.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-red-600 hidden-view font-semibold">
+                    <input type="hidden" id="k-cabang" value="Sempajak">
+                </div>
+
+                <div class="grid grid-cols-2 gap-2.5">
+                    <div class="space-y-1">
+                        <label class="block text-xs font-bold text-gray-700">No. WhatsApp <span class="text-red-500">*</span></label>
+                        <input type="tel" id="k-wa" required placeholder="08123456789" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                    </div>
+                    <div class="space-y-1">
+                        <label class="block text-xs font-bold text-gray-700">Gaji Harian (Rp) <span class="text-red-500">*</span></label>
+                        <input type="number" id="k-gaji" required placeholder="Contoh: 90000" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600 font-bold">
+                    </div>
+                </div>
+
+                <div class="space-y-1">
+                    <label class="block text-xs font-bold text-gray-700">Email (Opsional)</label>
+                    <input type="email" id="k-email" placeholder="karyawan@example.com" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                </div>
+
+                <button type="submit" id="btn-save-karyawan" class="w-full bg-red-600 hover:bg-red-700 text-white py-3.5 rounded-2xl font-black text-xs shadow-md shadow-red-600/20 active:scale-95 transition flex items-center justify-center gap-2 mt-2 cursor-pointer">
+                    <i class="fas fa-check-circle"></i>
+                    <span>Simpan Data Karyawan</span>
+                </button>
             </form>
         </div>
     </div>
@@ -1764,7 +1836,7 @@
         </div>
     </div>
 
-    <!-- MODAL PENDAFTARAN AKUN BARU (MULTI-STEP) -->
+    <!-- MODAL PENDAFTARAN AKUN BARU (DENGAN KODE AUTENTIKASI ADMIN) -->
     <div id="modal-register" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden-view flex items-center justify-center p-4">
         <div class="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-gray-100 flex flex-col max-h-[92vh]">
             <!-- Header Modal -->
@@ -1773,252 +1845,85 @@
                     <div class="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center"><i class="fas fa-user-plus text-sm"></i></div>
                     <div>
                         <h3 class="font-black text-sm text-white leading-tight">Buat Akun Baru</h3>
-                        <p class="text-[10px] text-red-100 font-medium">Sistem Registrasi & Verifikasi Istana Bubur</p>
+                        <p class="text-[10px] text-red-100 font-medium">Registrasi Akun dengan Kode Autentikasi Admin</p>
                     </div>
                 </div>
-                <button type="button" onclick="closeModal('modal-register')" class="w-8 h-8 rounded-xl bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition"><i class="fas fa-times text-sm"></i></button>
+                <button type="button" onclick="closeModal('modal-register')" class="w-8 h-8 rounded-xl bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition cursor-pointer"><i class="fas fa-times text-sm"></i></button>
             </div>
 
-            <!-- Stepper Progress Bar -->
-            <div class="bg-gray-50 px-6 py-3 border-b border-gray-100 flex items-center justify-between shrink-0">
-                <div class="flex items-center gap-2">
-                    <span id="step-badge-1" class="w-6 h-6 rounded-full bg-red-600 text-white font-bold text-xs flex items-center justify-center">1</span>
-                    <span id="step-label-1" class="text-xs font-bold text-gray-800">Data Diri</span>
-                </div>
-                <div class="flex-1 h-0.5 bg-gray-200 mx-2" id="step-line-1"></div>
-                <div class="flex items-center gap-2">
-                    <span id="step-badge-2" class="w-6 h-6 rounded-full bg-gray-200 text-gray-500 font-bold text-xs flex items-center justify-center">2</span>
-                    <span id="step-label-2" class="text-xs font-bold text-gray-400">Kode OTP</span>
-                </div>
-                <div class="flex-1 h-0.5 bg-gray-200 mx-2" id="step-line-2"></div>
-                <div class="flex items-center gap-2">
-                    <span id="step-badge-3" class="w-6 h-6 rounded-full bg-gray-200 text-gray-500 font-bold text-xs flex items-center justify-center">3</span>
-                    <span id="step-label-3" class="text-xs font-bold text-gray-400">Kode Auth</span>
-                </div>
-            </div>
-
-            <!-- Body Steps -->
-            <div class="p-6 overflow-y-auto hide-scrollbar flex-1 space-y-4">
-                <!-- STEP 1: FORM DATA DIRI -->
-                <div id="register-step-1" class="space-y-3.5">
-                    <div class="text-left">
-                        <p class="text-xs text-gray-500 font-medium">Lengkapi formulir di bawah ini. Pastikan email dan nomor WhatsApp aktif untuk menerima kode verifikasi.</p>
-                    </div>
-
-                    <div class="space-y-1 text-left">
-                        <label class="block text-xs font-bold text-gray-700">Nama Lengkap <span class="text-red-500">*</span></label>
-                        <input type="text" id="reg-nama" required placeholder="Contoh: Budi Santoso" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-2.5 text-left">
-                        <div class="space-y-1">
-                            <label class="block text-xs font-bold text-gray-700">Username <span class="text-red-500">*</span></label>
-                            <input type="text" id="reg-user" required placeholder="budi_kasir" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
-                        </div>
-                        <div class="space-y-1">
-                            <label class="block text-xs font-bold text-gray-700">Role Akun <span class="text-red-500">*</span></label>
-                            <select id="reg-role" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600 font-bold">
-                                <option value="Kasir">🏪 Kasir Cabang</option>
-                                <option value="Admin">👑 Admin Pusat</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="space-y-1 text-left">
-                        <label class="block text-xs font-bold text-gray-700">Email Aktif (Menerima Kode Referral) <span class="text-red-500">*</span></label>
-                        <div class="relative">
-                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><i class="fas fa-envelope text-gray-400 text-xs"></i></div>
-                            <input type="email" id="reg-email" required placeholder="budi@example.com" class="w-full border border-gray-200 rounded-xl py-3 pl-9 pr-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
-                        </div>
-                    </div>
-
-                    <div class="space-y-1 text-left">
-                        <label class="block text-xs font-bold text-gray-700">No. WhatsApp <span class="text-red-500">*</span></label>
-                        <input type="tel" id="reg-wa" required placeholder="081234567890" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
-                    </div>
-
-                    <!-- Penempatan Cabang dengan Tombol Sempajak, M Yamin, dan Tambah Cabang (+) -->
-                    <div class="space-y-1.5 text-left bg-gray-50/80 p-3 rounded-2xl border border-gray-200">
-                        <div class="flex items-center justify-between">
-                            <label class="block text-xs font-bold text-gray-700 flex items-center gap-1.5">
-                                <i class="fas fa-store text-red-600"></i>
-                                <span>Penempatan Cabang</span>
-                                <span class="text-red-500">*</span>
-                            </label>
-                            <span class="text-[10px] text-red-600 font-extrabold bg-red-50 border border-red-200 px-2 py-0.5 rounded-full" id="reg-selected-cabang-label">Sempajak</span>
-                        </div>
-                        <p class="text-[10px] text-gray-500">Pilih cabang yang ditentukan atau tambahkan cabang baru dengan tombol (+):</p>
-                        <div class="flex items-center gap-1.5 flex-wrap pt-0.5" id="register-branch-chips">
-                            <!-- Injected dynamically: Sempajak, M Yamin, + button -->
-                        </div>
-                        <input type="text" id="reg-cabang" value="Sempajak" required placeholder="Nama cabang terpilih..." class="w-full border border-gray-200 rounded-xl p-2.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-red-600 font-bold text-gray-800">
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-2.5 text-left">
-                        <div class="space-y-1">
-                            <label class="block text-xs font-bold text-gray-700">Password <span class="text-red-500">*</span></label>
-                            <input type="password" id="reg-pass" required placeholder="Min 6 karakter" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
-                        </div>
-                        <div class="space-y-1">
-                            <label class="block text-xs font-bold text-gray-700">Ulangi Password <span class="text-red-500">*</span></label>
-                            <input type="password" id="reg-pass-conf" required placeholder="Ketik ulang password" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
-                        </div>
-                    </div>
-
-                    <div class="space-y-1.5 text-left bg-gray-50/80 p-3 rounded-xl border border-gray-200">
-                        <label class="block text-xs font-bold text-gray-700">Metode Pengiriman Kode OTP <span class="text-red-500">*</span></label>
-                        <div class="grid grid-cols-3 gap-2">
-                            <label class="flex items-center gap-1.5 p-2 rounded-xl bg-white border border-emerald-500/50 cursor-pointer text-xs font-bold text-gray-800 hover:bg-emerald-50/40 transition">
-                                <input type="radio" name="reg-otp-method" value="both" checked class="text-emerald-600 focus:ring-emerald-500">
-                                <span class="flex items-center gap-1 text-[11px]"><i class="fas fa-paper-plane text-emerald-600"></i> Email & WA</span>
-                            </label>
-                            <label class="flex items-center gap-1.5 p-2 rounded-xl bg-white border border-gray-200 cursor-pointer text-xs font-bold text-gray-800 hover:bg-emerald-50/40 transition">
-                                <input type="radio" name="reg-otp-method" value="email" class="text-emerald-600 focus:ring-emerald-500">
-                                <span class="flex items-center gap-1 text-[11px]"><i class="fas fa-envelope text-red-600"></i> Hanya Email</span>
-                            </label>
-                            <label class="flex items-center gap-1.5 p-2 rounded-xl bg-white border border-gray-200 cursor-pointer text-xs font-bold text-gray-800 hover:bg-emerald-50/40 transition">
-                                <input type="radio" name="reg-otp-method" value="whatsapp" class="text-emerald-600 focus:ring-emerald-500">
-                                <span class="flex items-center gap-1 text-[11px]"><i class="fab fa-whatsapp text-emerald-600"></i> WhatsApp</span>
-                            </label>
-                        </div>
-                        <p class="text-[10px] text-gray-500">Kode OTP 6-digit dikirimkan secara instan ke Email pendaftar.</p>
-                    </div>
-
-                    <button type="button" onclick="submitRegisterStep1()" id="btn-submit-step1" class="w-full bg-red-600 hover:bg-red-700 text-white py-3.5 rounded-2xl font-black text-xs shadow-md shadow-red-600/20 active:scale-95 transition flex items-center justify-center gap-2 mt-2">
-                        <i class="fas fa-paper-plane"></i>
-                        <span>Lanjut & Minta Kode OTP Verifikasi</span>
-                    </button>
+            <!-- Body Form -->
+            <div class="p-6 overflow-y-auto hide-scrollbar flex-1 space-y-3.5">
+                <div class="text-left">
+                    <p class="text-xs text-gray-500 font-medium">Lengkapi data pendaftaran di bawah ini dan masukkan <strong>Kode Autentikasi</strong> resmi dari Admin/Owner Pusat.</p>
                 </div>
 
-                <!-- STEP 2: VERIFIKASI KODE OTP (EMAIL & WHATSAPP) -->
-                <div id="register-step-2" class="hidden-view space-y-4 text-center">
-                    <div class="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center text-2xl shadow-inner">
-                        <i class="fas fa-shield-halved"></i>
-                    </div>
-                    <div class="space-y-1 text-center">
-                        <h4 class="text-sm font-extrabold text-gray-900">Verifikasi Kode OTP Pendaftaran</h4>
-                        <p class="text-xs text-gray-500 max-w-xs mx-auto">
-                            Kode OTP 6-digit dikirimkan ke kontak pendaftar yang didaftarkan:
-                        </p>
-                    </div>
+                <div class="space-y-1 text-left">
+                    <label class="block text-xs font-bold text-gray-700">Nama Lengkap <span class="text-red-500">*</span></label>
+                    <input type="text" id="reg-nama" required placeholder="Contoh: Budi Santoso" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                </div>
 
-                    <!-- Kartu Kontak Penerima OTP -->
-                    <div class="bg-gray-50 border border-gray-200 rounded-2xl p-3.5 text-left text-xs space-y-2 shadow-xs">
-                        <div class="flex items-center justify-between bg-white p-2.5 rounded-xl border border-gray-100">
-                            <div class="flex items-center gap-2 min-w-0">
-                                <div class="w-7 h-7 rounded-lg bg-red-100 text-red-600 flex items-center justify-center text-xs shrink-0">
-                                    <i class="fas fa-envelope"></i>
-                                </div>
-                                <div class="truncate">
-                                    <p class="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">Email Penerima</p>
-                                    <p id="reg-display-email" class="text-xs font-bold text-gray-800 font-mono truncate">email@anda.com</p>
-                                </div>
-                            </div>
-                            <span id="reg-email-badge" class="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold shrink-0">Email Terkirim</span>
-                        </div>
-
-                        <div class="flex items-center justify-between bg-white p-2.5 rounded-xl border border-gray-100">
-                            <div class="flex items-center gap-2 min-w-0">
-                                <div class="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center text-sm shrink-0">
-                                    <i class="fab fa-whatsapp"></i>
-                                </div>
-                                <div class="truncate">
-                                    <p class="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">Nomor WhatsApp</p>
-                                    <p id="reg-display-wa" class="text-xs font-bold text-gray-800 font-mono truncate">081234567890</p>
-                                </div>
-                            </div>
-                            <span id="reg-wa-badge" class="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold shrink-0">WhatsApp Siap</span>
-                        </div>
+                <div class="grid grid-cols-2 gap-2.5 text-left">
+                    <div class="space-y-1">
+                        <label class="block text-xs font-bold text-gray-700">Username <span class="text-red-500">*</span></label>
+                        <input type="text" id="reg-user" required placeholder="budi_kasir" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
                     </div>
-
-                    <!-- Tombol Cepat Pengiriman WhatsApp & Email -->
-                    <div class="space-y-2">
-                        <div class="grid grid-cols-2 gap-2">
-                            <button type="button" onclick="openGmailApp()" class="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition">
-                                <i class="fab fa-google text-red-600"></i>
-                                <span>Buka Gmail</span>
-                            </button>
-                            <button type="button" onclick="resendReferralCode()" id="btn-resend-referral" class="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition">
-                                <i class="fas fa-rotate text-blue-600"></i>
-                                <span>Kirim Ulang Email</span>
-                            </button>
-                        </div>
-                        <button type="button" onclick="sendReferralViaWhatsApp()" id="btn-reg-wa-open" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 px-3 rounded-xl font-bold text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition flex items-center justify-center gap-2">
-                            <i class="fab fa-whatsapp text-sm"></i>
-                            <span>Buka / Kirim OTP via WhatsApp (<span id="reg-btn-wa-phone">WA</span>)</span>
-                        </button>
-                    </div>
-
-                    <div id="reg-email-notice" class="text-[11px] text-gray-600 leading-relaxed bg-amber-50/90 p-3 rounded-xl border border-amber-200/80 text-left space-y-1">
-                        <p class="font-bold text-amber-900 flex items-center gap-1.5">
-                            <i class="fas fa-circle-info text-amber-600"></i> Belum Menerima Kode di Kotak Masuk?
-                        </p>
-                        <p class="text-[11px] text-gray-600">
-                            1. Periksa folder <strong>Spam</strong> atau <strong>Promosi</strong> di email Anda.<br>
-                            2. Klik tombol <strong>"Kirim Ulang Email"</strong> di atas jika dalam 1 menit belum masuk.<br>
-                            3. Anda juga dapat menekan <strong>"Buka via WhatsApp"</strong> untuk menerima kode instan di WA.
-                        </p>
-                    </div>
-
-                    <div class="space-y-2 text-left">
-                        <label class="block text-xs font-bold text-gray-700 text-center">Masukkan 6 Digit Kode OTP Verifikasi</label>
-                        <input type="text" id="reg-input-referral" maxlength="6" placeholder="000000" class="w-full text-center tracking-[0.4em] font-mono text-xl font-black border-2 border-emerald-200 rounded-2xl p-3.5 bg-gray-50 focus:outline-none focus:border-emerald-600 focus:bg-white uppercase">
-                        <div class="flex items-center justify-between text-xs pt-1 px-1">
-                            <span class="text-gray-500 font-medium">Masa berlaku: <span id="reg-timer" class="font-bold text-red-600">10:00</span></span>
-                            <span class="text-[11px] text-gray-400">Kode berlaku 10 menit</span>
-                        </div>
-                    </div>
-
-                    <div class="flex items-center gap-2 pt-2">
-                        <button type="button" onclick="backToRegisterStep1()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-2xl font-bold text-xs transition">Kembali</button>
-                        <button type="button" onclick="verifyReferralStep2()" id="btn-verify-referral" class="flex-2 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-2xl font-bold text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition flex items-center justify-center gap-2">
-                            <span>Verifikasi OTP</span>
-                            <i class="fas fa-arrow-right text-[10px]"></i>
-                        </button>
+                    <div class="space-y-1">
+                        <label class="block text-xs font-bold text-gray-700">Role Akun <span class="text-red-500">*</span></label>
+                        <select id="reg-role" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600 font-bold">
+                            <option value="Kasir">🏪 Kasir Cabang</option>
+                            <option value="Admin">👑 Admin Pusat</option>
+                        </select>
                     </div>
                 </div>
 
-                <!-- STEP 3: INPUT KODE AUTENTIKASI ADMIN -->
-                <div id="register-step-3" class="hidden-view space-y-4 text-center">
-                    <div class="w-14 h-14 rounded-full bg-amber-50 text-amber-600 mx-auto flex items-center justify-center text-2xl shadow-inner">
-                        <i class="fas fa-shield-halved"></i>
-                    </div>
-                    <div class="space-y-1 text-center">
-                        <h4 class="text-sm font-extrabold text-gray-900">Masukkan Kode Autentikasi Admin</h4>
-                        <p class="text-xs text-gray-500 max-w-xs mx-auto">
-                            Kode referral email terverifikasi. Masukkan <strong>Kode Autentikasi Resmi</strong> yang hanya diketahui oleh Admin/Owner Pusat.
-                        </p>
-                    </div>
-
-                    <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-left text-xs space-y-2">
-                        <div class="flex items-center gap-2 text-amber-900 font-extrabold">
-                            <i class="fas fa-lock text-amber-600 text-sm"></i>
-                            <span>Otorisasi Khusus Admin Pusat</span>
-                        </div>
-                        <p class="text-[11px] text-amber-800 leading-relaxed">
-                            Kode autentikasi ini bersifat rahasia dan hanya dimiliki oleh <strong>Admin / Owner Pusat Istana Bubur</strong> demi mencegah pendaftaran tidak sah.
-                        </p>
-                        <p class="text-[11px] text-gray-600 font-medium">
-                            <i class="fas fa-comment-dots text-amber-600 mr-1"></i> Hubungi Admin Pusat untuk mendapatkan kode autentikasi resmi Anda.
-                        </p>
-                    </div>
-
-                    <div class="space-y-1.5 text-left">
-                        <label class="block text-xs font-bold text-gray-700">Kode Autentikasi Admin <span class="text-red-500">*</span></label>
-                        <div class="relative">
-                            <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none"><i class="fas fa-key text-gray-400 text-xs"></i></div>
-                            <input type="text" id="reg-auth-code" required placeholder="Masukkan kode dari Admin Pusat" class="w-full border-2 border-gray-200 rounded-2xl py-3.5 pl-10 pr-4 text-xs font-mono font-bold bg-gray-50 focus:outline-none focus:border-amber-600 uppercase">
-                        </div>
-                    </div>
-
-                    <div class="flex items-center gap-2 pt-2">
-                        <button type="button" onclick="backToRegisterStep2()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-2xl font-bold text-xs transition">Kembali</button>
-                        <button type="button" onclick="activateAccountStep3()" id="btn-activate-account" class="flex-2 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-2xl font-bold text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition flex items-center justify-center gap-1.5">
-                            <i class="fas fa-check-circle"></i>
-                            <span>Aktivasi Akun Sekarang</span>
-                        </button>
+                <div class="space-y-1 text-left">
+                    <label class="block text-xs font-bold text-gray-700">Email Aktif <span class="text-red-500">*</span></label>
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><i class="fas fa-envelope text-gray-400 text-xs"></i></div>
+                        <input type="email" id="reg-email" required placeholder="budi@example.com" class="w-full border border-gray-200 rounded-xl py-3 pl-9 pr-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
                     </div>
                 </div>
+
+                <div class="space-y-1 text-left">
+                    <label class="block text-xs font-bold text-gray-700">No. WhatsApp <span class="text-red-500">*</span></label>
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><i class="fab fa-whatsapp text-gray-400 text-xs"></i></div>
+                        <input type="tel" id="reg-wa" required placeholder="081234567890" class="w-full border border-gray-200 rounded-xl py-3 pl-9 pr-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2.5 text-left">
+                    <div class="space-y-1">
+                        <label class="block text-xs font-bold text-gray-700">Password <span class="text-red-500">*</span></label>
+                        <input type="password" id="reg-pass" required placeholder="Min 6 karakter" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                    </div>
+                    <div class="space-y-1">
+                        <label class="block text-xs font-bold text-gray-700">Ulangi Password <span class="text-red-500">*</span></label>
+                        <input type="password" id="reg-pass-conf" required placeholder="Ketik ulang password" class="w-full border border-gray-200 rounded-xl p-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                    </div>
+                </div>
+
+                <!-- Input Kode Autentikasi Admin -->
+                <div class="space-y-1.5 text-left bg-amber-50/80 p-3.5 rounded-2xl border border-amber-200/90">
+                    <div class="flex items-center justify-between">
+                        <label class="block text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                            <i class="fas fa-shield-halved text-amber-600"></i>
+                            <span>Kode Autentikasi Admin</span>
+                            <span class="text-red-500">*</span>
+                        </label>
+                        <span class="text-[10px] text-amber-700 font-extrabold bg-amber-100/80 px-2 py-0.5 rounded-full">Otorisasi Resmi</span>
+                    </div>
+                    <p class="text-[10px] text-amber-800 leading-tight">Masukkan kode rahasia dari Admin/Owner Pusat untuk membuat akun baru tanpa verifikasi OTP.</p>
+                    <div class="relative pt-1">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none pt-1"><i class="fas fa-key text-amber-600 text-xs"></i></div>
+                        <input type="text" id="reg-auth-code" required placeholder="Masukkan Kode Authen..." class="w-full border-2 border-amber-300 rounded-xl py-2.5 pl-9 pr-3 text-xs font-mono font-bold bg-white focus:outline-none focus:border-amber-600 focus:ring-2 focus:ring-amber-400/30 uppercase text-gray-800">
+                    </div>
+                </div>
+
+                <button type="button" onclick="submitRegisterDirect()" id="btn-submit-register" class="w-full bg-red-600 hover:bg-red-700 text-white py-3.5 rounded-2xl font-black text-xs shadow-md shadow-red-600/20 active:scale-95 transition flex items-center justify-center gap-2 mt-2 cursor-pointer">
+                    <i class="fas fa-user-plus"></i>
+                    <span>Buat Akun Baru Sekarang</span>
+                </button>
             </div>
         </div>
     </div>

@@ -465,7 +465,9 @@ export async function firestoreGetKaryawan() {
       'Nama': data.nama || '',
       'Jenis Kelamin': data.gender || 'Laki-laki',
       'Jabatan': data.posisi || '-',
-      'Lokasi Cabang': data.cabang || 'Pusat',
+      'Penempatan': data.penempatan || data.cabang || 'Pusat',
+      'Lokasi Cabang': data.penempatan || data.cabang || 'Pusat',
+      'Cabang': data.penempatan || data.cabang || 'Pusat',
       'No WA': data.noWa || '',
       'Gaji Harian': Number(data.gajiHarian || 0),
       'Email': data.email || '',
@@ -481,12 +483,15 @@ export async function firestoreSaveKaryawan(kData: any) {
     docId = 'KRY-' + Math.floor(100 + Math.random() * 900);
   }
 
+  const penempatanVal = kData['Penempatan'] || kData.penempatan || kData['Lokasi Cabang'] || kData.cabang || 'Pusat';
+
   const payload = {
     id: docId,
     nama: kData['Nama'] || kData.nama || '',
     gender: kData['Jenis Kelamin'] || kData.gender || 'Laki-laki',
     posisi: kData['Jabatan'] || kData.posisi || '-',
-    cabang: kData['Lokasi Cabang'] || kData.cabang || 'Pusat',
+    penempatan: penempatanVal,
+    cabang: penempatanVal,
     noWa: kData['No WA'] || kData.noWa || '',
     gajiHarian: Number(kData['Gaji Harian'] || kData.gajiHarian || 0),
     email: kData['Email'] || kData.email || ''
