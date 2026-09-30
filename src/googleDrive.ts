@@ -337,7 +337,65 @@ export async function uploadPdfToGoogleDrive(params: {
       });
     }
 
-    // 1. ATTEMPT DIRECT GOOGLE APPS SCRIPT WEBHOOK (Zero Login, works in Android APK, Web, iOS)
+    // 1. ATTEMPT SERVER PROXY ENDPOINTS FIRST (Fastest, zero-login, handles GAS redirects without CORS issues)
+    const proxyCandidates: string[] = [];
+    if (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin !== 'null') {
+      proxyCandidates.push(`${window.location.origin}/api/gdrive/upload`);
+    }
+    if (typeof (window as any).getApiEndpoint === 'function') {
+      try {
+        const ep = (window as any).getApiEndpoint('/api/gdrive/upload');
+        if (ep && !proxyCandidates.includes(ep)) proxyCandidates.push(ep);
+      } catch (_) {}
+    }
+    if (!proxyCandidates.includes('/api/gdrive/upload')) {
+      proxyCandidates.push('/api/gdrive/upload');
+    }
+    // Explicit public cloud endpoints for Android APK & remote environments
+    const devUrl = 'https://ais-dev-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app/api/gdrive/upload';
+    const preUrl = 'https://ais-pre-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app/api/gdrive/upload';
+    if (!proxyCandidates.includes(devUrl)) proxyCandidates.push(devUrl);
+    if (!proxyCandidates.includes(preUrl)) proxyCandidates.push(preUrl);
+
+    for (const url of proxyCandidates) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 25000);
+        const proxyResp = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            filename: params.filename,
+            base64Pdf: base64Str,
+            folderId: folderId
+          }),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (proxyResp.ok) {
+          const data = await proxyResp.json();
+          if (data && data.success && data.fileId && data.downloadUrl && !data.downloadUrl.includes('/drive/folders/')) {
+            const finalId = data.fileId;
+            const finalDownload = data.downloadUrl || `https://drive.google.com/uc?export=download&id=${finalId}`;
+            const finalView = data.viewUrl || `https://drive.google.com/file/d/${finalId}/view`;
+            return {
+              fileId: finalId,
+              viewUrl: finalView,
+              downloadUrl: finalDownload,
+              webContentLink: finalDownload
+            };
+          }
+        }
+      } catch (proxyErr) {
+        console.warn(`[Google Drive] Server proxy endpoint ${url} failed:`, proxyErr);
+      }
+    }
+
+    // 2. ATTEMPT DIRECT GOOGLE APPS SCRIPT WEBHOOK (Secondary fallback)
     const directScriptUrl = 'https://script.google.com/macros/s/AKfycbxcAfUOAHKDzEthKGDSEFuIWEtk_y0fecBz7U-kUKS39p6WQPR5BaXt_H1TcIoTIcUH/exec';
     try {
       const gasResp = await fetch(directScriptUrl, {
@@ -354,8 +412,8 @@ export async function uploadPdfToGoogleDrive(params: {
         const gasText = await gasResp.text();
         let gasData: any = null;
         try { gasData = JSON.parse(gasText); } catch (_) {}
-        if (gasData && gasData.success) {
-          const finalId = gasData.fileId || ('gdrive-' + Date.now());
+        if (gasData && gasData.success && gasData.fileId) {
+          const finalId = gasData.fileId;
           const finalDownload = gasData.downloadUrl || `https://drive.google.com/uc?export=download&id=${finalId}`;
           const finalView = gasData.url || `https://drive.google.com/file/d/${finalId}/view`;
           return {
@@ -370,79 +428,15 @@ export async function uploadPdfToGoogleDrive(params: {
       console.warn('[Google Drive] Direct GAS Webhook attempt warning:', gasErr);
     }
 
-    // 2. ATTEMPT SERVER PROXY ENDPOINTS (FOR DEV / PREVIEW / LOCALHOST / APK)
-    const proxyCandidates: string[] = [];
-    if (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin !== 'null') {
-      proxyCandidates.push(`${window.location.origin}/api/gdrive/upload`);
-    }
-    if (typeof (window as any).getApiEndpoint === 'function') {
-      try {
-        const ep = (window as any).getApiEndpoint('/api/gdrive/upload');
-        if (ep && !proxyCandidates.includes(ep)) proxyCandidates.push(ep);
-      } catch (_) {}
-    }
-    // Also add explicit public cloud URLs for APK Android
-    const devUrl = 'https://ais-dev-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app/api/gdrive/upload';
-    const preUrl = 'https://ais-pre-ogj3dc3qbsd5dfa3r23vou-21312793176.asia-southeast1.run.app/api/gdrive/upload';
-    if (!proxyCandidates.includes(devUrl)) proxyCandidates.push(devUrl);
-    if (!proxyCandidates.includes(preUrl)) proxyCandidates.push(preUrl);
-    if (!proxyCandidates.includes('/api/gdrive/upload')) {
-      proxyCandidates.push('/api/gdrive/upload');
-    }
-
-    for (const url of proxyCandidates) {
-      try {
-        const proxyResp = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({
-            filename: params.filename,
-            base64Pdf: base64Str,
-            folderId: folderId
-          })
-        });
-
-        if (proxyResp.ok) {
-          const data = await proxyResp.json();
-          if (data && data.success && data.downloadUrl) {
-            return {
-              fileId: data.fileId,
-              viewUrl: data.viewUrl || data.downloadUrl,
-              downloadUrl: data.downloadUrl,
-              webContentLink: data.webContentLink || data.downloadUrl
-            };
-          }
-        }
-      } catch (proxyErr) {
-        console.warn(`[Google Drive] Server proxy endpoint ${url} failed:`, proxyErr);
-      }
-    }
-
-    // 3. Fallback: Google Drive Folder URL (Never Vercel ?doc=)
-    const finalFallbackUrl = `https://drive.google.com/drive/folders/${folderId}?usp=sharing`;
-    return {
-      fileId: 'gdrive-file-fallback',
-      viewUrl: finalFallbackUrl,
-      downloadUrl: finalFallbackUrl,
-      webContentLink: finalFallbackUrl
-    };
+    throw new Error('Gagal mengunggah file PDF melalui server webhook Google Drive');
   };
 
-  // Always try direct GAS or server proxy upload first (Uses automated Webhook with zero login)
+  // Try automated Webhook (Proxy/GAS) first
   try {
     return await tryDirectOrProxyUpload();
   } catch (proxyErr: any) {
     if (!token) {
-      const fallbackUrl = `https://drive.google.com/drive/folders/${folderId}?usp=sharing`;
-      return {
-        fileId: 'gdrive-file-fallback',
-        viewUrl: fallbackUrl,
-        downloadUrl: fallbackUrl,
-        webContentLink: fallbackUrl
-      };
+      throw new Error(proxyErr?.message || 'Gagal mengunggah file PDF ke folder Google Drive.');
     }
   }
 

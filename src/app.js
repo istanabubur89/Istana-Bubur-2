@@ -92,16 +92,21 @@ function isValidGoogleDrivePdfLink(url) {
     if (!url || typeof url !== 'string') return false;
     const trimmed = url.trim();
     if (!trimmed || trimmed === '#' || trimmed === 'null' || trimmed === 'undefined') return false;
-    // Exclude generic folder view URL (it is not a direct file link)
+    // Strictly reject folder URLs
     if (trimmed.includes('/drive/folders/')) return false;
+    if (trimmed.includes('gdrive-file-fallback')) return false;
     // Strictly reject Vercel, localhost, and query document links (?doc=)
     if (trimmed.includes('?doc=') || trimmed.includes('/view-doc/') || trimmed.includes('istana-bubur-2.vercel.app')) return false;
     // Must be an authentic Google Drive URL
     const isGdrive = trimmed.includes('drive.google.com') || trimmed.includes('docs.google.com') || trimmed.includes('googleusercontent.com');
     if (!isGdrive) return false;
+    // Must contain a direct file reference
+    const hasFileRef = trimmed.includes('/file/d/') || trimmed.includes('id=') || trimmed.includes('export=download') || trimmed.includes('/uc?');
+    if (!hasFileRef) return false;
     return trimmed.startsWith('http://') || trimmed.startsWith('https://');
 }
 const isValidPdfLink = isValidGoogleDrivePdfLink;
+const isGoogleDriveFileLink = isValidGoogleDrivePdfLink;
 
 function getPdfLinkFromPersistentCache(key) {
     if (!key || typeof localStorage === 'undefined') return null;
@@ -5676,10 +5681,9 @@ async function openDocPdfOutsideApp(options) {
 
 function generateReceiptWhatsAppMessage(trx, downloadLink = '') {
     const itemsText = (trx.items || []).map(i => `• ${i.nama} (${i.qty}x @Rp ${formatRupiah(i.harga)}) = Rp ${formatRupiah(i.qty * i.harga)}`).join('\n');
-    const defaultFolder = `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
     let rawCandidate = downloadLink || trx.linkPdf || trx.driveDownloadUrl || trx['Link PDF'] || '';
-    const link = isValidGoogleDrivePdfLink(rawCandidate) ? rawCandidate.trim() : defaultFolder;
-    const linkText = `📥 *Download File Dokumen PDF (Google Drive):*\n${link}\n===============================`;
+    const link = isValidGoogleDrivePdfLink(rawCandidate) ? rawCandidate.trim() : '';
+    const linkText = link ? `📥 *Download File Dokumen PDF (Google Drive):*\n${link}\n===============================` : '';
 
     return `*NOTA TRANSAKSI - ISTANA BUBUR*
 ===============================
@@ -5840,6 +5844,10 @@ async function kirimWhatsApp(data = null) {
         let driveUrl = getExistingTrxPdfLink(trx);
         if (!driveUrl) {
             driveUrl = await autoUploadTrxToGoogleDrive(trx);
+        }
+
+        if (!isGoogleDriveFileLink(driveUrl)) {
+            throw new Error('File PDF nota sedang diunggah ke Google Drive. Silakan coba klik tombol WA kembali dalam beberapa detik.');
         }
 
         // Keep local object updated with the single link
@@ -6581,10 +6589,9 @@ function generateSlipGajiWhatsAppMessage(t, downloadLink = '') {
     const harian = Number(t['Gaji Harian']) || 0;
     const hari = Number(t['Hari Masuk']) || 0;
     const pokok = (harian && hari) ? (harian * hari) : (totalGaji - bonus + potongan);
-    const defaultFolder = `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
     let rawCandidate = downloadLink || t['Link PDF'] || t.linkPdf || t.driveDownloadUrl || '';
-    const link = isValidGoogleDrivePdfLink(rawCandidate) ? rawCandidate.trim() : defaultFolder;
-    const linkText = `📥 *Download File Dokumen Slip Gaji (Google Drive):*\n${link}\n================================`;
+    const link = isValidGoogleDrivePdfLink(rawCandidate) ? rawCandidate.trim() : '';
+    const linkText = link ? `📥 *Download File Dokumen Slip Gaji (Google Drive):*\n${link}\n================================` : '';
 
     return `*SLIP GAJI KARYAWAN - ISTANA BUBUR*
 ================================
@@ -6667,6 +6674,10 @@ async function kirimWaSlipGajiDirect(t, triggerBtn = null) {
         let driveUrl = getExistingSlipPdfLink(t);
         if (!driveUrl) {
             driveUrl = await autoUploadSlipToGoogleDrive(t);
+        }
+
+        if (!isGoogleDriveFileLink(driveUrl)) {
+            throw new Error('File PDF slip gaji sedang diunggah ke Google Drive. Silakan coba klik tombol WA kembali dalam beberapa detik.');
         }
 
         // Keep local object updated with the single link
@@ -7536,40 +7547,15 @@ async function simpanTrxKeGoogleDrive(idTrx) {
         return;
     }
 
-    if (!isGoogleDriveConnected()) {
-        await syncTokenWithServer();
-        if (!isGoogleDriveConnected()) {
-            try {
-                await handleGoogleSignInClick();
-            } catch (authErr) {
-                console.warn('Otorisasi Google Drive dibatalkan/gagal:', authErr);
-            }
-            if (!isGoogleDriveConnected()) return;
-        }
-    }
-
     showToast('Mengunggah nota ke Google Drive...', 'info');
     try {
-        const cleanTrxId = (trx.id || trx['ID Transaksi'] || Date.now()).toString().replace(/[^a-zA-Z0-9._-]/g, '_');
-        const filename = `Nota_${cleanTrxId}.pdf`;
-        const htmlContent = generateReceiptHTML(trx);
-        const pdfBlob = await createPdfBlobFromHtml(htmlContent, filename, true);
-        const driveRes = await uploadPdfToGoogleDrive({
-            filename,
-            blob: pdfBlob,
-            folderId: getTargetFolderId()
-        });
-
-        trx.linkPdf = driveRes.downloadUrl;
-        trx.driveDownloadUrl = driveRes.downloadUrl;
-        trx.driveViewUrl = driveRes.viewUrl;
-        trx['Link PDF'] = driveRes.downloadUrl;
-
-        savePdfLinkToPersistentCache(`trx_${cleanTrxId}`, driveRes.downloadUrl);
-
-        await firestoreUpdateTransaksiPdfLink(trx.id || trx['ID Transaksi'], driveRes.downloadUrl);
-        showToast('✅ Nota berhasil disimpan ke Google Drive!', 'success');
-        renderHistoriTransaksi();
+        const driveUrl = await autoUploadTrxToGoogleDrive(trx);
+        if (isGoogleDriveFileLink(driveUrl)) {
+            showToast('✅ Nota berhasil disimpan ke Google Drive!', 'success');
+            renderHistoriTransaksi();
+        } else {
+            showToast('Gagal menyimpan ke Google Drive. Silakan coba beberapa saat lagi.', 'error');
+        }
     } catch (e) {
         console.error('Gagal menyimpan nota ke Drive:', e);
         showToast('Gagal menyimpan ke Google Drive: ' + e.message, 'error');
@@ -7594,42 +7580,15 @@ async function simpanSlipGajiKeGoogleDrive(idx) {
         return;
     }
 
-    if (!isGoogleDriveConnected()) {
-        await syncTokenWithServer();
-        if (!isGoogleDriveConnected()) {
-            try {
-                await handleGoogleSignInClick();
-            } catch (authErr) {
-                console.warn('Otorisasi Google Drive dibatalkan/gagal:', authErr);
-            }
-            if (!isGoogleDriveConnected()) return;
-        }
-    }
-
     showToast('Mengunggah slip gaji ke Google Drive...', 'info');
     try {
-        const cleanName = (t['Nama'] || 'Karyawan').replace(/[^a-zA-Z0-9._-]/g, '_');
-        const cleanBulan = (t['Bulan'] || '').replace(/[^a-zA-Z0-9._-]/g, '_');
-        const filename = `Slip_Gaji_${cleanName}_${cleanBulan}.pdf`;
-        const htmlContent = generateSlipGajiHTML(t);
-        const pdfBlob = await createPdfBlobFromHtml(htmlContent, filename, false);
-        const driveRes = await uploadPdfToGoogleDrive({
-            filename,
-            blob: pdfBlob,
-            folderId: getTargetFolderId()
-        });
-
-        t['Link PDF'] = driveRes.downloadUrl;
-        t.driveDownloadUrl = driveRes.downloadUrl;
-        t.driveViewUrl = driveRes.viewUrl;
-
-        const targetSlipId = t['ID Slip'] || t['ID Gaji'] || `${cleanName}-${cleanBulan}`;
-        savePdfLinkToPersistentCache(`slip_${targetSlipId}`, driveRes.downloadUrl);
-        savePdfLinkToPersistentCache(`slip_${cleanName}_${cleanBulan}`, driveRes.downloadUrl);
-
-        await firestoreUpdateSlipPdfLink(targetSlipId, driveRes.downloadUrl);
-        showToast('✅ Slip gaji berhasil disimpan ke Google Drive!', 'success');
-        renderHistoriGaji();
+        const driveUrl = await autoUploadSlipToGoogleDrive(t);
+        if (isGoogleDriveFileLink(driveUrl)) {
+            showToast('✅ Slip gaji berhasil disimpan ke Google Drive!', 'success');
+            renderHistoriGaji();
+        } else {
+            showToast('Gagal menyimpan slip gaji ke Google Drive. Silakan coba beberapa saat lagi.', 'error');
+        }
     } catch (e) {
         console.error('Gagal menyimpan slip gaji ke Drive:', e);
         showToast('Gagal menyimpan slip gaji ke Google Drive: ' + e.message, 'error');
@@ -7738,7 +7697,7 @@ async function autoUploadTrxToGoogleDrive(trx) {
                 folderId: targetFolder
             });
 
-            if (driveRes && (driveRes.downloadUrl || driveRes.viewUrl)) {
+            if (driveRes && isGoogleDriveFileLink(driveRes.downloadUrl || driveRes.viewUrl)) {
                 const finalUrl = driveRes.downloadUrl || driveRes.viewUrl;
                 trx.linkPdf = finalUrl;
                 trx.driveDownloadUrl = driveRes.downloadUrl;
@@ -7792,10 +7751,7 @@ async function autoUploadTrxToGoogleDrive(trx) {
             console.warn('[Google Drive auto-upload nota warning]:', err);
         }
 
-        // Fallback: Selalu gunakan folder Google Drive resmi, jangan pernah link ?doc=
-        const defaultGdriveUrl = `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
-        trx.linkPdf = defaultGdriveUrl;
-        return defaultGdriveUrl;
+        return null;
     })();
 
     IN_FLIGHT_PDF_UPLOADS.set(uploadKey, uploadTask);
@@ -7844,7 +7800,7 @@ async function autoUploadSlipToGoogleDrive(slip) {
                 folderId: targetFolder
             });
 
-            if (driveRes && (driveRes.downloadUrl || driveRes.viewUrl)) {
+            if (driveRes && isGoogleDriveFileLink(driveRes.downloadUrl || driveRes.viewUrl)) {
                 const finalUrl = driveRes.downloadUrl || driveRes.viewUrl;
                 slip['Link PDF'] = finalUrl;
                 slip.linkPdf = finalUrl;
@@ -7906,10 +7862,7 @@ async function autoUploadSlipToGoogleDrive(slip) {
             console.warn('[Google Drive auto-upload slip warning]:', err);
         }
 
-        // Fallback: Selalu gunakan folder Google Drive resmi, jangan pernah link ?doc=
-        const defaultGdriveUrl = `https://drive.google.com/drive/folders/${TARGET_GDRIVE_FOLDER_ID}?usp=sharing`;
-        slip['Link PDF'] = defaultGdriveUrl;
-        return defaultGdriveUrl;
+        return null;
     })();
 
     IN_FLIGHT_PDF_UPLOADS.set(uploadKey, uploadTask);

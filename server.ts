@@ -792,13 +792,16 @@ app.post('/api/gdrive/upload', async (req, res) => {
           gasData = JSON.parse(gasText);
         } catch (_) {}
 
-        if (gasData && gasData.success) {
+        if (gasData && gasData.success && gasData.fileId) {
+          const finalFileId = gasData.fileId;
+          const finalDownload = gasData.downloadUrl || `https://drive.google.com/uc?export=download&id=${finalFileId}`;
+          const finalView = gasData.url || `https://drive.google.com/file/d/${finalFileId}/view`;
           return res.json({
             success: true,
-            fileId: gasData.fileId || ('gdrive-' + Date.now()),
-            viewUrl: gasData.url || `https://drive.google.com/drive/folders/${targetFolder}?usp=sharing`,
-            downloadUrl: gasData.downloadUrl || gasData.url,
-            webContentLink: gasData.downloadUrl || gasData.url
+            fileId: finalFileId,
+            viewUrl: finalView,
+            downloadUrl: finalDownload,
+            webContentLink: finalDownload
           });
         } else if (gasData && gasData.message) {
           console.warn('[Google Drive GAS Error Message]:', gasData.message);
