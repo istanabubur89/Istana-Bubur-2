@@ -42,6 +42,7 @@ import {
     firestoreGetAllUsers,
     firestoreGetBranches,
     firestoreSaveBranch,
+    firestoreDeleteBranch,
     subscribeToBranches,
     firestoreSaveDocument,
     firestoreGetDocument
@@ -572,55 +573,97 @@ function getAllUsers() {
     return [];
 }
 
-// Ambil seluruh daftar cabang yang benar-benar terdaftar di sistem (hanya outlet resmi: Sempajak, M Yamin, dsb)
+const DELETED_BRANCHES_KEY = 'ib_deleted_branches_list';
+
+function getDeletedBranchesList() {
+    try {
+        const raw = localStorage.getItem(DELETED_BRANCHES_KEY);
+        if (raw) {
+            const arr = JSON.parse(raw);
+            if (Array.isArray(arr)) {
+                return arr.map(x => String(x || '').trim().toLowerCase()).filter(Boolean);
+            }
+        }
+    } catch(e) {}
+    return [];
+}
+
+function isBranchDeleted(branchName) {
+    if (!branchName) return false;
+    const clean = String(branchName).trim().toLowerCase();
+    return getDeletedBranchesList().includes(clean);
+}
+
+function markBranchAsDeleted(branchName) {
+    if (!branchName) return;
+    const clean = String(branchName).trim().toLowerCase();
+    const list = getDeletedBranchesList();
+    if (!list.includes(clean)) {
+        list.push(clean);
+        try {
+            localStorage.setItem(DELETED_BRANCHES_KEY, JSON.stringify(list));
+        } catch(e) {}
+    }
+}
+
+function unmarkBranchAsDeleted(branchName) {
+    if (!branchName) return;
+    const clean = String(branchName).trim().toLowerCase();
+    let list = getDeletedBranchesList();
+    list = list.filter(b => b !== clean);
+    try {
+        localStorage.setItem(DELETED_BRANCHES_KEY, JSON.stringify(list));
+    } catch(e) {}
+}
+
+// Ambil seluruh daftar cabang outlet kasir resmi (Sempajak, M Yamin, dsb)
+// PENTING: Penempatan Karyawan (Samarinda, Balikpapan, Jakarta) tidak digabung ke sini
 function getAllRegisteredBranches() {
+    const deletedList = getDeletedBranchesList();
+    const NON_OUTLET_CITIES = ['samarinda', 'balikpapan', 'jakarta', 'surabaya', 'bangkalan'];
     const branchSet = new Set();
 
-    // 0. Cabang dasar resmi selalu ada
-    branchSet.add('Sempajak');
-    branchSet.add('M Yamin');
+    // 0. Cabang dasar resmi disertakan HANYA jika belum dihapus
+    ['Sempajak', 'M Yamin'].forEach(b => {
+        if (!deletedList.includes(b.toLowerCase())) {
+            branchSet.add(b);
+        }
+    });
 
-    // 1. Cabang tersimpan di BRANCHES_CACHE
+    // 1. Cabang outlet tersimpan di BRANCHES_CACHE
     if (typeof BRANCHES_CACHE !== 'undefined' && Array.isArray(BRANCHES_CACHE)) {
         BRANCHES_CACHE.forEach(b => {
             const norm = normalizeBranchName(b);
-            if (norm) branchSet.add(norm);
+            if (norm && !deletedList.includes(norm.toLowerCase()) && !NON_OUTLET_CITIES.includes(norm.toLowerCase())) {
+                branchSet.add(norm);
+            }
         });
     }
     
-    // 2. Ambil dari akun pengguna kasir yang terdaftar di Firestore
+    // 2. Ambil dari akun pengguna kasir yang terdaftar di Firestore (kecuali yang sudah dihapus)
     if (typeof FIRESTORE_USERS_CACHE !== 'undefined' && Array.isArray(FIRESTORE_USERS_CACHE)) {
         FIRESTORE_USERS_CACHE.forEach(u => {
             const role = (u.role || '').toLowerCase();
             if (role === 'kasir') {
                 const norm = normalizeBranchName(u.cabang);
-                if (norm) branchSet.add(norm);
+                if (norm && !deletedList.includes(norm.toLowerCase()) && !NON_OUTLET_CITIES.includes(norm.toLowerCase())) {
+                    branchSet.add(norm);
+                }
             }
         });
     }
 
-    // 3. Ambil dari akun pengguna lokal yang terdaftar
+    // 3. Ambil dari akun pengguna kasir lokal yang terdaftar (kecuali yang sudah dihapus)
     const users = getAllUsers();
     if (Array.isArray(users)) {
         users.forEach(u => {
             const role = (u.role || '').toLowerCase();
             if (role === 'kasir') {
                 const norm = normalizeBranchName(u.cabang);
-                if (norm) branchSet.add(norm);
+                if (norm && !deletedList.includes(norm.toLowerCase()) && !NON_OUTLET_CITIES.includes(norm.toLowerCase())) {
+                    branchSet.add(norm);
+                }
             }
-        });
-    }
-
-    // 4. Ambil dari data karyawan terdaftar (hanya cabang yang valid/terdaftar)
-    const karyawanList = (typeof KARYAWAN_CACHE !== 'undefined' && Array.isArray(KARYAWAN_CACHE) && KARYAWAN_CACHE.length > 0)
-        ? KARYAWAN_CACHE
-        : ((typeof KARYAWAN_DATA !== 'undefined' && Array.isArray(KARYAWAN_DATA) && KARYAWAN_DATA.length > 0)
-            ? KARYAWAN_DATA : []);
-    if (Array.isArray(karyawanList)) {
-        karyawanList.forEach(k => {
-            const loc = (k['Lokasi Cabang'] || k['Cabang'] || k.cabang || '').trim();
-            const norm = normalizeBranchName(loc);
-            if (norm) branchSet.add(norm);
         });
     }
 
@@ -714,9 +757,9 @@ const DEFAULT_HISTORI_GAJI = [
 ];
 
 const DEFAULT_KARYAWAN = [
-    { rowIndex: 1, 'ID Karyawan': 'KRY-001', 'Nama': 'Budi Santoso', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Kasir', 'Penempatan': 'Sempajak', 'Lokasi Cabang': 'Sempajak', 'No WA': '081234567890', 'Gaji Harian': 90000, 'Email': 'budi@istanabubur.com' },
-    { rowIndex: 2, 'ID Karyawan': 'KRY-002', 'Nama': 'Siti Rahma', 'Jenis Kelamin': 'Perempuan', 'Jabatan': 'Dapur Bubur', 'Penempatan': 'Dapur Bubur', 'Lokasi Cabang': 'Dapur Bubur', 'No WA': '081298765432', 'Gaji Harian': 100000, 'Email': 'siti@istanabubur.com' },
-    { rowIndex: 3, 'ID Karyawan': 'KRY-003', 'Nama': 'Agus Prayogo', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Driver', 'Penempatan': 'M Yamin', 'Lokasi Cabang': 'M Yamin', 'No WA': '081345678901', 'Gaji Harian': 85000, 'Email': 'agus@istanabubur.com' }
+    { rowIndex: 1, 'ID Karyawan': 'KRY-001', 'Nama': 'Budi Santoso', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Kasir', 'Penempatan': 'Samarinda', 'No WA': '081234567890', 'Gaji Harian': 90000, 'Email': 'budi@istanabubur.com' },
+    { rowIndex: 2, 'ID Karyawan': 'KRY-002', 'Nama': 'Siti Rahma', 'Jenis Kelamin': 'Perempuan', 'Jabatan': 'Dapur Bubur', 'Penempatan': 'Balikpapan', 'No WA': '081298765432', 'Gaji Harian': 100000, 'Email': 'siti@istanabubur.com' },
+    { rowIndex: 3, 'ID Karyawan': 'KRY-003', 'Nama': 'Agus Prayogo', 'Jenis Kelamin': 'Laki-laki', 'Jabatan': 'Driver', 'Penempatan': 'Jakarta', 'No WA': '081345678901', 'Gaji Harian': 85000, 'Email': 'agus@istanabubur.com' }
 ];
 
 function getSampleTransactions() {
@@ -1654,6 +1697,42 @@ function checkAutoLogin() {
 // ==========================================
 let tempRegistration = null;
 
+function populateRegisterBranchOptions(selectedBranch = '') {
+    const select = document.getElementById('reg-cabang');
+    if (!select) return;
+
+    const branches = typeof getAllRegisteredBranches === 'function' ? getAllRegisteredBranches() : ['Sempajak', 'M Yamin'];
+    let html = '';
+    branches.forEach(b => {
+        const isSel = (selectedBranch && b.toLowerCase() === selectedBranch.toLowerCase()) ? 'selected' : '';
+        html += `<option value="${escapeHtml(b)}" ${isSel}>🏪 Cabang ${escapeHtml(b)}</option>`;
+    });
+
+    select.innerHTML = html;
+
+    const preview = document.getElementById('reg-cabang-preview-label');
+    const active = select.value || (branches.length > 0 ? branches[0] : 'Sempajak');
+    if (preview) preview.innerText = active;
+}
+
+function onRegisterCabangChange(val) {
+    const preview = document.getElementById('reg-cabang-preview-label');
+    if (preview) preview.innerText = val;
+}
+
+function onRegisterRoleChange(role) {
+    const container = document.getElementById('reg-cabang-container');
+    const activeRole = role || document.getElementById('reg-role')?.value || 'Kasir';
+    if (container) {
+        if (activeRole === 'Kasir') {
+            container.classList.remove('hidden-view');
+            populateRegisterBranchOptions();
+        } else {
+            container.classList.add('hidden-view');
+        }
+    }
+}
+
 function openRegisterModal() {
     tempRegistration = null;
 
@@ -1661,10 +1740,17 @@ function openRegisterModal() {
     if (document.getElementById('reg-user')) document.getElementById('reg-user').value = '';
     if (document.getElementById('reg-email')) document.getElementById('reg-email').value = '';
     if (document.getElementById('reg-wa')) document.getElementById('reg-wa').value = '';
-    if (document.getElementById('reg-role')) document.getElementById('reg-role').value = currentLoginRole || 'Kasir';
+    
+    const roleSelect = document.getElementById('reg-role');
+    const initialRole = currentLoginRole || 'Kasir';
+    if (roleSelect) roleSelect.value = initialRole;
+
     if (document.getElementById('reg-pass')) document.getElementById('reg-pass').value = '';
     if (document.getElementById('reg-pass-conf')) document.getElementById('reg-pass-conf').value = '';
     if (document.getElementById('reg-auth-code')) document.getElementById('reg-auth-code').value = '';
+
+    // Sesuaikan visibilitas Pilihan Cabang Outlet berdasarkan role akun
+    onRegisterRoleChange(initialRole);
 
     const m = document.getElementById('modal-register');
     if (m) m.classList.remove('hidden-view');
@@ -1683,6 +1769,15 @@ async function submitRegisterDirect() {
     if (!nama || !user || !email || !wa || !pass || !passConf) {
         showToast('Semua data diri wajib diisi!', 'warning');
         return;
+    }
+
+    let cabang = 'Pusat';
+    if (role === 'Kasir') {
+        cabang = (document.getElementById('reg-cabang')?.value || 'Sempajak').trim();
+        if (!cabang) {
+            showToast('Silakan pilih cabang outlet untuk kasir!', 'warning');
+            return;
+        }
     }
 
     if (!inputAuthCode) {
@@ -1754,7 +1849,7 @@ async function submitRegisterDirect() {
         email: email,
         phone: wa,
         role: role,
-        cabang: 'Pusat',
+        cabang: cabang,
         password: pass,
         isActive: true,
         authCode: inputAuthCode
@@ -1797,12 +1892,18 @@ async function submitRegisterDirect() {
     if (pInput) pInput.value = newUser.password;
 
     setLoginRole(newUser.role);
+    if (newUser.role === 'Kasir' && typeof setLoginBranch === 'function') {
+        setLoginBranch(newUser.cabang);
+    }
 }
 
 // Backward-compatibility aliases
 const submitRegisterStep1 = submitRegisterDirect;
 const verifyReferralStep2 = submitRegisterDirect;
 const activateAccountStep3 = submitRegisterDirect;
+const resendReferralCode = () => {};
+const backToRegisterStep1 = () => {};
+const backToRegisterStep2 = () => {};
 
 function openActivateAccountPrompt(username) {
     openRegisterModal();
@@ -2903,7 +3004,10 @@ async function initDashboardCharts() {
 // =========================================================================
 
 async function initBranchSystem() {
-    // 1. Muat dari local storage jika ada, bersihkan dari nama cabang tidak valid
+    const deletedList = getDeletedBranchesList();
+    const NON_OUTLET_CITIES = ['samarinda', 'balikpapan', 'jakarta', 'surabaya', 'bangkalan'];
+
+    // 1. Muat dari local storage jika ada, bersihkan dari nama cabang tidak valid & cabang terhapus
     try {
         const saved = localStorage.getItem('ib_saved_branches_list');
         if (saved) {
@@ -2911,22 +3015,26 @@ async function initBranchSystem() {
             if (Array.isArray(parsed) && parsed.length > 0) {
                 parsed.forEach(b => {
                     const norm = normalizeBranchName(b);
-                    if (norm && !BRANCHES_CACHE.includes(norm)) BRANCHES_CACHE.push(norm);
+                    if (norm && !deletedList.includes(norm.toLowerCase()) && !BRANCHES_CACHE.includes(norm)) {
+                        BRANCHES_CACHE.push(norm);
+                    }
                 });
             }
         }
     } catch(e){}
 
-    // Bersihkan nama yang tidak valid dari cache lokal
+    // Bersihkan nama yang tidak valid dari cache lokal dan pastikan kota penempatan karyawan serta cabang terhapus tidak masuk
     BRANCHES_CACHE = Array.from(new Set(
         BRANCHES_CACHE
             .map(b => normalizeBranchName(b))
-            .filter(b => Boolean(b))
+            .filter(b => Boolean(b) && !deletedList.includes(b.toLowerCase()) && !NON_OUTLET_CITIES.includes(b.toLowerCase()))
     ));
 
-    // Pastikan Sempajak dan M Yamin selalu ada
+    // Tambahkan default Sempajak dan M Yamin HANYA jika belum dihapus oleh admin
     ['Sempajak', 'M Yamin'].forEach(b => {
-        if (!BRANCHES_CACHE.includes(b)) BRANCHES_CACHE.push(b);
+        if (!deletedList.includes(b.toLowerCase()) && !BRANCHES_CACHE.includes(b)) {
+            BRANCHES_CACHE.push(b);
+        }
     });
     try { localStorage.setItem('ib_saved_branches_list', JSON.stringify(BRANCHES_CACHE)); } catch(e){}
 
@@ -2936,34 +3044,36 @@ async function initBranchSystem() {
         if (Array.isArray(fsBranches) && fsBranches.length > 0) {
             fsBranches.forEach(b => {
                 const norm = normalizeBranchName(b);
-                if (norm && !BRANCHES_CACHE.includes(norm)) BRANCHES_CACHE.push(norm);
+                if (norm && !deletedList.includes(norm.toLowerCase()) && !NON_OUTLET_CITIES.includes(norm.toLowerCase()) && !BRANCHES_CACHE.includes(norm)) {
+                    BRANCHES_CACHE.push(norm);
+                }
             });
+            BRANCHES_CACHE = BRANCHES_CACHE.filter(b => !deletedList.includes(b.toLowerCase()));
             localStorage.setItem('ib_saved_branches_list', JSON.stringify(BRANCHES_CACHE));
         }
     } catch(e) {
         console.warn('[Firestore GetBranches Info]:', e);
     }
 
-    // 3. Pasang listener realtime Firestore untuk penambahan cabang baru di perangkat lain
+    // 3. Pasang listener realtime Firestore
     try {
         if (unsubscribeBranches) unsubscribeBranches();
         unsubscribeBranches = subscribeToBranches((branches) => {
-            if (Array.isArray(branches) && branches.length > 0) {
-                let hasNew = false;
-                branches.forEach(b => {
-                    const norm = normalizeBranchName(b);
-                    if (norm && !BRANCHES_CACHE.includes(norm)) {
-                        BRANCHES_CACHE.push(norm);
-                        hasNew = true;
-                    }
-                });
-                if (hasNew) {
-                    try {
-                        localStorage.setItem('ib_saved_branches_list', JSON.stringify(BRANCHES_CACHE));
-                    } catch(e){}
-                    renderLoginBranchChips();
-                    renderRegisterBranchChips();
-                    populateCabangFilterDashboard();
+            if (Array.isArray(branches)) {
+                const currentDel = getDeletedBranchesList();
+                const validBranches = branches
+                    .map(b => normalizeBranchName(b))
+                    .filter(b => Boolean(b) && !currentDel.includes(b.toLowerCase()) && !NON_OUTLET_CITIES.includes(b.toLowerCase()));
+                
+                BRANCHES_CACHE = Array.from(new Set([...validBranches]));
+                try {
+                    localStorage.setItem('ib_saved_branches_list', JSON.stringify(BRANCHES_CACHE));
+                } catch(e){}
+                renderLoginBranchChips();
+                renderRegisterBranchChips();
+                populateCabangFilterDashboard();
+                if (typeof populateRegisterBranchOptions === 'function') {
+                    populateRegisterBranchOptions();
                 }
             }
         });
@@ -2989,9 +3099,9 @@ function renderLoginBranchChips() {
     const container = document.getElementById('login-branch-chips');
     if (!container) return;
 
-    const uniqueBranches = Array.from(new Set(['Sempajak', 'M Yamin', ...BRANCHES_CACHE]));
+    const uniqueBranches = getAllRegisteredBranches();
     if (!activeLoginCabang || !uniqueBranches.includes(activeLoginCabang)) {
-        activeLoginCabang = 'Sempajak';
+        activeLoginCabang = uniqueBranches.length > 0 ? uniqueBranches[0] : '';
     }
 
     let html = '';
@@ -3027,9 +3137,9 @@ function renderRegisterBranchChips() {
     const container = document.getElementById('register-branch-chips');
     if (!container) return;
 
-    const uniqueBranches = Array.from(new Set(['Sempajak', 'M Yamin', ...BRANCHES_CACHE]));
+    const uniqueBranches = getAllRegisteredBranches();
     if (!activeRegisterCabang || !uniqueBranches.includes(activeRegisterCabang)) {
-        activeRegisterCabang = 'Sempajak';
+        activeRegisterCabang = uniqueBranches.length > 0 ? uniqueBranches[0] : '';
     }
 
     let html = '';
@@ -3075,6 +3185,9 @@ async function handleAddNewBranchSubmit(e) {
     const exists = BRANCHES_CACHE.find(b => b.toLowerCase() === branchName.toLowerCase());
     const finalBranchName = exists || branchName;
 
+    // Hapus dari daftar deleted branches jika sebelumnya pernah dihapus
+    unmarkBranchAsDeleted(finalBranchName);
+
     if (!exists) {
         BRANCHES_CACHE.push(finalBranchName);
         try {
@@ -3093,6 +3206,9 @@ async function handleAddNewBranchSubmit(e) {
     renderLoginBranchChips();
     renderRegisterBranchChips();
     populateCabangFilterDashboard();
+    if (typeof populateRegisterBranchOptions === 'function') {
+        populateRegisterBranchOptions();
+    }
 
     if (targetBranchModalSource === 'register') {
         selectRegisterBranch(finalBranchName);
@@ -3123,7 +3239,7 @@ function renderDashboardBranchChips() {
     if (!chipsContainer) return;
 
     const registered = typeof getAllRegisteredBranches === 'function' ? getAllRegisteredBranches() : [];
-    const allBranches = Array.from(new Set(['Semua', 'Sempajak', 'M Yamin', ...registered]));
+    const allBranches = Array.from(new Set(['Semua', ...registered]));
 
     let html = '';
     allBranches.forEach(c => {
@@ -3132,17 +3248,141 @@ function renderDashboardBranchChips() {
             ? 'px-3 py-1.5 rounded-xl text-xs font-bold transition-all bg-red-600 text-white shadow-xs border border-red-600 cursor-pointer flex items-center gap-1.5'
             : 'px-3 py-1.5 rounded-xl text-xs font-semibold transition-all bg-white text-gray-700 hover:bg-gray-100 border border-gray-200 hover:border-gray-300 cursor-pointer flex items-center gap-1.5';
         const icon = c === 'Semua' ? '<i class="fas fa-layer-group text-[10px]"></i>' : '<i class="fas fa-store text-[10px]"></i>';
-        html += `<button type="button" onclick="selectDashboardBranch('${escapeHtml(c)}')" class="${cls}">${icon} <span>${escapeHtml(c)}</span></button>`;
+
+        let deleteBtn = '';
+        if (c !== 'Semua') {
+            const deleteCls = isSelected
+                ? 'w-4 h-4 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-red-700/80 transition-colors ml-0.5 cursor-pointer'
+                : 'w-4 h-4 rounded-full flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors ml-0.5 cursor-pointer';
+            deleteBtn = `
+                <button type="button" onclick="event.stopPropagation(); confirmDeleteBranch('${escapeHtml(c)}')" class="${deleteCls}" title="Hapus Cabang ${escapeHtml(c)}">
+                    <i class="fas fa-times text-[9px]"></i>
+                </button>
+            `;
+        }
+
+        html += `
+            <div onclick="selectDashboardBranch('${escapeHtml(c)}')" class="${cls}">
+                ${icon}
+                <span>${escapeHtml(c)}</span>
+                ${deleteBtn}
+            </div>
+        `;
     });
 
     html += `
         <button type="button" onclick="openAddBranchModal('dashboard')" class="px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all bg-red-50 hover:bg-red-100 text-red-600 border border-dashed border-red-300 hover:border-red-400 cursor-pointer flex items-center gap-1 active:scale-95" title="Tambah Cabang Baru">
             <i class="fas fa-plus text-[10px]"></i>
-            <span>Cabang Baru</span>
+            <span>Tambah Cabang</span>
         </button>
     `;
 
     chipsContainer.innerHTML = html;
+}
+
+function confirmDeleteBranch(branchName) {
+    if (!branchName || branchName === 'Semua') return;
+
+    const modal = document.getElementById('modal-confirm');
+    const title = document.getElementById('confirm-title');
+    const msg = document.getElementById('confirm-message');
+    const actionBtn = document.getElementById('btn-confirm-action');
+
+    if (title) title.innerText = 'Hapus Cabang Outlet?';
+    if (msg) msg.innerHTML = `Apakah Anda yakin ingin menghapus cabang <strong>${escapeHtml(branchName)}</strong>?<br><span class="text-[10px] text-red-500 font-semibold">Cabang ini akan dihapus dari pilihan kasir dan sistem outlet.</span>`;
+    if (actionBtn) {
+        actionBtn.innerText = 'Ya, Hapus Cabang';
+        actionBtn.onclick = async () => {
+            closeModal('modal-confirm');
+            await executeDeleteBranch(branchName);
+        };
+    }
+
+    if (modal) modal.classList.remove('hidden-view');
+}
+
+async function executeDeleteBranch(branchName) {
+    if (!branchName || branchName === 'Semua') return;
+    const cleanName = branchName.trim();
+    const lowerName = cleanName.toLowerCase();
+
+    try {
+        // 1. Masukkan ke daftar blacklist cabang yang dihapus (persistent di localStorage)
+        markBranchAsDeleted(cleanName);
+
+        // 2. Hapus dari BRANCHES_CACHE
+        BRANCHES_CACHE = BRANCHES_CACHE.filter(b => b.toLowerCase() !== lowerName);
+        try {
+            localStorage.setItem('ib_saved_branches_list', JSON.stringify(BRANCHES_CACHE));
+        } catch(e) {}
+
+        // 3. Update pengguna lokal yang menggunakan cabang ini (pindahkan ke Pusat)
+        try {
+            const rawUsers = localStorage.getItem(USERS_STORAGE_KEY);
+            if (rawUsers) {
+                const usersArr = JSON.parse(rawUsers);
+                if (Array.isArray(usersArr)) {
+                    let userChanged = false;
+                    usersArr.forEach(u => {
+                        if (u.cabang && u.cabang.toLowerCase() === lowerName) {
+                            u.cabang = 'Pusat';
+                            userChanged = true;
+                        }
+                    });
+                    if (userChanged) {
+                        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(usersArr));
+                    }
+                }
+            }
+        } catch(e){}
+
+        // 4. Update FIRESTORE_USERS_CACHE jika ada pengguna dengan cabang ini
+        if (typeof FIRESTORE_USERS_CACHE !== 'undefined' && Array.isArray(FIRESTORE_USERS_CACHE)) {
+            FIRESTORE_USERS_CACHE.forEach(u => {
+                if (u.cabang && u.cabang.toLowerCase() === lowerName) {
+                    u.cabang = 'Pusat';
+                }
+            });
+        }
+
+        // 5. Hapus dari Cloud Firestore
+        try {
+            await firestoreDeleteBranch(cleanName);
+        } catch (fsErr) {
+            console.warn('[Firestore Delete Branch Warning]:', fsErr);
+        }
+
+        // 6. Jika cabang yang dihapus sedang dipilih di dashboard, kembalikan ke 'Semua'
+        if (activeDashboardCabang && activeDashboardCabang.toLowerCase() === lowerName) {
+            activeDashboardCabang = 'Semua';
+            const labelEl = document.getElementById('dashboard-active-branch-label');
+            if (labelEl) labelEl.innerText = 'Semua Cabang';
+        }
+
+        // 7. Jika cabang yang dihapus sedang dipilih di login/register, reset ke cabang pertama yang tersisa
+        const remaining = getAllRegisteredBranches();
+        const fallbackBranch = remaining.length > 0 ? remaining[0] : 'Sempajak';
+        if (activeLoginCabang && activeLoginCabang.toLowerCase() === lowerName) {
+            activeLoginCabang = fallbackBranch;
+        }
+        if (activeRegisterCabang && activeRegisterCabang.toLowerCase() === lowerName) {
+            activeRegisterCabang = fallbackBranch;
+        }
+
+        // 8. Perbarui antarmuka di seluruh aplikasi
+        populateCabangFilterDashboard();
+        renderDashboardBranchChips();
+        renderLoginBranchChips();
+        renderRegisterBranchChips();
+        if (typeof populateRegisterBranchOptions === 'function') {
+            populateRegisterBranchOptions();
+        }
+        updateDashboardCharts();
+
+        showToast(`Cabang "${cleanName}" berhasil dihapus dari sistem!`, 'success');
+    } catch (err) {
+        showToast(`Gagal menghapus cabang: ${err.message || err}`, 'error');
+    }
 }
 
 function populateCabangFilterDashboard() {
@@ -3387,16 +3627,22 @@ function updateDashboardCharts() {
         });
     }
 
-    // Chart Karyawan per Penempatan (Membedakan dengan Cabang Outlet)
-    const penempatanCounts = {};
+    // Chart Penempatan Karyawan (Kota: Samarinda, Balikpapan, Jakarta)
+    // PENTING: Benar-benar terpisah dari Cabang Outlet transaksi kasir
+    const penempatanCounts = {
+        'Samarinda': 0,
+        'Balikpapan': 0,
+        'Jakarta': 0
+    };
     (KARYAWAN_CACHE || []).forEach(k => { 
-        const loc = (k['Penempatan'] || k['Lokasi Cabang'] || k['Cabang'] || 'Pusat').trim(); 
-        penempatanCounts[loc] = (penempatanCounts[loc] || 0) + 1; 
+        const city = (k['Penempatan'] || 'Samarinda').trim(); 
+        penempatanCounts[city] = (penempatanCounts[city] || 0) + 1; 
     });
 
     const statPenempatanCountEl = document.getElementById('stat-penempatan-count');
     if (statPenempatanCountEl) {
-        statPenempatanCountEl.innerText = `${Object.keys(penempatanCounts).length} Penempatan`;
+        const activeCities = Object.keys(penempatanCounts).filter(c => penempatanCounts[c] > 0).length;
+        statPenempatanCountEl.innerText = `${activeCities} Kota Aktif`;
     }
 
     const canvasBar = document.getElementById('chart-karyawan');
@@ -3408,13 +3654,13 @@ function updateDashboardCharts() {
         chartKaryawan = new Chart(ctxBar, { 
             type: 'bar', 
             data: { 
-                labels: penempatanLabels.length ? penempatanLabels : ['Belum Ada Data'], 
+                labels: penempatanLabels, 
                 datasets: [{ 
                     label: 'Jumlah Karyawan', 
-                    data: penempatanData.length ? penempatanData : [0], 
-                    backgroundColor: '#ef4444', 
-                    borderRadius: 6,
-                    maxBarThickness: 36
+                    data: penempatanData, 
+                    backgroundColor: ['#3b82f6', '#06b6d4', '#6366f1'], 
+                    borderRadius: 8,
+                    maxBarThickness: 42
                 }] 
             }, 
             options: { 
@@ -3422,14 +3668,14 @@ function updateDashboardCharts() {
                 maintainAspectRatio: false, 
                 scales: { 
                     y: { beginAtZero: true, ticks: { stepSize: 1, font: {size: 10} } }, 
-                    x: { ticks: { font: {size: 10} } } 
+                    x: { ticks: { font: {size: 10, weight: 'bold'} } } 
                 }, 
                 plugins: { 
                     legend: { display: false },
                     tooltip: {
                         callbacks: {
                             label: function(context) {
-                                return ` ${context.parsed.y} Karyawan (Penempatan)`;
+                                return ` ${context.parsed.y} Karyawan (Kota: ${context.label})`;
                             }
                         }
                     }
@@ -3681,14 +3927,14 @@ async function loadKaryawan() {
             list.innerHTML = `<div class="text-center text-gray-400 py-10"><i class="fas fa-users-slash text-4xl mb-3"></i><p class="text-sm">Belum ada karyawan</p></div>`; 
         } else { 
             list.innerHTML = KARYAWAN_CACHE.map(k => {
-                const penempatanStr = k['Penempatan'] || k['Lokasi Cabang'] || k['Cabang'] || 'Pusat';
+                const penempatanKota = k['Penempatan'] || 'Samarinda';
                 return `
-                <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center gap-3 hover:border-red-100 transition">
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center gap-3 hover:border-blue-100 transition">
                     <div class="flex-1 overflow-hidden">
                         <p class="font-extrabold text-sm text-gray-800 truncate">${escapeHtml(k['Nama'])}</p>
                         <div class="flex items-center gap-1.5 flex-wrap mt-1">
-                            <span class="inline-flex items-center text-red-700 bg-red-50 border border-red-200/80 px-2 py-0.5 rounded-lg text-[10px] font-extrabold shadow-2xs">
-                                <i class="fas fa-location-dot mr-1 text-[9px] text-red-500"></i>Penempatan: ${escapeHtml(penempatanStr)}
+                            <span class="inline-flex items-center text-blue-700 bg-blue-50 border border-blue-200/80 px-2 py-0.5 rounded-lg text-[10px] font-extrabold shadow-2xs">
+                                <i class="fas fa-city mr-1 text-[9px] text-blue-500"></i>Kota: ${escapeHtml(penempatanKota)}
                             </span>
                             <span class="text-[10px] text-gray-500 font-semibold bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-lg">
                                 ${escapeHtml(k['Jabatan'] || '-')}
@@ -3714,88 +3960,29 @@ function populateKaryawanPenempatanOptions(selectedVal = '') {
     const select = document.getElementById('k-penempatan');
     if (!select) return;
 
-    const locSet = new Set();
-
-    // 1. Cabang resmi outlet
-    const branches = typeof getAllRegisteredBranches === 'function' ? getAllRegisteredBranches() : ['Sempajak', 'M Yamin'];
-    branches.forEach(b => { if (b) locSet.add(b.trim()); });
-
-    // 2. Lokasi operasional & departemen umum
-    const standardDepts = ['Dapur Pusat', 'Dapur Bubur', 'Dapur Kue', 'Gudang Pusat', 'Kantor Pusat'];
-    standardDepts.forEach(d => locSet.add(d));
-
-    // 3. Penempatan yang sudah ada dari database karyawan
-    if (Array.isArray(KARYAWAN_CACHE)) {
-        KARYAWAN_CACHE.forEach(k => {
-            const loc = k['Penempatan'] || k['Lokasi Cabang'] || k['Cabang'];
-            if (loc && loc.trim()) locSet.add(loc.trim());
-        });
-    }
-
-    if (selectedVal && selectedVal.trim()) {
-        locSet.add(selectedVal.trim());
-    }
-
+    // Hanya kota penempatan: Samarinda, Balikpapan, Jakarta (sesuai instruksi)
+    const CITIES = ['Samarinda', 'Balikpapan', 'Jakarta'];
     let html = '';
-    locSet.forEach(loc => {
-        const isSel = (selectedVal && loc.toLowerCase() === selectedVal.toLowerCase()) ? 'selected' : '';
-        html += `<option value="${escapeHtml(loc)}" ${isSel}>${escapeHtml(loc)}</option>`;
+    CITIES.forEach(city => {
+        const isSel = (selectedVal && selectedVal.toLowerCase() === city.toLowerCase()) ? 'selected' : '';
+        html += `<option value="${city}" ${isSel}>${city}</option>`;
     });
 
-    html += `<option value="__custom__">+ Lainnya (Ketik Manual Penempatan)</option>`;
+    // Pertahankan nilai lama jika karyawan sebelumnya memakai nama kota lain
+    if (selectedVal && !CITIES.some(c => c.toLowerCase() === selectedVal.toLowerCase())) {
+        html += `<option value="${escapeHtml(selectedVal)}" selected>${escapeHtml(selectedVal)}</option>`;
+    }
+
     select.innerHTML = html;
 
-    const customInput = document.getElementById('k-penempatan-custom');
     const previewLabel = document.getElementById('k-penempatan-preview-label');
-    const hiddenCabang = document.getElementById('k-cabang');
-
-    let isKnown = false;
-    for (const loc of locSet) {
-        if (selectedVal && loc.toLowerCase() === selectedVal.toLowerCase()) {
-            isKnown = true;
-            select.value = loc;
-            break;
-        }
-    }
-
-    if (!isKnown && selectedVal && selectedVal !== '__custom__') {
-        select.value = '__custom__';
-        if (customInput) {
-            customInput.value = selectedVal;
-            customInput.classList.remove('hidden-view');
-        }
-        if (previewLabel) previewLabel.innerText = selectedVal;
-        if (hiddenCabang) hiddenCabang.value = selectedVal;
-    } else {
-        if (customInput) {
-            customInput.value = '';
-            customInput.classList.add('hidden-view');
-        }
-        const activeVal = select.value || 'Sempajak';
-        if (previewLabel) previewLabel.innerText = activeVal;
-        if (hiddenCabang) hiddenCabang.value = activeVal;
-    }
+    const activeVal = select.value || 'Samarinda';
+    if (previewLabel) previewLabel.innerText = activeVal;
 }
 
 function onKaryawanPenempatanSelect(val) {
-    const customInput = document.getElementById('k-penempatan-custom');
     const previewLabel = document.getElementById('k-penempatan-preview-label');
-    const hiddenCabang = document.getElementById('k-cabang');
-
-    if (val === '__custom__') {
-        if (customInput) {
-            customInput.classList.remove('hidden-view');
-            customInput.focus();
-            if (previewLabel) previewLabel.innerText = customInput.value || 'Penempatan Baru';
-            if (hiddenCabang) hiddenCabang.value = customInput.value || 'Pusat';
-        }
-    } else {
-        if (customInput) {
-            customInput.classList.add('hidden-view');
-        }
-        if (previewLabel) previewLabel.innerText = val;
-        if (hiddenCabang) hiddenCabang.value = val;
-    }
+    if (previewLabel) previewLabel.innerText = val || 'Samarinda';
 }
 
 function openFormKaryawan() { 
@@ -3808,8 +3995,8 @@ function openFormKaryawan() {
         titleEl.innerText = 'Tambah Data Karyawan'; 
     }
     
-    // Siapkan opsi penempatan karyawan
-    populateKaryawanPenempatanOptions('Sempajak');
+    // Siapkan pilihan kota penempatan karyawan (Samarinda, Balikpapan, Jakarta)
+    populateKaryawanPenempatanOptions('Samarinda');
 
     const m = document.getElementById('modal-karyawan');
     if (m) m.classList.remove('hidden-view'); 
@@ -3830,8 +4017,8 @@ function editKaryawan(k) {
     const jabatanInput = document.getElementById('k-jabatan');
     if (jabatanInput) jabatanInput.value = k['Jabatan'] || 'Kasir'; 
     
-    // Set penempatan terpilih
-    const loc = k['Penempatan'] || k['Lokasi Cabang'] || k['Cabang'] || 'Sempajak';
+    // Set kota penempatan terpilih
+    const loc = k['Penempatan'] || 'Samarinda';
     populateKaryawanPenempatanOptions(loc);
 
     const waInput = document.getElementById('k-wa');
@@ -3851,10 +4038,7 @@ async function saveKaryawanData(e) {
         btn.disabled = true; 
     }
 
-    let penempatanVal = (document.getElementById('k-penempatan')?.value || 'Sempajak').trim();
-    if (penempatanVal === '__custom__') {
-        penempatanVal = (document.getElementById('k-penempatan-custom')?.value || '').trim() || 'Pusat';
-    }
+    const penempatanVal = (document.getElementById('k-penempatan')?.value || 'Samarinda').trim();
 
     const data = { 
         rowIndex: document.getElementById('k-rowIndex')?.value || '', 
@@ -3862,7 +4046,6 @@ async function saveKaryawanData(e) {
         'Jenis Kelamin': document.getElementById('k-gender')?.value || 'Laki-laki', 
         'Jabatan': document.getElementById('k-jabatan')?.value || 'Kasir', 
         'Penempatan': penempatanVal,
-        'Lokasi Cabang': penempatanVal, 
         'No WA': (document.getElementById('k-wa')?.value || '').trim(), 
         'Gaji Harian': document.getElementById('k-gaji')?.value || 0, 
         'Email': (document.getElementById('k-email')?.value || '').trim() 
@@ -3918,8 +4101,8 @@ async function loadKaryawanForSlip() {
     const select = document.getElementById('s-karyawan'); 
     if (select) {
         select.innerHTML = '<option value="">-- Pilih Karyawan --</option>' + (KARYAWAN_CACHE || []).map(k => {
-            const loc = k['Penempatan'] || k['Lokasi Cabang'] || k['Cabang'] || 'Pusat';
-            return `<option value="${escapeHtml(k['ID Karyawan'])}">${escapeHtml(k['Nama'])} - Penempatan: ${escapeHtml(loc)}</option>`;
+            const loc = k['Penempatan'] || 'Samarinda';
+            return `<option value="${escapeHtml(k['ID Karyawan'])}">${escapeHtml(k['Nama'])} - Kota Penempatan: ${escapeHtml(loc)}</option>`;
         }).join(''); 
     }
 }
@@ -9959,6 +10142,9 @@ window.checkAutoLogin = checkAutoLogin;
 
 window.openRegisterModal = openRegisterModal;
 window.submitRegisterDirect = submitRegisterDirect;
+window.onRegisterRoleChange = onRegisterRoleChange;
+window.onRegisterCabangChange = onRegisterCabangChange;
+window.populateRegisterBranchOptions = populateRegisterBranchOptions;
 window.submitRegisterStep1 = submitRegisterStep1;
 window.resendReferralCode = resendReferralCode;
 window.openGmailApp = openGmailApp;
@@ -10105,6 +10291,8 @@ window.selectDashboardBranch = selectDashboardBranch;
 window.renderDashboardBranchChips = renderDashboardBranchChips;
 window.openAddBranchModal = openAddBranchModal;
 window.handleAddNewBranchSubmit = handleAddNewBranchSubmit;
+window.confirmDeleteBranch = confirmDeleteBranch;
+window.executeDeleteBranch = executeDeleteBranch;
 window.populateCabangFilterDashboard = populateCabangFilterDashboard;
 window.populateKasirFilterDashboard = populateKasirFilterDashboard;
 window.setDashboardPeriodMode = setDashboardPeriodMode;

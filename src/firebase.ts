@@ -465,9 +465,7 @@ export async function firestoreGetKaryawan() {
       'Nama': data.nama || '',
       'Jenis Kelamin': data.gender || 'Laki-laki',
       'Jabatan': data.posisi || '-',
-      'Penempatan': data.penempatan || data.cabang || 'Pusat',
-      'Lokasi Cabang': data.penempatan || data.cabang || 'Pusat',
-      'Cabang': data.penempatan || data.cabang || 'Pusat',
+      'Penempatan': data.penempatan || 'Samarinda',
       'No WA': data.noWa || '',
       'Gaji Harian': Number(data.gajiHarian || 0),
       'Email': data.email || '',
@@ -483,7 +481,7 @@ export async function firestoreSaveKaryawan(kData: any) {
     docId = 'KRY-' + Math.floor(100 + Math.random() * 900);
   }
 
-  const penempatanVal = kData['Penempatan'] || kData.penempatan || kData['Lokasi Cabang'] || kData.cabang || 'Pusat';
+  const penempatanVal = kData['Penempatan'] || kData.penempatan || 'Samarinda';
 
   const payload = {
     id: docId,
@@ -491,7 +489,6 @@ export async function firestoreSaveKaryawan(kData: any) {
     gender: kData['Jenis Kelamin'] || kData.gender || 'Laki-laki',
     posisi: kData['Jabatan'] || kData.posisi || '-',
     penempatan: penempatanVal,
-    cabang: penempatanVal,
     noWa: kData['No WA'] || kData.noWa || '',
     gajiHarian: Number(kData['Gaji Harian'] || kData.gajiHarian || 0),
     email: kData['Email'] || kData.email || ''
@@ -1225,17 +1222,16 @@ export async function firestoreGetBranches(): Promise<string[]> {
     const list: string[] = [];
     snap.docs.forEach((d) => {
       const data = d.data();
+      if (data.deleted === true) return;
       const name = (data.name || d.id || '').trim();
       if (name && !list.includes(name)) {
         list.push(name);
       }
     });
-    if (!list.includes('Sempajak')) list.unshift('Sempajak');
-    if (!list.includes('M Yamin')) list.push('M Yamin');
     return list;
   } catch (err) {
     console.warn('[firestoreGetBranches Error]:', err);
-    return ['Sempajak', 'M Yamin'];
+    return [];
   }
 }
 
@@ -1249,9 +1245,35 @@ export async function firestoreSaveBranch(branchName: string): Promise<{ success
   await setDoc(bRef, {
     id: branchId,
     name: cleanName,
+    deleted: false,
     createdAt: Date.now()
   }, { merge: true });
   return { success: true, message: `Cabang ${cleanName} berhasil disimpan`, branch: cleanName };
+}
+
+export async function firestoreDeleteBranch(branchName: string): Promise<{ success: boolean; message: string }> {
+  const cleanName = String(branchName || '').trim();
+  if (!cleanName) {
+    throw new Error('Nama cabang tidak valid!');
+  }
+  const branchId = cleanName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  try {
+    // 1. Delete direct document by branchId
+    await deleteDoc(doc(db, COLLECTIONS.BRANCHES, branchId));
+
+    // 2. Also search and delete any document with matching name or id in COLLECTIONS.BRANCHES
+    const snap = await getDocs(collection(db, COLLECTIONS.BRANCHES));
+    for (const d of snap.docs) {
+      const data = d.data();
+      const n = (data.name || d.id || '').trim();
+      if (n.toLowerCase() === cleanName.toLowerCase() || d.id.toLowerCase() === branchId) {
+        await deleteDoc(doc(db, COLLECTIONS.BRANCHES, d.id));
+      }
+    }
+  } catch (e) {
+    console.warn('[Firestore DeleteBranch Warning]:', e);
+  }
+  return { success: true, message: `Cabang ${cleanName} berhasil dihapus` };
 }
 
 export function subscribeToBranches(callback: (branches: string[]) => void): () => void {
@@ -1261,19 +1283,18 @@ export function subscribeToBranches(callback: (branches: string[]) => void): () 
       const list: string[] = [];
       snap.docs.forEach((d) => {
         const data = d.data();
+        if (data.deleted === true) return;
         const name = (data.name || d.id || '').trim();
         if (name && !list.includes(name)) list.push(name);
       });
-      if (!list.includes('Sempajak')) list.unshift('Sempajak');
-      if (!list.includes('M Yamin')) list.push('M Yamin');
       callback(list);
     }, (err) => {
       console.warn('[Firestore subscribeBranches Warning]:', err);
-      callback(['Sempajak', 'M Yamin']);
+      callback([]);
     });
     return unsub;
   } catch (e) {
-    callback(['Sempajak', 'M Yamin']);
+    callback([]);
     return () => {};
   }
 }

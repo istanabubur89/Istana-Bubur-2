@@ -49,6 +49,9 @@ service cloud.firestore {
     match /branches/{branchId} {
       allow read, write: if true;
     }
+    match /system_deleted_branches/{branchId} {
+      allow read, write: if true;
+    }
     // -------------------------------------------------------------
     // KOLEKSI: SETTINGS (Pengaturan Sistem & Kunci Autentikasi Admin)
     // -------------------------------------------------------------
