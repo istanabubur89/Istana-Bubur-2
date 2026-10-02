@@ -54,6 +54,7 @@ import {
 } from './firebaseStoragePdf.ts';
 
 import { checkAndHandleDocViewerRoute } from './docViewer.ts';
+import { TTD_JAMILAH_PNG_BASE64 } from './ttdJamilahBase64.ts';
 
 import {
     SCOPES as GDRIVE_SCOPES,
@@ -998,7 +999,7 @@ function switchTab(tabId, isGoBack = false) {
     if (CURRENT_USER.role !== 'Admin') {
         const restrictedTabs = ['produk', 'slip', 'karyawan', 'histori-gaji'];
         if (restrictedTabs.includes(tabId)) {
-            tabId = 'kasir';
+            tabId = 'profil';
             showToast('Akses Ditolak. Anda masuk sebagai Kasir.', 'error');
         }
     }
@@ -1065,7 +1066,7 @@ window.addEventListener('popstate', (e) => {
         const prevTab = tabHistory.pop();
         switchTab(prevTab, true);
     } else {
-        let startTab = CURRENT_USER && CURRENT_USER.role === 'Admin' ? 'profil' : 'kasir';
+        let startTab = 'profil';
         history.pushState({ tabId: startTab }, "", `#${startTab}`);
         switchTab(startTab, true);
     }
@@ -2666,7 +2667,7 @@ function loginSuccessLogic() {
     }
 
     tabHistory = [];
-    let startTab = CURRENT_USER.role === 'Admin' ? 'profil' : 'kasir';
+    let startTab = 'profil'; // Selalu langsung masuk tampilan Dashboard (Dashboard Kasir untuk Kasir, Dashboard Admin untuk Admin)
     history.pushState({ tabId: startTab }, "", `#${startTab}`);
     
     switchTab(startTab, true);
@@ -6340,17 +6341,8 @@ function generateSlipGajiHTML(t) {
     const jabatan = t['Jabatan'] || 'Dapur Bubur';
     const cabang = t['Cabang'] || 'Samarinda';
 
-    // SVG Tanda Tangan Owner Jamilah (Vector crisp, transparent, 100% sama persis dengan TTD JAMILAH.png - Single Clean Stroke)
-    const ttdSvg = `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 250" style="max-height: 64px; max-width: 170px; height: 100%; width: 100%; display: block;" fill="none">
-      <path d="M 182 32 C 187 23 194 21 200 25 C 204 20 211 20 215 26" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
-      <path d="M 28 126 C 12 108 26 78 78 62 C 135 46 198 62 216 88 C 228 106 210 134 162 148 C 112 162 38 158 18 138 C 8 126 14 110 48 92" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
-      <path d="M 160 34 C 148 78 114 162 90 218 C 82 234 88 242 100 238 C 114 232 132 208 148 168 C 168 118 180 68 172 38 C 168 32 160 30 156 36" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
-      <path d="M 68 68 C 105 64 155 65 198 68" stroke="#000000" stroke-width="3.5" stroke-linecap="round" />
-      <path d="M 160 120 L 174 72 L 184 122 L 196 72 L 206 122 L 218 72 L 228 122" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
-      <path d="M 194 125 L 285 128" stroke="#000000" stroke-width="3.8" stroke-linecap="round" />
-      <path d="M 228 122 C 235 90 248 55 258 48 C 265 52 260 75 250 115 C 232 178 212 232 205 244 C 200 250 205 255 212 250 C 225 240 250 190 272 130 C 290 82 304 48 296 46 C 288 46 280 68 276 102 C 274 120 282 125 298 120 C 320 112 355 118 395 118 C 415 118 435 117 448 118" stroke="#000000" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
-    </svg>`;
+    // Tanda Tangan Owner Jamilah (Format PNG Base64 resolusi tinggi, 100% muncul dan terbaca jelas pada hasil download PDF html2canvas/html2pdf)
+    const ttdImg = `<img src="${TTD_JAMILAH_PNG_BASE64}" width="160" height="60" alt="Tanda Tangan Pimpinan" style="max-height: 60px; max-width: 160px; width: auto; height: auto; object-fit: contain; display: block; margin: 0 auto;" />`;
 
     const logoUrl = '/assets/logo-istana-bubur.png';
     const fallbackLogo = 'https://lh3.googleusercontent.com/d/1raKw_On7XyxlT5Oqz45gAIDmb0eUinMc';
@@ -6457,7 +6449,7 @@ function generateSlipGajiHTML(t) {
                 <div style="text-align: center; width: 180px;">
                     <p style="margin: 0 0 2px 0; font-size: 11px; color: #111827;">Mengetahui,</p>
                     <div style="height: 64px; display: flex; align-items: center; justify-content: center; margin: 2px 0;">
-                        ${ttdSvg}
+                        ${ttdImg}
                     </div>
                     <div style="border-bottom: 1.2px solid #000000; width: 140px; margin: 0 auto 4px auto;"></div>
                     <p style="margin: 0; font-size: 11px; font-weight: 700; color: #000000;">Jamilah</p>
