@@ -220,6 +220,18 @@ export async function firestoreLogin(identity: string, pass: string, requestedRo
     };
   }
 
+  // Generate unique session identifier untuk kontrol 1 perangkat aktif
+  const sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+  const targetDocId = String(matchedUser.username || normIdentity).trim().toLowerCase();
+  try {
+    await setDoc(doc(db, COLLECTIONS.USERS, targetDocId), {
+      activeSessionId: sessionId,
+      lastLoginAt: new Date().toISOString()
+    }, { merge: true });
+  } catch (err) {
+    console.warn('[firestoreLogin activeSessionId update warning]:', err);
+  }
+
   return {
     success: true,
     user: {
@@ -228,9 +240,106 @@ export async function firestoreLogin(identity: string, pass: string, requestedRo
       role: matchedUser.role,
       cabang: matchedUser.cabang || (matchedUser.role === 'Admin' ? 'Pusat' : 'Cabang A'),
       email: matchedUser.email || '',
-      phone: matchedUser.phone || ''
+      phone: matchedUser.phone || '',
+      activeSessionId: sessionId
     }
   };
+}
+
+/**
+ * Memeriksa apakah akun pengguna masih ada dan aktif di Cloud Firestore serta mengambil activeSessionId.
+ * Jika dokumen pengguna sudah dihapus oleh Admin di Firebase, fungsi ini mengembalikan { exists: false }.
+ */
+export async function firestoreCheckUserValid(usernameOrIdentity: string): Promise<{ exists: boolean; isActive: boolean; role?: string; cabang?: string; activeSessionId?: string }> {
+  try {
+    const norm = String(usernameOrIdentity || '').trim().toLowerCase();
+    if (!norm) return { exists: false, isActive: false };
+
+    // 1. Cek langsung via ID dokumen (username huruf kecil)
+    const userDoc = await getDoc(doc(db, COLLECTIONS.USERS, norm));
+    if (userDoc.exists()) {
+      const u = userDoc.data();
+      return {
+        exists: true,
+        isActive: u.isActive !== false,
+        role: u.role,
+        cabang: u.cabang,
+        activeSessionId: u.activeSessionId || ''
+      };
+    }
+
+    // 2. Cek semua dokumen jika case atau format berbeda
+    const snap = await getDocs(collection(db, COLLECTIONS.USERS));
+    for (const d of snap.docs) {
+      const u = d.data();
+      const uName = String(u.username || d.id || '').trim().toLowerCase();
+      const uEmail = String(u.email || '').trim().toLowerCase();
+      if (uName === norm || (uEmail && uEmail === norm)) {
+        return {
+          exists: true,
+          isActive: u.isActive !== false,
+          role: u.role,
+          cabang: u.cabang,
+          activeSessionId: u.activeSessionId || ''
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[firestoreCheckUserValid Warning]:', err);
+  }
+  return { exists: false, isActive: false };
+}
+
+/**
+ * Berlangganan secara realtime (onSnapshot) terhadap status dokumen akun di Cloud Firestore.
+ * Mendeteksi 3 kondisi penghentian sesi:
+ * 1. 'deleted'         -> Dokumen akun telah dihapus di Firebase oleh Admin.
+ * 2. 'inactive'        -> Akun dinonaktifkan oleh Admin.
+ * 3. 'conflict_device' -> Akun telah login di perangkat lain (Login 1 Perangkat).
+ */
+export function firestoreSubscribeUser(
+  username: string, 
+  currentSessionId: string | null,
+  onSessionTerminated: (reason: 'deleted' | 'inactive' | 'conflict_device') => void
+): () => void {
+  try {
+    const uname = String(username || '').trim().toLowerCase();
+    if (!uname) return () => {};
+
+    const userDocRef = doc(db, COLLECTIONS.USERS, uname);
+    return onSnapshot(userDocRef, (docSnap) => {
+      if (!docSnap.exists()) {
+        onSessionTerminated('deleted');
+      } else {
+        const u = docSnap.data();
+        if (u && u.isActive === false) {
+          onSessionTerminated('inactive');
+        } else if (currentSessionId && u && u.activeSessionId && u.activeSessionId !== currentSessionId) {
+          // Ada perangkat lain yang login dengan akun ini!
+          onSessionTerminated('conflict_device');
+        }
+      }
+    }, (err) => {
+      console.warn('[firestoreSubscribeUser Error]:', err);
+    });
+  } catch (e) {
+    return () => {};
+  }
+}
+
+/**
+ * Menghapus activeSessionId pada akun di Firestore saat logout normal.
+ */
+export async function firestoreClearUserSession(username: string): Promise<void> {
+  try {
+    const uname = String(username || '').trim().toLowerCase();
+    if (!uname) return;
+    await setDoc(doc(db, COLLECTIONS.USERS, uname), {
+      activeSessionId: null
+    }, { merge: true });
+  } catch (err) {
+    console.warn('[firestoreClearUserSession Warning]:', err);
+  }
 }
 
 export async function firestoreCheckUserExists(username: string, email?: string) {
@@ -1486,5 +1595,8 @@ if (typeof window !== 'undefined') {
   (window as any).deleteAdminChatMessage = deleteAdminChatMessage;
   (window as any).deleteGroupChatMessage = deleteGroupChatMessage;
   (window as any).clearGroupChatMessages = clearGroupChatMessages;
+  (window as any).firestoreCheckUserValid = firestoreCheckUserValid;
+  (window as any).firestoreSubscribeUser = firestoreSubscribeUser;
+  (window as any).firestoreClearUserSession = firestoreClearUserSession;
 }
 

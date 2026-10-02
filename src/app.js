@@ -45,7 +45,10 @@ import {
     firestoreDeleteBranch,
     subscribeToBranches,
     firestoreSaveDocument,
-    firestoreGetDocument
+    firestoreGetDocument,
+    firestoreCheckUserValid,
+    firestoreSubscribeUser,
+    firestoreClearUserSession
 } from './firebase.ts';
 
 import {
@@ -690,6 +693,41 @@ function saveUserAccount(userObj) {
     return true;
 }
 
+// Menghapus akun pengguna dari cache lokal saat akun sudah dihapus di Firebase Firestore
+function removeUserAccount(identity) {
+    if (!identity) return;
+    const clean = String(identity).trim().toLowerCase();
+    try {
+        const raw = localStorage.getItem(USERS_STORAGE_KEY);
+        if (raw) {
+            let saved = JSON.parse(raw);
+            if (Array.isArray(saved)) {
+                saved = saved.filter(u => 
+                    (u.username || '').toLowerCase() !== clean && 
+                    (u.email || '').toLowerCase() !== clean
+                );
+                localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(saved));
+            }
+        }
+        // Bersihkan data remember jika username sama
+        const savedUser = (localStorage.getItem('ib_saved_user') || '').toLowerCase();
+        if (savedUser === clean) {
+            localStorage.removeItem('ib_saved_user');
+            localStorage.removeItem('ib_saved_pass');
+            localStorage.removeItem('ib_saved_role');
+            localStorage.removeItem('ib_remember');
+        }
+        // Perbarui FIRESTORE_USERS_CACHE jika ada
+        if (typeof FIRESTORE_USERS_CACHE !== 'undefined' && Array.isArray(FIRESTORE_USERS_CACHE)) {
+            FIRESTORE_USERS_CACHE = FIRESTORE_USERS_CACHE.filter(u => 
+                (u.username || '').toLowerCase() !== clean && 
+                (u.email || '').toLowerCase() !== clean
+            );
+        }
+    } catch(e) {}
+}
+window.removeUserAccount = removeUserAccount;
+
 let currentLoginRole = 'Admin'; // 'Admin' or 'Kasir'
 
 // Demo initial seed data for simulator mode
@@ -1100,7 +1138,16 @@ function openLogoutModal() {
     if (el) el.classList.remove('hidden-view');
 }
 
-function processLogout() {
+function processLogout(showNotice = true) {
+    if (window._currentUserUnsub) {
+        try { window._currentUserUnsub(); } catch(e){}
+        window._currentUserUnsub = null;
+    }
+
+    if (CURRENT_USER && CURRENT_USER.username && typeof firestoreClearUserSession === 'function') {
+        try { firestoreClearUserSession(CURRENT_USER.username); } catch(e){}
+    }
+
     closeModal('modal-logout');
     closeChatWebSocket();
     cabangUnreadCounts = {};
@@ -1111,6 +1158,8 @@ function processLogout() {
     sessionStorage.removeItem(SESSION_KEY);
     localStorage.removeItem(USER_DATA_KEY);
     sessionStorage.removeItem(USER_DATA_KEY);
+    localStorage.removeItem('ib_session_id');
+    sessionStorage.removeItem('ib_session_id');
     CURRENT_USER = null;
     
     const savedUser = localStorage.getItem('ib_saved_user');
@@ -1131,7 +1180,9 @@ function processLogout() {
     
     tabHistory = [];
     history.pushState(null, "", window.location.pathname);
-    showToast('Berhasil keluar dari aplikasi', 'success');
+    if (showNotice) {
+        showToast('Berhasil keluar dari aplikasi', 'success');
+    }
 }
 
 // ====================================================
@@ -1164,68 +1215,45 @@ async function callBackend(funcName, ...args) {
 
             try {
                 const fsRes = await firestoreLogin(inputIdentity, inputPass, requestedRole);
-                if (fsRes && (fsRes.success || fsRes.needsActivation || fsRes.message !== 'Pengguna tidak ditemukan di database Cloud Firestore.')) {
+                if (fsRes) {
+                    if (fsRes.success) {
+                        saveUserAccount({
+                            username: fsRes.user.username,
+                            fullName: fsRes.user.fullName,
+                            role: fsRes.user.role,
+                            cabang: fsRes.user.cabang,
+                            email: fsRes.user.email,
+                            phone: fsRes.user.phone,
+                            isActive: true
+                        });
+                        return fsRes;
+                    }
+
+                    // JIKA USER SUDAH DIHAPUS DI FIREBASE (atau tidak ditemukan):
+                    // Dokumen pengguna tidak ada di Cloud Firestore.
+                    // Bersihkan cache lokal pengguna agar tidak dapat login sama sekali!
+                    if (fsRes.message && (fsRes.message.includes('tidak ditemukan') || fsRes.message.includes('Cloud Firestore'))) {
+                        removeUserAccount(inputIdentity);
+                        return {
+                            success: false,
+                            message: 'Akun Anda tidak ditemukan atau sudah dihapus oleh Admin di Firebase.'
+                        };
+                    }
+
+                    // Untuk respons kesalahan lain dari Firestore (Password salah, Mismatch Role, Akun belum aktif):
                     return fsRes;
                 }
             } catch (err) {
-                console.warn('[Firestore Login Warning, falling back to local]', err);
-            }
-
-            // Local fallback
-            const users = getAllUsers();
-            const matched = users.find(u => 
-                (u.username.toLowerCase() === inputIdentity.toLowerCase() || (u.email && u.email.toLowerCase() === inputIdentity.toLowerCase()))
-            );
-
-            if (!matched) {
-                return { success: false, message: 'Username/password salah. Silakan periksa kembali.' };
-            }
-
-            // Validasi role berdasarkan data akun yang tersimpan di database
-            const userRoleNorm = String(matched.role || '').trim().toLowerCase();
-            const reqRoleNorm = String(requestedRole || '').trim().toLowerCase();
-
-            if (reqRoleNorm && userRoleNorm !== reqRoleNorm) {
-                if (userRoleNorm === 'admin') {
-                    return {
-                        success: false,
-                        message: 'Akun Anda terdaftar sebagai Admin. Silakan gunakan Login Admin.'
-                    };
-                } else if (userRoleNorm === 'kasir') {
-                    return {
-                        success: false,
-                        message: 'Akun Anda terdaftar sebagai Kasir. Silakan gunakan Login Kasir.'
-                    };
-                } else {
-                    return {
-                        success: false,
-                        message: `Akun Anda terdaftar sebagai ${matched.role}. Silakan gunakan Login ${matched.role}.`
-                    };
-                }
-            }
-
-            if (matched.password !== inputPass) {
-                return { success: false, message: 'Password salah. Silakan periksa kembali.' };
-            }
-            if (matched.isActive === false) {
-                return { 
-                    success: false, 
-                    needsActivation: true, 
-                    username: matched.username,
-                    message: 'Akun belum aktif! Anda wajib memasukkan Kode Autentikasi yang diberikan oleh Admin.' 
+                console.warn('[Firestore Login Error]', err);
+                return {
+                    success: false,
+                    message: 'Gagal memverifikasi akun ke Cloud Firestore. Pastikan perangkat Anda terhubung ke internet.'
                 };
             }
 
             return {
-                success: true,
-                user: {
-                    username: matched.username,
-                    fullName: matched.fullName || matched.username,
-                    role: matched.role,
-                    cabang: (matched.cabang && !['Cabang A', 'Cabang B', 'Cabang C'].includes(matched.cabang.trim())) ? matched.cabang : (matched.role === 'Admin' ? 'Pusat' : ''),
-                    email: matched.email,
-                    phone: matched.phone
-                }
+                success: false,
+                message: 'Akun Anda tidak ditemukan atau sudah dihapus oleh Admin di Firebase.'
             };
         } else if (funcName === 'registerUser') {
             const data = args[0];
@@ -1613,6 +1641,12 @@ async function handleLogin(e) {
         if (res.success) {
             CURRENT_USER = res.user;
 
+            // Simpan activeSessionId untuk kontrol 1 perangkat aktif
+            if (CURRENT_USER.activeSessionId) {
+                localStorage.setItem('ib_session_id', CURRENT_USER.activeSessionId);
+                sessionStorage.setItem('ib_session_id', CURRENT_USER.activeSessionId);
+            }
+
             // Pastikan user memiliki cabang yang valid (menggunakan cabang dari akun terdaftar)
             if (!CURRENT_USER.cabang) {
                 CURRENT_USER.cabang = 'Sempajak';
@@ -1680,9 +1714,38 @@ function checkAutoLogin() {
     if (isLoggedLocal || isLoggedSession) {
         const rawData = localStorage.getItem(USER_DATA_KEY) || sessionStorage.getItem(USER_DATA_KEY);
         if (rawData) {
-            CURRENT_USER = JSON.parse(rawData);
-            loginSuccessLogic();
-            return;
+            try {
+                const parsed = JSON.parse(rawData);
+                if (parsed && parsed.username) {
+                    CURRENT_USER = parsed;
+                    const mySessionId = localStorage.getItem('ib_session_id') || sessionStorage.getItem('ib_session_id') || parsed.activeSessionId;
+
+                    // Verifikasi keabsahan akun & single-device session di Cloud Firestore
+                    if (typeof firestoreCheckUserValid === 'function') {
+                        firestoreCheckUserValid(parsed.username).then(res => {
+                            if (!res.exists) {
+                                console.warn('[checkAutoLogin] Akun telah dihapus di Firebase, mengeluarkan user...');
+                                removeUserAccount(parsed.username);
+                                processLogout(false);
+                                showToast('Akun Anda tidak ditemukan atau sudah dihapus oleh Admin di Firebase.', 'error');
+                            } else if (!res.isActive) {
+                                console.warn('[checkAutoLogin] Akun dinonaktifkan di Firebase, mengeluarkan user...');
+                                processLogout(false);
+                                showToast('Akun Anda telah dinonaktifkan oleh Admin.', 'warning');
+                            } else if (res.activeSessionId && mySessionId && res.activeSessionId !== mySessionId) {
+                                console.warn('[checkAutoLogin] Akun telah login di perangkat lain, mengeluarkan user...');
+                                processLogout(false);
+                                showToast('Akun Anda telah masuk di perangkat lain. Sesi pada perangkat ini telah dihentikan (Login 1 Perangkat).', 'warning');
+                            }
+                        }).catch(e => console.warn('[checkAutoLogin verify warning]', e));
+                    }
+
+                    loginSuccessLogic();
+                    return;
+                }
+            } catch (err) {
+                console.warn('[checkAutoLogin parse error]', err);
+            }
         }
     }
 
@@ -2653,6 +2716,29 @@ function loginSuccessLogic() {
     initBranchSystem();
     initRealtimeTransactionsListener();
     initRealtimePayrollListener();
+
+    // Berlangganan status akun & session user di Firestore (Login 1 Perangkat & Deteksi Hapus Akun Real-Time)
+    if (typeof firestoreSubscribeUser === 'function' && CURRENT_USER?.username) {
+        if (window._currentUserUnsub) {
+            try { window._currentUserUnsub(); } catch(e){}
+            window._currentUserUnsub = null;
+        }
+        const mySessionId = localStorage.getItem('ib_session_id') || sessionStorage.getItem('ib_session_id') || CURRENT_USER.activeSessionId;
+        window._currentUserUnsub = firestoreSubscribeUser(CURRENT_USER.username, mySessionId, (reason) => {
+            console.warn(`[firestoreSubscribeUser] Sesi dihentikan karena: ${reason}`);
+            if (reason === 'deleted') {
+                removeUserAccount(CURRENT_USER.username);
+                processLogout(false);
+                showToast('Akun Anda telah dihapus oleh Admin di Firebase. Akses aplikasi dihentikan.', 'error');
+            } else if (reason === 'inactive') {
+                processLogout(false);
+                showToast('Akun Anda telah dinonaktifkan oleh Admin.', 'warning');
+            } else if (reason === 'conflict_device') {
+                processLogout(false);
+                showToast('Akun Anda telah masuk di perangkat lain. Sesi pada perangkat ini telah dihentikan (Login 1 Perangkat).', 'warning');
+            }
+        });
+    }
 
     const now = new Date();
     const monthDash = document.getElementById('filter-month-dashboard');
