@@ -48,7 +48,8 @@ import {
     firestoreGetDocument,
     firestoreCheckUserValid,
     firestoreSubscribeUser,
-    firestoreClearUserSession
+    firestoreClearUserSession,
+    subscribeToUsers
 } from './firebase.ts';
 
 import {
@@ -621,48 +622,35 @@ function unmarkBranchAsDeleted(branchName) {
 }
 
 // Ambil seluruh daftar cabang outlet kasir resmi (Sempajak, M Yamin, dsb)
-// PENTING: Penempatan Karyawan (Samarinda, Balikpapan, Jakarta) tidak digabung ke sini
+// Ambil seluruh daftar cabang outlet kasir resmi (Sempajak, M Yamin, dsb)
+// PENTING: Cabang yang telah dihapus di Firebase tidak akan disertakan
 function getAllRegisteredBranches() {
     const deletedList = getDeletedBranchesList();
     const NON_OUTLET_CITIES = ['samarinda', 'balikpapan', 'jakarta', 'surabaya', 'bangkalan'];
     const branchSet = new Set();
 
-    // 0. Cabang dasar resmi disertakan HANYA jika belum dihapus
-    ['Sempajak', 'M Yamin'].forEach(b => {
-        if (!deletedList.includes(b.toLowerCase())) {
-            branchSet.add(b);
-        }
-    });
-
-    // 1. Cabang outlet tersimpan di BRANCHES_CACHE
-    if (typeof BRANCHES_CACHE !== 'undefined' && Array.isArray(BRANCHES_CACHE)) {
+    // 1. Dari BRANCHES_CACHE (yang realtime tersinkron dengan Firestore)
+    if (typeof BRANCHES_CACHE !== 'undefined' && Array.isArray(BRANCHES_CACHE) && BRANCHES_CACHE.length > 0) {
         BRANCHES_CACHE.forEach(b => {
             const norm = normalizeBranchName(b);
             if (norm && !deletedList.includes(norm.toLowerCase()) && !NON_OUTLET_CITIES.includes(norm.toLowerCase())) {
                 branchSet.add(norm);
             }
         });
-    }
-    
-    // 2. Ambil dari akun pengguna kasir yang terdaftar di Firestore (kecuali yang sudah dihapus)
-    if (typeof FIRESTORE_USERS_CACHE !== 'undefined' && Array.isArray(FIRESTORE_USERS_CACHE)) {
-        FIRESTORE_USERS_CACHE.forEach(u => {
-            const role = (u.role || '').toLowerCase();
-            if (role === 'kasir') {
-                const norm = normalizeBranchName(u.cabang);
-                if (norm && !deletedList.includes(norm.toLowerCase()) && !NON_OUTLET_CITIES.includes(norm.toLowerCase())) {
-                    branchSet.add(norm);
-                }
+    } else {
+        // Fallback default sebelum cache Firestore termuat
+        ['Sempajak', 'M Yamin'].forEach(b => {
+            if (!deletedList.includes(b.toLowerCase())) {
+                branchSet.add(b);
             }
         });
     }
-
-    // 3. Ambil dari akun pengguna kasir lokal yang terdaftar (kecuali yang sudah dihapus)
-    const users = getAllUsers();
-    if (Array.isArray(users)) {
-        users.forEach(u => {
+    
+    // 2. Ambil dari akun pengguna kasir aktif yang terdaftar di Firestore
+    if (typeof FIRESTORE_USERS_CACHE !== 'undefined' && Array.isArray(FIRESTORE_USERS_CACHE)) {
+        FIRESTORE_USERS_CACHE.forEach(u => {
             const role = (u.role || '').toLowerCase();
-            if (role === 'kasir') {
+            if (role === 'kasir' && u.isActive !== false) {
                 const norm = normalizeBranchName(u.cabang);
                 if (norm && !deletedList.includes(norm.toLowerCase()) && !NON_OUTLET_CITIES.includes(norm.toLowerCase())) {
                     branchSet.add(norm);
@@ -674,6 +662,46 @@ function getAllRegisteredBranches() {
     return Array.from(branchSet).sort();
 }
 window.getAllRegisteredBranches = getAllRegisteredBranches;
+
+// Ambil seluruh kasir resmi yang terdaftar & aktif di Cloud Firestore (bukan akun dummy dan bukan akun yang sudah dihapus)
+function getActiveRegisteredCashiers(branchFilter = null) {
+    const disallowedUsernames = new Set(['admin', 'kasir', 'kasir1', 'kasir2', 'aris_dev']);
+    const deletedBranches = getDeletedBranchesList();
+    const cashiersMap = new Map();
+
+    // Prioritaskan FIRESTORE_USERS_CACHE yang disinkronkan secara realtime dengan Firebase
+    const sourceUsers = (Array.isArray(FIRESTORE_USERS_CACHE) && FIRESTORE_USERS_CACHE.length > 0)
+        ? FIRESTORE_USERS_CACHE
+        : getAllUsers();
+
+    sourceUsers.forEach(u => {
+        const role = String(u.role || '').toLowerCase();
+        const uname = String(u.username || '').trim();
+        const isActive = u.isActive !== false;
+
+        if (role === 'kasir' && uname && isActive && !disallowedUsernames.has(uname.toLowerCase())) {
+            const rawCabang = u.cabang || 'Sempajak';
+            const normCabang = normalizeBranchName(rawCabang) || 'Sempajak';
+
+            // Jika cabang kasir ini sudah dihapus di Firebase/sistem, jangan sertakan kasir ini
+            if (deletedBranches.includes(normCabang.toLowerCase())) return;
+
+            // Jika ada filter cabang spesifik
+            if (branchFilter && branchFilter !== 'Semua') {
+                if (normCabang.toLowerCase() !== branchFilter.toLowerCase()) return;
+            }
+
+            cashiersMap.set(uname.toLowerCase(), {
+                username: uname,
+                name: u.fullName || uname,
+                cabang: normCabang
+            });
+        }
+    });
+
+    return Array.from(cashiersMap.values());
+}
+window.getActiveRegisteredCashiers = getActiveRegisteredCashiers;
 
 function saveUserAccount(userObj) {
     let saved = [];
@@ -1142,6 +1170,11 @@ function processLogout(showNotice = true) {
     if (window._currentUserUnsub) {
         try { window._currentUserUnsub(); } catch(e){}
         window._currentUserUnsub = null;
+    }
+
+    if (unsubscribeUsers) {
+        try { unsubscribeUsers(); } catch(e){}
+        unsubscribeUsers = null;
     }
 
     if (CURRENT_USER && CURRENT_USER.username && typeof firestoreClearUserSession === 'function') {
@@ -2714,6 +2747,7 @@ function loginSuccessLogic() {
     applyRoleRestrictions();
     initRealtimeChatSystem();
     initBranchSystem();
+    initRealtimeUsersListener();
     initRealtimeTransactionsListener();
     initRealtimePayrollListener();
 
@@ -3159,8 +3193,12 @@ async function initBranchSystem() {
                 renderLoginBranchChips();
                 renderRegisterBranchChips();
                 populateCabangFilterDashboard();
+                populateKasirFilterDashboard();
                 if (typeof populateRegisterBranchOptions === 'function') {
                     populateRegisterBranchOptions();
+                }
+                if (typeof updateDashboardCharts === 'function' && CURRENT_USER?.role === 'Admin') {
+                    updateDashboardCharts();
                 }
             }
         });
@@ -3172,6 +3210,52 @@ async function initBranchSystem() {
     populateCabangFilterDashboard();
     populateKasirFilterDashboard();
 }
+
+// Listener Realtime Seluruh Pengguna dari Cloud Firestore
+let unsubscribeUsers = null;
+
+function initRealtimeUsersListener() {
+    if (typeof subscribeToUsers !== 'function') return;
+    try {
+        if (unsubscribeUsers) unsubscribeUsers();
+        unsubscribeUsers = subscribeToUsers((users) => {
+            console.log('[Firestore Realtime Users Update]', users);
+            if (Array.isArray(users)) {
+                FIRESTORE_USERS_CACHE = users;
+                try {
+                    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+                } catch(e) {}
+
+                // Jika akun kasir/admin yang sedang login telah dihapus di Firebase oleh Admin
+                if (CURRENT_USER && CURRENT_USER.username) {
+                    const currentStillExists = users.some(u => 
+                        (u.username || '').toLowerCase() === CURRENT_USER.username.toLowerCase()
+                    );
+                    if (!currentStillExists) {
+                        removeUserAccount(CURRENT_USER.username);
+                        processLogout(false);
+                        showToast('Akun Anda telah dihapus oleh Admin di Firebase. Akses dihentikan.', 'error');
+                        return;
+                    }
+                }
+
+                // Perbarui filter kasir, filter cabang, dan grafik dashboard secara otomatis
+                if (typeof populateKasirFilterDashboard === 'function') {
+                    populateKasirFilterDashboard();
+                }
+                if (typeof populateCabangFilterDashboard === 'function') {
+                    populateCabangFilterDashboard();
+                }
+                if (typeof updateDashboardCharts === 'function' && CURRENT_USER?.role === 'Admin') {
+                    updateDashboardCharts();
+                }
+            }
+        });
+    } catch(err) {
+        console.warn('[initRealtimeUsersListener Warning]:', err);
+    }
+}
+window.initRealtimeUsersListener = initRealtimeUsersListener;
 
 function selectLoginBranch(branchName) {
     activeLoginCabang = branchName;
@@ -3493,54 +3577,9 @@ async function populateKasirFilterDashboard() {
     const filter = document.getElementById('filter-kasir-dashboard');
     if (!filter) return;
 
-    // Ambil semua kasir yang sah terdaftar di Firestore users
-    try {
-        if (FIRESTORE_USERS_CACHE.length === 0) {
-            const fsUsers = await firestoreGetAllUsers();
-            if (Array.isArray(fsUsers)) FIRESTORE_USERS_CACHE = fsUsers;
-        }
-    } catch(e){}
-
     const currentVal = activeDashboardKasir || filter.value || 'Semua';
-    const cashiersMap = new Map();
-    const disallowedUsernames = new Set(['admin', 'kasir', 'kasir1', 'kasir2', 'aris_dev']);
+    let cashiersList = typeof getActiveRegisteredCashiers === 'function' ? getActiveRegisteredCashiers() : [];
 
-    // 1. Dari Firestore users (Hanya akun Kasir resmi yang terdaftar)
-    if (Array.isArray(FIRESTORE_USERS_CACHE)) {
-        FIRESTORE_USERS_CACHE.forEach(u => {
-            const role = (u.role || '').toLowerCase();
-            const uname = (u.username || '').trim();
-            if (role === 'kasir' && uname && !disallowedUsernames.has(uname.toLowerCase())) {
-                const normCabang = normalizeBranchName(u.cabang) || 'Sempajak';
-                cashiersMap.set(uname.toLowerCase(), {
-                    username: uname,
-                    name: u.fullName || uname,
-                    cabang: normCabang
-                });
-            }
-        });
-    }
-
-    // 2. Dari local storage users (Hanya yang terdaftar secara sah sebagai Kasir)
-    const localUsers = getAllUsers();
-    if (Array.isArray(localUsers)) {
-        localUsers.forEach(u => {
-            const role = (u.role || '').toLowerCase();
-            const uname = (u.username || '').trim();
-            if (role === 'kasir' && uname && !disallowedUsernames.has(uname.toLowerCase())) {
-                if (!cashiersMap.has(uname.toLowerCase())) {
-                    const normCabang = normalizeBranchName(u.cabang) || 'Sempajak';
-                    cashiersMap.set(uname.toLowerCase(), {
-                        username: uname,
-                        name: u.fullName || uname,
-                        cabang: normCabang
-                    });
-                }
-            }
-        });
-    }
-
-    let cashiersList = Array.from(cashiersMap.values());
     if (activeDashboardCabang && activeDashboardCabang !== 'Semua') {
         // Urutkan yang cabangnya cocok lebih dulu
         cashiersList.sort((a, b) => {
@@ -3777,6 +3816,26 @@ function updateDashboardCharts() {
     let rawTrx = HISTORI_TRX_CACHE || [];
     let filteredTrx = rawTrx;
 
+    // Ambil daftar cabang outlet & kasir resmi yang AKTIF saat ini di Cloud Firestore
+    const validBranches = typeof getAllRegisteredBranches === 'function' ? getAllRegisteredBranches() : [];
+    const validBranchesLower = validBranches.map(b => b.toLowerCase());
+    
+    const allRegisteredCashiers = typeof getActiveRegisteredCashiers === 'function' ? getActiveRegisteredCashiers() : [];
+    const registeredCashierUsernames = new Set(allRegisteredCashiers.map(k => k.username.toLowerCase()));
+    const registeredCashierNames = new Set(allRegisteredCashiers.map(k => k.name.toLowerCase()));
+
+    // Jika cabang yang sebelumnya dipilih sudah dihapus di Firebase, kembalikan filter ke 'Semua'
+    let effectiveFilterCabang = filterCabang;
+    if (effectiveFilterCabang && effectiveFilterCabang !== 'Semua') {
+        if (!validBranchesLower.includes(effectiveFilterCabang.toLowerCase())) {
+            effectiveFilterCabang = 'Semua';
+            activeDashboardCabang = 'Semua';
+            if (labelCabang) labelCabang.innerText = 'Semua Cabang';
+            const filterCabangEl = document.getElementById('filter-cabang-dashboard');
+            if (filterCabangEl) filterCabangEl.value = 'Semua';
+        }
+    }
+
     // 1. Filter Periode (Hari Ini / Semua / Kustom)
     if (dashboardPeriodMode === 'today') {
         filteredTrx = filteredTrx.filter(t => isDateTrxToday(t['Tanggal'], t._timestamp));
@@ -3797,9 +3856,31 @@ function updateDashboardCharts() {
         }
     }
 
+    // Filter transaksi: pastikan HANYA transaksi dari cabang dan kasir yang masih ada (tidak dihapus)
+    filteredTrx = filteredTrx.filter(t => {
+        const cNorm = normalizeBranchName(t['Cabang'] || t.cabang || '');
+        // Jika cabang outlet ini sudah dihapus di Firebase, transaksi tidak disertakan di grafik
+        if (cNorm && !validBranchesLower.includes(cNorm.toLowerCase())) {
+            return false;
+        }
+
+        const kName = String(t['Kasir'] || t.kasir || '').trim().toLowerCase();
+        // Jika kasir ini sudah dihapus di Firebase, transaksi tidak disertakan di grafik
+        if (kName && allRegisteredCashiers.length > 0) {
+            const isRegistered = registeredCashierUsernames.has(kName) || registeredCashierNames.has(kName);
+            if (!isRegistered) {
+                return false;
+            }
+        }
+        return true;
+    });
+
     // 2. Filter Cabang
-    if (filterCabang && filterCabang !== 'Semua') {
-        filteredTrx = filteredTrx.filter(t => (t['Cabang'] || t.cabang || 'Sempajak') === filterCabang);
+    if (effectiveFilterCabang && effectiveFilterCabang !== 'Semua') {
+        filteredTrx = filteredTrx.filter(t => {
+            const c = normalizeBranchName(t['Cabang'] || t.cabang || '') || '';
+            return c.toLowerCase() === effectiveFilterCabang.toLowerCase();
+        });
     }
 
     // 3. Filter Kasir Terdaftar
@@ -3818,7 +3899,7 @@ function updateDashboardCharts() {
     const activeKasirSet = new Set();
 
     filteredTrx.forEach(t => { 
-        const cabang = t['Cabang'] || t.cabang || 'Sempajak'; 
+        const cabang = normalizeBranchName(t['Cabang'] || t.cabang || 'Sempajak') || 'Sempajak'; 
         const kasir = t['Kasir'] || t.kasir || 'Kasir';
         const omset = Number(t['Total Belanja'] || t.total || 0); 
         totalPenjualan += omset; 
@@ -3850,7 +3931,7 @@ function updateDashboardCharts() {
         syncTimeEl.innerText = `Terakhir sinkron: ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())} WIB`;
     }
 
-    // Render Grafik Penjualan (Sesuai Cabang atau Per Kasir)
+    // Render Grafik Penjualan (Sesuai Cabang atau Per Kasir Terdaftar)
     const canvasPenjualan = document.getElementById('chart-penjualan');
     if (canvasPenjualan && typeof Chart !== 'undefined') {
         const ctxPenjualan = canvasPenjualan.getContext('2d');
@@ -3863,23 +3944,28 @@ function updateDashboardCharts() {
         let chartData = [];
         let datasetLabel = 'Total Penjualan (Rp)';
 
-        if (filterCabang === 'Semua') {
-            // Tampilkan perbandingan omset antar cabang (Sempajak, M Yamin, dll)
-            const registered = typeof getAllRegisteredBranches === 'function' ? getAllRegisteredBranches() : [];
-            const branchesToDisplay = Array.from(new Set(['Sempajak', 'M Yamin', ...registered]));
-            chartLabels = branchesToDisplay;
-            chartData = branchesToDisplay.map(c => penjualanPerCabang[c] || 0);
-            datasetLabel = 'Omset Penjualan per Cabang';
+        if (effectiveFilterCabang === 'Semua') {
+            // Tampilkan perbandingan omset per cabang outlet resmi yang aktif (cabang terhapus otomatis hilang)
+            chartLabels = validBranches;
+            chartData = validBranches.map(c => penjualanPerCabang[c] || 0);
+            datasetLabel = 'Omset Penjualan per Cabang Outlet (Aktif)';
         } else {
-            // Tampilkan perbandingan kasir di cabang terpilih
-            chartLabels = Object.keys(penjualanPerKasir);
-            if (chartLabels.length === 0) {
-                chartLabels = [filterCabang];
-                chartData = [totalPenjualan];
+            // Tampilkan perbandingan kasir yang TERDAFTAR pada cabang outlet terpilih (kasir terhapus otomatis hilang)
+            const branchCashiers = getActiveRegisteredCashiers(effectiveFilterCabang);
+
+            if (branchCashiers.length > 0) {
+                chartLabels = branchCashiers.map(k => k.name || k.username);
+                chartData = branchCashiers.map(k => {
+                    const byUname = penjualanPerKasir[k.username] || 0;
+                    const byName = penjualanPerKasir[k.name] || 0;
+                    return Math.max(byUname, byName);
+                });
+                datasetLabel = `Omset Penjualan Kasir Terdaftar (Cabang ${effectiveFilterCabang})`;
             } else {
-                chartData = chartLabels.map(k => penjualanPerKasir[k]);
+                chartLabels = [effectiveFilterCabang];
+                chartData = [penjualanPerCabang[effectiveFilterCabang] || totalPenjualan || 0];
+                datasetLabel = `Omset Penjualan Cabang ${effectiveFilterCabang}`;
             }
-            datasetLabel = `Omset Penjualan Cabang ${filterCabang} per Kasir`;
         }
 
         chartPenjualan = new Chart(ctxPenjualan, { 

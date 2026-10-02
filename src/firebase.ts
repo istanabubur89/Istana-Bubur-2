@@ -1408,6 +1408,40 @@ export function subscribeToBranches(callback: (branches: string[]) => void): () 
   }
 }
 
+/**
+ * Berlangganan secara realtime terhadap seluruh pengguna terdaftar di Cloud Firestore.
+ * Saat ada kasir yang ditambahkan atau dihapus di Firebase, callback akan langsung dipanggil.
+ */
+export function subscribeToUsers(callback: (users: any[]) => void): () => void {
+  try {
+    const colRef = collection(db, COLLECTIONS.USERS);
+    const unsub = onSnapshot(colRef, (snap) => {
+      const list: any[] = [];
+      snap.docs.forEach((d) => {
+        const u = d.data();
+        list.push({
+          username: u.username || d.id,
+          fullName: u.fullName || u.username || d.id,
+          email: u.email || '',
+          phone: u.phone || '',
+          role: u.role || 'Kasir',
+          cabang: u.cabang || 'Sempajak',
+          isActive: u.isActive !== false,
+          activeSessionId: u.activeSessionId || ''
+        });
+      });
+      callback(list);
+    }, (err) => {
+      console.warn('[Firestore subscribeToUsers Warning]:', err);
+      callback([]);
+    });
+    return unsub;
+  } catch (e) {
+    callback([]);
+    return () => {};
+  }
+}
+
 // -------------------------------------------------------------
 // DOKUMEN ELEKTRONIK PUBLIK (NOTA TRANSAKSI & SLIP GAJI PDF)
 // -------------------------------------------------------------
@@ -1598,5 +1632,6 @@ if (typeof window !== 'undefined') {
   (window as any).firestoreCheckUserValid = firestoreCheckUserValid;
   (window as any).firestoreSubscribeUser = firestoreSubscribeUser;
   (window as any).firestoreClearUserSession = firestoreClearUserSession;
+  (window as any).subscribeToUsers = subscribeToUsers;
 }
 
