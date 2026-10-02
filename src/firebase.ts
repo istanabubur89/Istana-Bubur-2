@@ -238,7 +238,7 @@ export async function firestoreLogin(identity: string, pass: string, requestedRo
       username: matchedUser.username,
       fullName: matchedUser.fullName || matchedUser.username,
       role: matchedUser.role,
-      cabang: matchedUser.cabang || (matchedUser.role === 'Admin' ? 'Pusat' : 'Cabang A'),
+      cabang: (String(matchedUser.role || '').toLowerCase() === 'admin') ? 'Pusat' : (matchedUser.cabang || 'Sempajak'),
       email: matchedUser.email || '',
       phone: matchedUser.phone || '',
       activeSessionId: sessionId
@@ -380,7 +380,7 @@ export async function firestoreRegister(userData: any) {
     email: userData.email || '',
     phone: userData.phone || '',
     role: userData.role || 'Kasir',
-    cabang: userData.cabang || 'Cabang A',
+    cabang: (String(userData.role || '').toLowerCase() === 'admin') ? 'Pusat' : (userData.cabang || 'Sempajak'),
     isActive: userData.isActive ?? true,
     authCode: userData.authCode || '',
     createdAt: new Date().toISOString()
