@@ -659,13 +659,24 @@ function getAllRegisteredBranches() {
         });
     }
 
+    // 3. Sertakan cabang Pusat jika ada transaksi penjualan yang dibuat oleh Admin dengan cabang Pusat
+    if (typeof HISTORI_TRX_CACHE !== 'undefined' && Array.isArray(HISTORI_TRX_CACHE)) {
+        const hasPusat = HISTORI_TRX_CACHE.some(t => {
+            const c = String(t['Cabang'] || t.cabang || '').trim().toLowerCase();
+            return c === 'pusat';
+        });
+        if (hasPusat && !deletedList.includes('pusat')) {
+            branchSet.add('Pusat');
+        }
+    }
+
     return Array.from(branchSet).sort();
 }
 window.getAllRegisteredBranches = getAllRegisteredBranches;
 
-// Ambil seluruh kasir resmi yang terdaftar & aktif di Cloud Firestore (bukan akun dummy dan bukan akun yang sudah dihapus)
+// Ambil seluruh kasir resmi & akun admin aktif di Cloud Firestore (bukan akun dummy dan bukan akun yang sudah dihapus)
 function getActiveRegisteredCashiers(branchFilter = null) {
-    const disallowedUsernames = new Set(['admin', 'kasir', 'kasir1', 'kasir2', 'aris_dev']);
+    const disallowedUsernames = new Set(['kasir1', 'kasir2', 'aris_dev']);
     const deletedBranches = getDeletedBranchesList();
     const cashiersMap = new Map();
 
@@ -679,25 +690,38 @@ function getActiveRegisteredCashiers(branchFilter = null) {
         const uname = String(u.username || '').trim();
         const isActive = u.isActive !== false;
 
-        if (role === 'kasir' && uname && isActive && !disallowedUsernames.has(uname.toLowerCase())) {
-            const rawCabang = u.cabang || 'Sempajak';
-            const normCabang = normalizeBranchName(rawCabang) || 'Sempajak';
+        if ((role === 'kasir' || role === 'admin') && uname && isActive && !disallowedUsernames.has(uname.toLowerCase())) {
+            const rawCabang = u.cabang || (role === 'admin' ? 'Pusat' : 'Sempajak');
+            const normCabang = normalizeBranchName(rawCabang) || rawCabang;
 
             // Jika cabang kasir ini sudah dihapus di Firebase/sistem, jangan sertakan kasir ini
-            if (deletedBranches.includes(normCabang.toLowerCase())) return;
+            if (deletedBranches.includes(normCabang.toLowerCase()) && role !== 'admin') return;
 
-            // Jika ada filter cabang spesifik
+            // Jika ada filter cabang spesifik:
             if (branchFilter && branchFilter !== 'Semua') {
-                if (normCabang.toLowerCase() !== branchFilter.toLowerCase()) return;
+                if (role === 'kasir' && normCabang.toLowerCase() !== branchFilter.toLowerCase()) return;
             }
 
             cashiersMap.set(uname.toLowerCase(), {
                 username: uname,
                 name: u.fullName || uname,
-                cabang: normCabang
+                cabang: normCabang,
+                role: u.role || (role === 'admin' ? 'Admin' : 'Kasir')
             });
         }
     });
+
+    // Pastikan akun 'admin' selalu ada di cashiersMap agar transaksi penjualan yang dibuat Admin selalu valid dan masuk grafik
+    if (!cashiersMap.has('admin')) {
+        const adminName = (CURRENT_USER && CURRENT_USER.role === 'Admin') ? (CURRENT_USER.fullName || CURRENT_USER.username || 'Admin') : 'Admin';
+        const adminCabang = (CURRENT_USER && CURRENT_USER.cabang) ? CURRENT_USER.cabang : 'Pusat';
+        cashiersMap.set('admin', {
+            username: 'admin',
+            name: adminName,
+            cabang: adminCabang,
+            role: 'Admin'
+        });
+    }
 
     return Array.from(cashiersMap.values());
 }
@@ -3432,21 +3456,16 @@ function renderDashboardBranchChips() {
             `;
         }
 
+        const displayText = (c === 'Semua') ? 'Semua Cabang' : c;
+
         html += `
             <div onclick="selectDashboardBranch('${escapeHtml(c)}')" class="${cls}">
                 ${icon}
-                <span>${escapeHtml(c)}</span>
+                <span>${escapeHtml(displayText)}</span>
                 ${deleteBtn}
             </div>
         `;
     });
-
-    html += `
-        <button type="button" onclick="openAddBranchModal('dashboard')" class="px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all bg-red-50 hover:bg-red-100 text-red-600 border border-dashed border-red-300 hover:border-red-400 cursor-pointer flex items-center gap-1 active:scale-95" title="Tambah Cabang Baru">
-            <i class="fas fa-plus text-[10px]"></i>
-            <span>Tambah Cabang</span>
-        </button>
-    `;
 
     chipsContainer.innerHTML = html;
 }
@@ -3589,10 +3608,11 @@ async function populateKasirFilterDashboard() {
         });
     }
 
-    let html = '<option value="Semua">Semua Kasir Terdaftar</option>';
+    let html = '<option value="Semua">Semua Kasir & Admin</option>';
     cashiersList.forEach(k => {
         const isMatchCabang = (activeDashboardCabang === 'Semua' || k.cabang.toLowerCase() === activeDashboardCabang.toLowerCase());
-        const prefix = isMatchCabang ? '🟢 ' : '⚪ ';
+        const isAdm = (k.role === 'Admin' || k.username.toLowerCase() === 'admin');
+        const prefix = isAdm ? '⭐ ' : (isMatchCabang ? '🟢 ' : '⚪ ');
         html += `<option value="${escapeHtml(k.username)}" ${k.username.toLowerCase() === currentVal.toLowerCase() ? 'selected' : ''}>${prefix}${escapeHtml(k.name)} (${escapeHtml(k.cabang)})</option>`;
     });
 
@@ -3865,8 +3885,10 @@ function updateDashboardCharts() {
         }
 
         const kName = String(t['Kasir'] || t.kasir || '').trim().toLowerCase();
-        // Jika kasir ini sudah dihapus di Firebase, transaksi tidak disertakan di grafik
-        if (kName && allRegisteredCashiers.length > 0) {
+        const isAdminTrx = (kName === 'admin' || kName === 'administrator' || (CURRENT_USER && CURRENT_USER.role === 'Admin' && kName === CURRENT_USER.username.toLowerCase()));
+
+        // Jika transaksi kasir biasa (bukan Admin), cek apakah akun kasir tersebut masih aktif terdaftar (tidak dihapus di Firebase)
+        if (kName && !isAdminTrx && allRegisteredCashiers.length > 0) {
             const isRegistered = registeredCashierUsernames.has(kName) || registeredCashierNames.has(kName);
             if (!isRegistered) {
                 return false;
@@ -3900,11 +3922,14 @@ function updateDashboardCharts() {
 
     filteredTrx.forEach(t => { 
         const cabang = normalizeBranchName(t['Cabang'] || t.cabang || 'Sempajak') || 'Sempajak'; 
-        const kasir = t['Kasir'] || t.kasir || 'Kasir';
+        const rawKasir = String(t['Kasir'] || t.kasir || 'Kasir').trim();
+        const kasirLower = rawKasir.toLowerCase();
+        const kasir = (kasirLower === 'admin' || kasirLower === 'administrator') ? 'Admin' : rawKasir;
         const omset = Number(t['Total Belanja'] || t.total || 0); 
         totalPenjualan += omset; 
         penjualanPerCabang[cabang] = (penjualanPerCabang[cabang] || 0) + omset; 
         penjualanPerKasir[kasir] = (penjualanPerKasir[kasir] || 0) + omset;
+        penjualanPerKasir[kasirLower] = (penjualanPerKasir[kasirLower] || 0) + omset;
         activeKasirSet.add(kasir);
     });
 
@@ -3923,7 +3948,7 @@ function updateDashboardCharts() {
         statTrxCount.innerText = `${trxCount} Transaksi (${periodText})`;
     }
     if (statAvg) statAvg.innerText = 'Rp ' + formatRupiah(avgPenjualan);
-    if (statKasirAktif) statKasirAktif.innerText = `${activeKasirSet.size} Kasir Aktif`;
+    if (statKasirAktif) statKasirAktif.innerText = `${activeKasirSet.size} Kasir & Admin`;
 
     if (syncTimeEl) {
         const now = new Date();
@@ -3931,7 +3956,7 @@ function updateDashboardCharts() {
         syncTimeEl.innerText = `Terakhir sinkron: ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())} WIB`;
     }
 
-    // Render Grafik Penjualan (Sesuai Cabang atau Per Kasir Terdaftar)
+    // Render Grafik Penjualan (Sesuai Cabang atau Per Kasir & Admin Terdaftar)
     const canvasPenjualan = document.getElementById('chart-penjualan');
     if (canvasPenjualan && typeof Chart !== 'undefined') {
         const ctxPenjualan = canvasPenjualan.getContext('2d');
@@ -3942,28 +3967,57 @@ function updateDashboardCharts() {
 
         let chartLabels = [];
         let chartData = [];
+        let barColors = [];
         let datasetLabel = 'Total Penjualan (Rp)';
 
         if (effectiveFilterCabang === 'Semua') {
-            // Tampilkan perbandingan omset per cabang outlet resmi yang aktif (cabang terhapus otomatis hilang)
+            // Tampilkan perbandingan omset per cabang outlet resmi yang aktif
+            if (penjualanPerCabang['Pusat'] > 0 && !validBranches.includes('Pusat')) {
+                validBranches.push('Pusat');
+            }
             chartLabels = validBranches;
             chartData = validBranches.map(c => penjualanPerCabang[c] || 0);
+            barColors = chartLabels.map(() => '#10b981');
             datasetLabel = 'Omset Penjualan per Cabang Outlet (Aktif)';
         } else {
-            // Tampilkan perbandingan kasir yang TERDAFTAR pada cabang outlet terpilih (kasir terhapus otomatis hilang)
-            const branchCashiers = getActiveRegisteredCashiers(effectiveFilterCabang);
+            // Tampilkan perbandingan kasir & Admin yang memiliki penjualan atau terdaftar pada cabang outlet terpilih
+            let branchCashiers = getActiveRegisteredCashiers(effectiveFilterCabang);
+
+            // Periksa omset penjualan Admin pada cabang ini
+            const adminOmset = Math.max(
+                penjualanPerKasir['Admin'] || 0,
+                penjualanPerKasir['admin'] || 0,
+                (CURRENT_USER && CURRENT_USER.username ? (penjualanPerKasir[CURRENT_USER.username] || 0) : 0)
+            );
+
+            // Pastikan Admin selalu tampil di grafik penjualan kasir cabang
+            const hasAdminInBranch = branchCashiers.some(k => k.username.toLowerCase() === 'admin');
+            if (!hasAdminInBranch) {
+                branchCashiers.unshift({
+                    username: 'admin',
+                    name: (CURRENT_USER && CURRENT_USER.role === 'Admin' ? (CURRENT_USER.fullName || CURRENT_USER.username) : 'Admin'),
+                    cabang: effectiveFilterCabang,
+                    role: 'Admin'
+                });
+            }
 
             if (branchCashiers.length > 0) {
                 chartLabels = branchCashiers.map(k => k.name || k.username);
                 chartData = branchCashiers.map(k => {
                     const byUname = penjualanPerKasir[k.username] || 0;
                     const byName = penjualanPerKasir[k.name] || 0;
-                    return Math.max(byUname, byName);
+                    const byLower = penjualanPerKasir[k.username.toLowerCase()] || 0;
+                    return Math.max(byUname, byName, byLower);
                 });
-                datasetLabel = `Omset Penjualan Kasir Terdaftar (Cabang ${effectiveFilterCabang})`;
+                barColors = branchCashiers.map(k => {
+                    const isAdm = (k.role === 'Admin' || k.username.toLowerCase() === 'admin');
+                    return isAdm ? '#ef4444' : '#10b981';
+                });
+                datasetLabel = `Omset Penjualan per Kasir & Admin (Cabang ${effectiveFilterCabang})`;
             } else {
                 chartLabels = [effectiveFilterCabang];
                 chartData = [penjualanPerCabang[effectiveFilterCabang] || totalPenjualan || 0];
+                barColors = ['#f59e0b'];
                 datasetLabel = `Omset Penjualan Cabang ${effectiveFilterCabang}`;
             }
         }
@@ -3975,7 +4029,7 @@ function updateDashboardCharts() {
                 datasets: [{ 
                     label: datasetLabel, 
                     data: chartData.length ? chartData : [0], 
-                    backgroundColor: filterCabang === 'Semua' ? '#10b981' : '#f59e0b', 
+                    backgroundColor: barColors.length ? barColors : (effectiveFilterCabang === 'Semua' ? '#10b981' : '#f59e0b'), 
                     borderRadius: 6,
                     maxBarThickness: 45
                 }] 
