@@ -49,7 +49,9 @@ import {
     firestoreCheckUserValid,
     firestoreSubscribeUser,
     firestoreClearUserSession,
-    subscribeToUsers
+    subscribeToUsers,
+    cloudSendReferralCode,
+    cloudVerifyReferralCode
 } from './firebase.ts';
 
 import {
@@ -1872,14 +1874,193 @@ function onRegisterRoleChange(role) {
     }
 }
 
+// State & Timer Verifikasi Kode Referral Email
+let referralCooldownTimer = null;
+let referralCooldownSeconds = 0;
+let referralExpiryTimer = null;
+let isReferralVerified = false;
+let verifiedReferralEmail = '';
+
+function startReferralCooldown(seconds) {
+    referralCooldownSeconds = seconds;
+    const btn = document.getElementById('btn-request-referral');
+    const btnText = document.getElementById('btn-request-referral-text');
+
+    if (referralCooldownTimer) clearInterval(referralCooldownTimer);
+    referralCooldownTimer = setInterval(() => {
+        referralCooldownSeconds--;
+        if (referralCooldownSeconds <= 0) {
+            clearInterval(referralCooldownTimer);
+            referralCooldownTimer = null;
+            if (btn) btn.disabled = false;
+            if (btnText) btnText.innerText = 'Kirim Ulang';
+        } else {
+            if (btn) btn.disabled = true;
+            if (btnText) btnText.innerText = `Kirim Ulang (${referralCooldownSeconds}s)`;
+        }
+    }, 1000);
+}
+
+function startReferralExpiryCountdown(secondsRemaining) {
+    let expSec = secondsRemaining;
+    const badge = document.getElementById('referral-expiry-badge');
+
+    if (referralExpiryTimer) clearInterval(referralExpiryTimer);
+    referralExpiryTimer = setInterval(() => {
+        expSec--;
+        if (expSec <= 0) {
+            clearInterval(referralExpiryTimer);
+            referralExpiryTimer = null;
+            if (badge) badge.innerText = '⚠️ Kedaluwarsa (10 Menit)';
+            isReferralVerified = false;
+        } else {
+            const m = Math.floor(expSec / 60);
+            const s = expSec % 60;
+            const pad = (n) => String(n).padStart(2, '0');
+            if (badge) badge.innerText = `⏳ Berlaku: ${pad(m)}:${pad(s)}`;
+        }
+    }, 1000);
+}
+
+async function handleRequestReferralCode() {
+    const email = (document.getElementById('reg-email')?.value || '').trim().toLowerCase();
+    const username = (document.getElementById('reg-user')?.value || document.getElementById('reg-nama')?.value || 'Pengguna').trim();
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email || !emailRegex.test(email)) {
+        showToast('Format email tidak valid! Harap masukkan email yang benar (contoh: user@gmail.com).', 'warning');
+        document.getElementById('reg-email')?.focus();
+        return;
+    }
+
+    if (referralCooldownSeconds > 0) {
+        showToast(`Batas pengiriman aktif. Harap tunggu ${referralCooldownSeconds} detik sebelum meminta kode baru.`, 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('btn-request-referral');
+    const btnText = document.getElementById('btn-request-referral-text');
+    const sentStatus = document.getElementById('referral-sent-status');
+
+    if (btn) btn.disabled = true;
+    if (btnText) btnText.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Mengirim...';
+
+    try {
+        await cloudSendReferralCode(email, username);
+        
+        // Sesuai ketentuan instruksi: Jika email berhasil dikirim, tampilkan "Terkirim"
+        if (sentStatus) {
+            sentStatus.classList.remove('hidden');
+            sentStatus.innerHTML = '<i class="fas fa-check-circle text-emerald-500"></i> Terkirim';
+        }
+        if (btnText) btnText.innerText = 'Terkirim';
+
+        showToast(`Terkirim! Kode referral 6 digit telah dikirim ke ${email}. Masa berlaku 10 menit.`, 'success');
+
+        // Saat meminta kode baru, kode lama langsung tidak berlaku
+        isReferralVerified = false;
+        verifiedReferralEmail = '';
+        const verifyBadge = document.getElementById('referral-verification-badge');
+        if (verifyBadge) {
+            verifyBadge.className = 'text-[11px] font-bold text-amber-600 mt-1 flex items-center gap-1';
+            verifyBadge.innerHTML = '<i class="fas fa-info-circle"></i> Kode baru terkirim. Kode lama otomatis tidak berlaku.';
+            verifyBadge.classList.remove('hidden');
+        }
+
+        // Mulai countdown masa berlaku 10 menit
+        startReferralExpiryCountdown(10 * 60);
+
+        // Batas pengiriman ulang (Cooldown 60 detik) agar tidak dapat disalahgunakan
+        startReferralCooldown(60);
+
+        // Fokuskan ke kolom input kode referral
+        document.getElementById('reg-referral-code')?.focus();
+
+    } catch (err) {
+        console.error('[handleRequestReferralCode Error]:', err);
+        const errMsg = err?.message || 'Pengiriman email gagal. Pastikan alamat email aktif.';
+        showToast(errMsg, 'error');
+        if (btn) btn.disabled = false;
+        if (btnText) btnText.innerText = 'Kirim Ulang';
+        if (sentStatus) sentStatus.classList.add('hidden');
+    }
+}
+window.handleRequestReferralCode = handleRequestReferralCode;
+
+async function handleVerifyReferralCode() {
+    const email = (document.getElementById('reg-email')?.value || '').trim().toLowerCase();
+    const code = (document.getElementById('reg-referral-code')?.value || '').trim();
+
+    if (!email) {
+        showToast('Masukkan alamat email terlebih dahulu.', 'warning');
+        document.getElementById('reg-email')?.focus();
+        return;
+    }
+
+    if (!code || code.length !== 6) {
+        showToast('Masukkan 6 digit kode referral yang dikirimkan ke email Anda.', 'warning');
+        document.getElementById('reg-referral-code')?.focus();
+        return;
+    }
+
+    const btn = document.getElementById('btn-verify-referral');
+    const verifyBadge = document.getElementById('referral-verification-badge');
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    }
+
+    try {
+        await cloudVerifyReferralCode(email, code);
+        isReferralVerified = true;
+        verifiedReferralEmail = email;
+
+        if (verifyBadge) {
+            verifyBadge.className = 'text-[11px] font-bold text-emerald-600 mt-1 flex items-center gap-1';
+            verifyBadge.innerHTML = '<i class="fas fa-check-circle"></i> Terverifikasi! Silakan masukkan Kode Autentikasi Admin untuk menyelesaikan.';
+            verifyBadge.classList.remove('hidden');
+        }
+
+        showToast('Kode referral berhasil diverifikasi! Silakan lanjutkan proses autentikasi.', 'success');
+        document.getElementById('reg-auth-code')?.focus();
+    } catch (err) {
+        console.error('[handleVerifyReferralCode Error]:', err);
+        const errMsg = err?.message || 'Kode referral salah atau telah kedaluwarsa.';
+        showToast(errMsg, 'error');
+        if (verifyBadge) {
+            verifyBadge.className = 'text-[11px] font-bold text-red-600 mt-1 flex items-center gap-1';
+            verifyBadge.innerHTML = `<i class="fas fa-times-circle"></i> ${escapeHtml(errMsg)}`;
+            verifyBadge.classList.remove('hidden');
+        }
+        isReferralVerified = false;
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-check text-[10px]"></i> <span>Verifikasi</span>';
+        }
+    }
+}
+window.handleVerifyReferralCode = handleVerifyReferralCode;
+
 function openRegisterModal() {
     tempRegistration = null;
+    isReferralVerified = false;
+    verifiedReferralEmail = '';
 
     if (document.getElementById('reg-nama')) document.getElementById('reg-nama').value = '';
     if (document.getElementById('reg-user')) document.getElementById('reg-user').value = '';
     if (document.getElementById('reg-email')) document.getElementById('reg-email').value = '';
     if (document.getElementById('reg-wa')) document.getElementById('reg-wa').value = '';
+    if (document.getElementById('reg-referral-code')) document.getElementById('reg-referral-code').value = '';
     
+    const sentStatus = document.getElementById('referral-sent-status');
+    if (sentStatus) sentStatus.classList.add('hidden');
+    const verifyBadge = document.getElementById('referral-verification-badge');
+    if (verifyBadge) verifyBadge.classList.add('hidden');
+    const expBadge = document.getElementById('referral-expiry-badge');
+    if (expBadge) expBadge.innerText = '⏳ Berlaku 10 Menit';
+
     const roleSelect = document.getElementById('reg-role');
     const initialRole = currentLoginRole || 'Kasir';
     if (roleSelect) roleSelect.value = initialRole;
@@ -1898,7 +2079,7 @@ function openRegisterModal() {
 async function submitRegisterDirect() {
     const nama = (document.getElementById('reg-nama')?.value || '').trim();
     const user = (document.getElementById('reg-user')?.value || '').trim();
-    const email = (document.getElementById('reg-email')?.value || '').trim();
+    const email = (document.getElementById('reg-email')?.value || '').trim().toLowerCase();
     const wa = (document.getElementById('reg-wa')?.value || '').trim();
     const role = document.getElementById('reg-role')?.value || 'Kasir';
     const pass = (document.getElementById('reg-pass')?.value || '').trim();
@@ -1907,6 +2088,20 @@ async function submitRegisterDirect() {
 
     if (!nama || !user || !email || !wa || !pass || !passConf) {
         showToast('Semua data diri wajib diisi!', 'warning');
+        return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        showToast('Format email tidak valid! Harap gunakan format seperti user@gmail.com', 'error');
+        document.getElementById('reg-email')?.focus();
+        return;
+    }
+
+    // Validasi Wajib Kode Referral Email
+    if (!isReferralVerified || verifiedReferralEmail !== email) {
+        showToast('Anda wajib memverifikasi 6 digit kode referral yang dikirim ke email terlebih dahulu!', 'warning');
+        document.getElementById('reg-referral-code')?.focus();
         return;
     }
 
@@ -1922,12 +2117,6 @@ async function submitRegisterDirect() {
     if (!inputAuthCode) {
         showToast('Kode autentikasi admin wajib diisi!', 'warning');
         document.getElementById('reg-auth-code')?.focus();
-        return;
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-        showToast('Format email tidak valid! Harap gunakan format seperti user@gmail.com', 'error');
         return;
     }
 

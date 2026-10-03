@@ -16,6 +16,16 @@ import {
   onSnapshot,
   enableIndexedDbPersistence
 } from 'firebase/firestore';
+import {
+  getAuth,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signInAnonymously,
+  onAuthStateChanged,
+  signOut as firebaseSignOut
+} from 'firebase/auth';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 
 export const firebaseConfig = {
   projectId: "gen-lang-client-0004446574",
@@ -24,7 +34,8 @@ export const firebaseConfig = {
   authDomain: "gen-lang-client-0004446574.firebaseapp.com",
   firestoreDatabaseId: "ai-studio-istanabubur-4840979b-eb04-419d-b020-ec08e9c46b4c",
   storageBucket: "gen-lang-client-0004446574.firebasestorage.app",
-  messagingSenderId: "1029760704961"
+  messagingSenderId: "1029760704961",
+  recaptchaSiteKey: ""
 };
 
 // Initialize Firebase App
@@ -32,6 +43,37 @@ export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
 // Initialize Firestore with specific Database ID
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+// Initialize Firebase Authentication
+export const auth = getAuth(app);
+
+// Initialize Firebase Functions
+export const functionsClient = getFunctions(app, 'us-central1');
+
+// Initialize Firebase App Check if key is available
+if (typeof window !== 'undefined' && firebaseConfig.recaptchaSiteKey) {
+  try {
+    initializeAppCheck(app, {
+      provider: new ReCaptchaV3Provider(firebaseConfig.recaptchaSiteKey),
+      isTokenAutoRefreshEnabled: true
+    });
+  } catch (e) {
+    console.warn('[Firebase App Check]:', e);
+  }
+}
+
+// Pastikan sesi Firebase Auth selalu aktif untuk mematuhi Security Rules
+export async function ensureFirebaseAuthSession() {
+  if (typeof window === 'undefined') return;
+  try {
+    if (!auth.currentUser) {
+      await signInAnonymously(auth);
+    }
+  } catch (err) {
+    console.warn('[ensureFirebaseAuthSession]:', err);
+  }
+}
+ensureFirebaseAuthSession();
 
 // Enable offline persistence if available
 if (typeof window !== 'undefined') {
@@ -232,6 +274,26 @@ export async function firestoreLogin(identity: string, pass: string, requestedRo
     console.warn('[firestoreLogin activeSessionId update warning]:', err);
   }
 
+  // Sinkronkan sesi Firebase Authentication resmi
+  try {
+    const authEmail = matchedUser.email || `${targetDocId}@istanabubur.com`;
+    try {
+      await signInWithEmailAndPassword(auth, authEmail, pass);
+    } catch (authErr: any) {
+      if (authErr?.code === 'auth/user-not-found' || authErr?.code === 'auth/invalid-credential') {
+        try {
+          await createUserWithEmailAndPassword(auth, authEmail, pass);
+        } catch {
+          await signInAnonymously(auth);
+        }
+      } else {
+        await signInAnonymously(auth);
+      }
+    }
+  } catch (authSessErr) {
+    console.warn('[Firebase Auth Login Link Warning]:', authSessErr);
+  }
+
   return {
     success: true,
     user: {
@@ -244,6 +306,68 @@ export async function firestoreLogin(identity: string, pass: string, requestedRo
       activeSessionId: sessionId
     }
   };
+}
+
+/**
+ * Cloud Functions: Pengiriman Kode Referral 6 Digit via Firebase
+ */
+export async function cloudSendReferralCode(email: string, username: string) {
+  const normEmail = String(email || '').trim().toLowerCase();
+  const normUser = String(username || 'Pengguna').trim();
+
+  // 1. Coba panggil Firebase Callable Cloud Function terlebih dahulu
+  try {
+    const sendFn = httpsCallable<{ email: string; username: string }, { success: boolean; status: string; message: string; expiresAtMs: number }>(functionsClient, 'sendReferralCode');
+    const result = await sendFn({ email: normEmail, username: normUser });
+    if (result && result.data && result.data.success) {
+      return result.data;
+    }
+  } catch (fnErr: any) {
+    console.warn('[cloudSendReferralCode Callable Notice]:', fnErr.message || fnErr);
+  }
+
+  // 2. Fallback melalui REST API endpoint
+  const resp = await fetch('/api/auth/send-referral-code', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: normEmail, username: normUser })
+  });
+  const data = await resp.json();
+  if (!resp.ok || !data.success) {
+    throw new Error(data.message || 'Gagal mengirimkan kode referral ke email.');
+  }
+  return data;
+}
+
+/**
+ * Cloud Functions: Verifikasi Kode Referral 6 Digit
+ */
+export async function cloudVerifyReferralCode(email: string, code: string) {
+  const normEmail = String(email || '').trim().toLowerCase();
+  const normCode = String(code || '').trim();
+
+  // 1. Coba panggil Firebase Callable Cloud Function terlebih dahulu
+  try {
+    const verifyFn = httpsCallable<{ email: string; code: string }, { success: boolean; message: string }>(functionsClient, 'verifyReferralCode');
+    const result = await verifyFn({ email: normEmail, code: normCode });
+    if (result && result.data && result.data.success) {
+      return result.data;
+    }
+  } catch (fnErr: any) {
+    console.warn('[cloudVerifyReferralCode Callable Notice]:', fnErr.message || fnErr);
+  }
+
+  // 2. Fallback melalui REST API endpoint
+  const resp = await fetch('/api/auth/verify-referral-code', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: normEmail, code: normCode })
+  });
+  const data = await resp.json();
+  if (!resp.ok || !data.success) {
+    throw new Error(data.message || 'Kode referral tidak valid atau telah kedaluwarsa.');
+  }
+  return data;
 }
 
 /**

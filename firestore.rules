@@ -3,88 +3,163 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'istanabubur89@gmail.com' ||
+        request.auth.token.admin == true ||
+        request.auth.uid == 'admin' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Admin')
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && (
+        request.auth.uid == userId ||
+        request.auth.token.email == userId
+      );
+    }
+
     // -------------------------------------------------------------
     // KOLEKSI: USERS (Akun Kasir & Admin)
     // -------------------------------------------------------------
     match /users/{userId} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow create: if (
+        request.resource.data.keys().hasAll(['username', 'role', 'cabang']) &&
+        request.resource.data.username is string &&
+        request.resource.data.role in ['Admin', 'Kasir']
+      ) || isAdmin();
+      allow update: if isSignedIn() && (isOwner(userId) || isAdmin());
+      allow delete: if isAdmin();
     }
 
     // -------------------------------------------------------------
     // KOLEKSI: PRODUCTS (Master Menu Makanan & Minuman)
+    // Publik membaca katalog menu makanan; hanya Admin yang dapat mengubah.
     // -------------------------------------------------------------
     match /products/{productId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
     // -------------------------------------------------------------
     // KOLEKSI: TRANSACTIONS (Pencatatan Penjualan Kasir Real-Time)
     // -------------------------------------------------------------
     match /transactions/{trxId} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+        request.resource.data.total is number &&
+        request.resource.data.total >= 0;
+      allow update, delete: if isAdmin();
     }
 
     // -------------------------------------------------------------
     // KOLEKSI: EMPLOYEES (Master Data Staf & Karyawan)
+    // Hanya Admin yang memiliki wewenang mengelola data kepegawaian.
     // -------------------------------------------------------------
     match /employees/{empId} {
-      allow read, write: if true;
+      allow read, write: if isAdmin();
     }
 
     // -------------------------------------------------------------
     // KOLEKSI: PAYROLL (Slip Gaji & Riwayat Penggajian)
+    // Hanya Admin yang memiliki wewenang mengelola penggajian.
     // -------------------------------------------------------------
     match /payroll/{slipId} {
-      allow read, write: if true;
+      allow read, write: if isAdmin();
     }
+
     // -------------------------------------------------------------
     // KOLEKSI: DOCUMENTS (Nota & Slip PDF untuk tautan unduh publik)
+    // Dibaca oleh publik (pelanggan melalui tautan nota WhatsApp).
     // -------------------------------------------------------------
     match /documents/{docId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isSignedIn();
     }
+
     // -------------------------------------------------------------
     // KOLEKSI: BRANCHES (Daftar Cabang Operasional)
     // -------------------------------------------------------------
     match /branches/{branchId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAdmin();
     }
+
     match /system_deleted_branches/{branchId} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
+
     // -------------------------------------------------------------
-    // KOLEKSI: SETTINGS (Pengaturan Sistem & Kunci Autentikasi Admin)
+    // KOLEKSI: SETTINGS (Pengaturan Sistem)
     // -------------------------------------------------------------
     match /settings/{settingId} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
 
     // -------------------------------------------------------------
     // KOLEKSI: REFERRAL_CODES (OTP Referral Verifikasi Email)
+    // Dikelola 100% oleh Cloud Functions (Admin SDK). Client tidak
+    // dapat membaca atau menulis langsung hash kode referral (Zero Trust).
     // -------------------------------------------------------------
     match /referralCodes/{email} {
-      allow read, write: if true;
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------
+    // KOLEKSI: MAIL (Firebase Extension "Trigger Email")
+    // Dokumen hanya dibuat oleh Cloud Functions / Backend (Admin SDK).
+    // Pengguna dilarang membuat atau menulis dokumen langsung (mencegah spam/penyalahgunaan).
+    // -------------------------------------------------------------
+    match /mail/{mailId} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // -------------------------------------------------------------
     // KOLEKSI: ADMIN CONVERSATIONS (Metadata Percakapan 1-on-1 User ↔ Admin)
     // -------------------------------------------------------------
-    match /admin_conversations/{allPaths=**} {
-      allow read, write: if true;
+    match /admin_conversations/{username} {
+      allow read, write: if isSignedIn() && (
+        request.auth.uid == username ||
+        isAdmin()
+      );
     }
 
     // -------------------------------------------------------------
     // KOLEKSI: ADMIN CHATS (Pesan Pribadi User ↔ Admin)
     // -------------------------------------------------------------
-    match /admin_chats/{allPaths=**} {
-      allow read, write: if true;
+    match /admin_chats/{username}/messages/{msgId} {
+      allow read, write: if isSignedIn() && (
+        request.auth.uid == username ||
+        isAdmin()
+      );
     }
 
     // -------------------------------------------------------------
     // KOLEKSI: GROUP MESSAGES (Obrolan Grup Pengguna Seluruh Aplikasi)
     // -------------------------------------------------------------
-    match /group_messages/{allPaths=**} {
-      allow read, write: if true;
+    match /group_messages/{msgId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+        request.resource.data.text is string &&
+        request.resource.data.text.size() <= 3000;
+      allow update, delete: if isAdmin();
+    }
+
+    // -------------------------------------------------------------
+    // DEFAULT CATCH-ALL: DENY ALL
+    // -------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

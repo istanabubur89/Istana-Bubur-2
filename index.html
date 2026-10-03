@@ -1896,11 +1896,41 @@
                 </div>
 
                 <div class="space-y-1 text-left">
-                    <label class="block text-xs font-bold text-gray-700">Email Aktif <span class="text-red-500">*</span></label>
-                    <div class="relative">
-                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><i class="fas fa-envelope text-gray-400 text-xs"></i></div>
-                        <input type="email" id="reg-email" required placeholder="budi@example.com" class="w-full border border-gray-200 rounded-xl py-3 pl-9 pr-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                    <div class="flex items-center justify-between">
+                        <label class="block text-xs font-bold text-gray-700">Email Aktif <span class="text-red-500">*</span></label>
+                        <span id="referral-sent-status" class="text-[10px] font-bold text-emerald-600 hidden flex items-center gap-1"><i class="fas fa-check-circle"></i> Terkirim</span>
                     </div>
+                    <div class="flex gap-2">
+                        <div class="relative flex-1">
+                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><i class="fas fa-envelope text-gray-400 text-xs"></i></div>
+                            <input type="email" id="reg-email" required placeholder="budi@example.com" class="w-full border border-gray-200 rounded-xl py-3 pl-9 pr-3 text-xs bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-red-600">
+                        </div>
+                        <button type="button" id="btn-request-referral" onclick="handleRequestReferralCode()" class="px-3.5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer">
+                            <i class="fas fa-paper-plane text-[10px]"></i>
+                            <span id="btn-request-referral-text">Kirim Kode</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Bagian Verifikasi 6 Digit Kode Referral Email -->
+                <div id="reg-referral-container" class="space-y-1.5 text-left bg-blue-50/80 p-3.5 rounded-2xl border border-blue-200">
+                    <div class="flex items-center justify-between">
+                        <label class="block text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                            <i class="fas fa-shield-halved text-blue-600"></i>
+                            <span>Kode Referral Email (6 Digit)</span>
+                            <span class="text-red-500">*</span>
+                        </label>
+                        <span id="referral-expiry-badge" class="text-[10px] font-bold text-blue-700 bg-blue-100/80 px-2 py-0.5 rounded-full">⏳ Berlaku 10 Menit</span>
+                    </div>
+                    <p class="text-[10px] text-blue-700 leading-tight">Tekan tombol "Kirim Kode", lalu masukkan 6 digit kode acak dari email Anda untuk verifikasi:</p>
+                    <div class="flex items-center gap-2 pt-0.5">
+                        <input type="text" id="reg-referral-code" maxlength="6" placeholder="Contoh: 123456" class="w-full border-2 border-blue-300 rounded-xl py-2.5 px-3 text-xs font-mono font-bold text-center tracking-widest bg-white focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-400/30">
+                        <button type="button" id="btn-verify-referral" onclick="handleVerifyReferralCode()" class="px-3.5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shrink-0 flex items-center gap-1 cursor-pointer">
+                            <i class="fas fa-check text-[10px]"></i>
+                            <span>Verifikasi</span>
+                        </button>
+                    </div>
+                    <div id="referral-verification-badge" class="text-[11px] font-bold mt-1 hidden"></div>
                 </div>
 
                 <div class="space-y-1 text-left">
