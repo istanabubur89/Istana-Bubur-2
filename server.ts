@@ -401,7 +401,7 @@ let sharedPooledTransporter: any = null;
 
 function getSharedEmailTransporter() {
   const user = (process.env.SMTP_USER || 'istanabubur89@gmail.com').trim();
-  const rawPass = process.env.SMTP_PASS || process.env.SMTP_PASSWORD || '';
+  const rawPass = process.env.SMTP_PASS || process.env.SMTP_PASSWORD || 'axqgkpswdfooekzu';
   const pass = rawPass ? rawPass.replace(/\s+/g, '') : '';
   const from = process.env.SMTP_FROM || `"Istana Bubur" <${user}>`;
 
@@ -441,7 +441,7 @@ function createEmailTransporter(forcePort?: number) {
   const port = forcePort || defaultPort;
   const secure = port === 465;
   const user = (process.env.SMTP_USER || 'istanabubur89@gmail.com').trim();
-  const rawPass = process.env.SMTP_PASS || process.env.SMTP_PASSWORD || '';
+  const rawPass = process.env.SMTP_PASS || process.env.SMTP_PASSWORD || 'axqgkpswdfooekzu';
   const pass = rawPass ? rawPass.replace(/\s+/g, '') : '';
   const from = process.env.SMTP_FROM || `"Istana Bubur" <${user}>`;
 
@@ -1469,7 +1469,7 @@ istanabubur89@gmail.com`;
 // Endpoint status SMTP Gmail
 app.get('/api/auth/smtp-status', async (req, res) => {
   const user = (process.env.SMTP_USER || 'istanabubur89@gmail.com').trim();
-  const rawPass = process.env.SMTP_PASS || process.env.SMTP_PASSWORD || '';
+  const rawPass = process.env.SMTP_PASS || process.env.SMTP_PASSWORD || 'axqgkpswdfooekzu';
   const pass = rawPass ? rawPass.replace(/\s+/g, '') : '';
 
   if (!user || !pass) {

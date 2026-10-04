@@ -51,10 +51,7 @@ import {
     firestoreClearUserSession,
     subscribeToUsers,
     cloudSendReferralCode,
-    cloudVerifyReferralCode,
-    cloudVerifyAdminCode,
-    toOutletId,
-    uploadImageToFirebaseStorage
+    cloudVerifyReferralCode
 } from './firebase.ts';
 
 import {
@@ -510,7 +507,7 @@ window.sendReferralViaWhatsApp = sendReferralViaWhatsApp;
 
 // Kunci Autentikasi Khusus Admin Pusat (Hanya Diketahui oleh Admin/Owner)
 function getActiveMasterAuthKey() {
-    return localStorage.getItem(MASTER_AUTH_STORAGE_KEY) || '';
+    return localStorage.getItem(MASTER_AUTH_STORAGE_KEY) || 'IB-AUTH-2026';
 }
 
 function setActiveMasterAuthKey(newKey) {
@@ -533,6 +530,9 @@ function setActiveMasterAuthKey(newKey) {
     const curEl = document.getElementById('input-current-auth-code');
     if (curEl) curEl.value = cleanKey;
 }
+
+// Fallback kode otorisasi bawaan
+const VALID_AUTH_CODES = ['IB-AUTH-2026', 'ADMIN-IB-889', 'IB-PUSAT-99'];
 
 
 // Daftar nama cabang tidak valid / dilarang (dummy / testing / role / kota yang bukan outlet)
@@ -560,9 +560,10 @@ function getAllUsers() {
         if (saved) {
             let parsed = JSON.parse(saved);
             if (Array.isArray(parsed)) {
-                // Filter hapus akun dummy kasir1/kasir2/kasir yang tidak terdaftar
+                // Filter hapus akun bawaan admin/123456 dan dummy kasir1/kasir2/kasir yang tidak terdaftar
                 parsed = parsed.filter(u => {
                     const uname = (u.username || '').toLowerCase();
+                    if (uname === 'admin' && (u.password === '123456' || u.password === '123')) return false;
                     if (uname === 'kasir1' || uname === 'kasir2' || uname === 'kasir') return false;
                     return true;
                 });
@@ -1338,12 +1339,8 @@ async function callBackend(funcName, ...args) {
             return { success: true, message: 'Pendaftaran berhasil disimpan ke Cloud Database.' };
         } else if (funcName === 'verifyAdminAuthCode') {
             const code = String(args[0] || '').trim().toUpperCase();
-            try {
-                const res = await cloudVerifyAdminCode(code);
-                return res && res.success ? { success: true } : { success: false, message: 'Kode autentikasi salah atau tidak valid.' };
-            } catch (err) {
-                return { success: false, message: err?.message || 'Kode autentikasi salah atau tidak valid.' };
-            }
+            const isValid = VALID_AUTH_CODES.map(c => c.toUpperCase()).includes(code);
+            return isValid ? { success: true } : { success: false, message: 'Kode autentikasi salah atau tidak valid.' };
         } else if (funcName === 'resetUserPassword') {
             const uname = String(args[0] || '').trim();
             const newPass = String(args[1] || '').trim();
@@ -1485,29 +1482,7 @@ async function callBackend(funcName, ...args) {
             return { success: true, message: 'Data karyawan berhasil dihapus dari Cloud Firestore' };
         } else if (funcName === 'getHistoriTransaksi') {
             try {
-                const isKasir = CURRENT_USER && (CURRENT_USER.role === 'Kasir' || String(CURRENT_USER.role).toLowerCase() === 'kasir');
-                const myOutletId = CURRENT_USER ? (CURRENT_USER.outletId || toOutletId(CURRENT_USER.cabang)) : 'pusat';
-                const pad = (n) => String(n).padStart(2, '0');
-                const now = new Date();
-                const todayStr = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
-
-                const filterCabangEl = document.getElementById('filter-cabang-trx');
-                const selectedCabang = args[0] || (filterCabangEl ? filterCabangEl.value : 'Semua');
-                const targetAdminOutletId = (selectedCabang && selectedCabang !== 'Semua') ? toOutletId(selectedCabang) : undefined;
-
-                const opts = isKasir ? {
-                    role: 'Kasir',
-                    outletId: myOutletId,
-                    dateStr: todayStr,
-                    limitCount: 50
-                } : {
-                    role: 'Admin',
-                    cabang: (selectedCabang && selectedCabang !== 'Semua') ? selectedCabang : undefined,
-                    outletId: targetAdminOutletId,
-                    limitCount: 100
-                };
-
-                const fsList = await firestoreGetHistoriTransaksi(opts);
+                const fsList = await firestoreGetHistoriTransaksi();
                 if (fsList && fsList.length > 0) {
                     localStorage.setItem(TRX_STORAGE_KEY, JSON.stringify(fsList));
                     return fsList;
@@ -1520,11 +1495,8 @@ async function callBackend(funcName, ...args) {
             const trx = args[0] || {};
             const userCabang = trx.cabang || (CURRENT_USER && CURRENT_USER.cabang ? CURRENT_USER.cabang : 'Pusat');
             const userKasir = trx.kasir || (CURRENT_USER && CURRENT_USER.username ? CURRENT_USER.username : 'Kasir');
-            const userOutletId = CURRENT_USER?.outletId || toOutletId(userCabang);
             trx.cabang = userCabang;
-            trx.outletId = userOutletId;
             trx.kasir = userKasir;
-            trx.kasirUid = CURRENT_USER?.uid || '';
 
             let trxId = trx.id || ('TRX-' + Math.floor(100000 + Math.random() * 900000));
             try {
@@ -1705,11 +1677,19 @@ function setLoginRole(role) {
     }
 }
 
-function clearLoginForm() {
+function setDemoLogin(username, password, role) {
     const uInput = document.getElementById('l-user');
     const pInput = document.getElementById('l-pass');
-    if (uInput) uInput.value = '';
-    if (pInput) pInput.value = '';
+    if (uInput) uInput.value = username;
+    if (pInput) pInput.value = password;
+    
+    if (role) {
+        setLoginRole(role);
+    } else {
+        setLoginRole(username.toLowerCase().includes('kasir') ? 'Kasir' : 'Admin');
+    }
+    
+    showToast(`Akun demo ${username} (${role || currentLoginRole}) dipilih`, 'info');
 }
 
 async function handleLogin(e) {
@@ -1849,8 +1829,8 @@ function checkAutoLogin() {
     // Kosongkan form login awal agar pengguna memasukkan akunnya sendiri
     const uInput = document.getElementById('l-user');
     const pInput = document.getElementById('l-pass');
-    if (uInput && !localStorage.getItem('ib_remember')) uInput.value = '';
-    if (pInput && !localStorage.getItem('ib_remember')) pInput.value = '';
+    if (uInput && (uInput.value === 'admin' || !uInput.value)) uInput.value = '';
+    if (pInput && (pInput.value === '123456' || !pInput.value)) pInput.value = '';
 }
 
 // ==========================================
@@ -2164,16 +2144,22 @@ async function submitRegisterDirect() {
         btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Memvalidasi & Membuat Akun...';
     }
 
-    // Validasi Kode Autentikasi Admin Pusat melalui Server
+    // Validasi Kode Autentikasi Admin Pusat
     let isValid = false;
     try {
-        const res = await cloudVerifyAdminCode(inputAuthCode);
+        const resp = await fetch(getApiEndpoint('/api/auth/verify-admin-code'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: inputAuthCode })
+        });
+        const res = await resp.json();
         if (res && res.success) {
             isValid = true;
         }
     } catch(e) {
-        console.warn('[submitRegisterDirect verify error]:', e);
-        isValid = false;
+        // Fallback validasi lokal bila offline
+        const master = getActiveMasterAuthKey().toUpperCase();
+        isValid = (inputAuthCode === master || VALID_AUTH_CODES.map(c => c.toUpperCase()).includes(inputAuthCode));
     }
 
     if (!isValid) {
@@ -2897,17 +2883,12 @@ async function submitForgotPasswordStep2() {
 // PENGELOLAAN KUNCI AUTENTIKASI ADMIN PUSAT
 // ==========================================
 async function syncAdminAuthKeyUI() {
-    if (!CURRENT_USER || CURRENT_USER.role !== 'Admin') return;
     const activeKey = getActiveMasterAuthKey();
     const displayEl = document.getElementById('admin-display-auth-key');
-    if (displayEl && activeKey) displayEl.value = activeKey;
+    if (displayEl) displayEl.value = activeKey;
 
     try {
-        const resp = await fetch(getApiEndpoint('/api/auth/get-admin-codes'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ role: 'Admin', uid: CURRENT_USER.uid })
-        });
+        const resp = await fetch(getApiEndpoint('/api/auth/get-admin-codes'));
         const res = await resp.json();
         if (res && res.success && res.codes && res.codes['Admin']) {
             const serverKey = res.codes['Admin'];
@@ -2997,11 +2978,9 @@ function loginSuccessLogic() {
     applyRoleRestrictions();
     initRealtimeChatSystem();
     initBranchSystem();
-    if (CURRENT_USER && (CURRENT_USER.role === 'Admin' || String(CURRENT_USER.role).toLowerCase() === 'admin')) {
-        initRealtimeUsersListener();
-        initRealtimePayrollListener();
-    }
+    initRealtimeUsersListener();
     initRealtimeTransactionsListener();
+    initRealtimePayrollListener();
 
     // Berlangganan status akun & session user di Firestore (Login 1 Perangkat & Deteksi Hapus Akun Real-Time)
     if (typeof firestoreSubscribeUser === 'function' && CURRENT_USER?.username) {
@@ -3937,7 +3916,7 @@ async function syncRealtimeDashboardNow() {
     }
 }
 
-// Pasang Listener Real-time Firestore untuk Transaksi Otomatis (Per-Outlet & Limit)
+// Pasang Listener Real-time Firestore untuk Transaksi Otomatis
 function initRealtimeTransactionsListener() {
     if (unsubscribeTransactions) {
         try { unsubscribeTransactions(); } catch(e){}
@@ -3945,27 +3924,7 @@ function initRealtimeTransactionsListener() {
     }
 
     try {
-        const isKasir = CURRENT_USER && (CURRENT_USER.role === 'Kasir' || String(CURRENT_USER.role).toLowerCase() === 'kasir');
-        const myOutletId = CURRENT_USER ? (CURRENT_USER.outletId || toOutletId(CURRENT_USER.cabang)) : 'pusat';
-        const pad = (n) => String(n).padStart(2, '0');
-        const now = new Date();
-        const todayStr = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
-
-        // Kasir HANYA mendengarkan transaksi outletnya hari ini dengan limit (maksimal 30 transaksi)
-        if (!isKasir) {
-            // Admin tidak memasang realtime listener pada seluruh collection transaksi 20 outlet
-            // Data riwayat transaksi Admin diambil secara terarah dan efisien via query ber-limit saat membuka tab
-            return;
-        }
-
-        const opts = {
-            role: 'Kasir',
-            outletId: myOutletId,
-            dateStr: todayStr,
-            limitCount: 30
-        };
-
-        unsubscribeTransactions = subscribeToTransactions(opts, (transactions) => {
+        unsubscribeTransactions = subscribeToTransactions((transactions) => {
             if (Array.isArray(transactions) && transactions.length > 0) {
                 HISTORI_TRX_CACHE = transactions;
                 try {

@@ -3,23 +3,9 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // -------------------------------------------------------------
-    // FUNGSI BANTUAN KEAMANAN & OTORISASI (ZERO TRUST)
-    // -------------------------------------------------------------
+    // Helper functions
     function isSignedIn() {
       return request.auth != null;
-    }
-
-    function getUserDoc() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid));
-    }
-
-    function userProfileExists() {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
-    }
-
-    function getUserData() {
-      return getUserDoc().data;
     }
 
     function isAdmin() {
@@ -27,59 +13,35 @@ service cloud.firestore {
         request.auth.token.email == 'istanabubur89@gmail.com' ||
         request.auth.token.admin == true ||
         request.auth.uid == 'admin' ||
-        (userProfileExists() && (getUserData().role == 'Admin' || getUserData().role == 'admin'))
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Admin')
       );
     }
 
-    function isKasir() {
+    function isOwner(userId) {
       return isSignedIn() && (
-        userProfileExists() && (getUserData().role == 'Kasir' || getUserData().role == 'kasir')
+        request.auth.uid == userId ||
+        request.auth.token.email == userId
       );
-    }
-
-    function getUserOutletId() {
-      return getUserData().outletId;
     }
 
     // -------------------------------------------------------------
-    // 1. KOLEKSI: USERS (Akun & Profil Pengguna)
-    // - Kasir HANYA boleh membaca data profil miliknya sendiri (UID sama).
-    // - Kasir DILARANG membaca list seluruh akun pengguna (mencegah user scraping).
-    // - Admin berwenang mengelola seluruh profil akun pengguna.
+    // KOLEKSI: USERS (Akun Kasir & Admin)
     // -------------------------------------------------------------
     match /users/{userId} {
-      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow list: if isAdmin();
-      allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow read: if isSignedIn();
+      allow create: if (
+        request.resource.data.keys().hasAll(['username', 'role', 'cabang']) &&
+        request.resource.data.username is string &&
+        request.resource.data.role in ['Admin', 'Kasir']
+      ) || isAdmin();
+      allow update: if isSignedIn() && (isOwner(userId) || isAdmin());
       allow delete: if isAdmin();
     }
 
     // -------------------------------------------------------------
-    // 2. KOLEKSI: TRANSACTIONS (Pencatatan Penjualan POS Per-Outlet)
-    // - Kasir Outlet A HANYA bisa membaca & query transaksi milik Outlet A.
-    // - Kasir Outlet A HANYA bisa membuat transaksi untuk Outlet A miliknya.
-    // - Kasir DILARANG membaca, mengubah, atau menghapus transaksi Outlet B.
-    // - Admin memiliki wewenang penuh atas seluruh transaksi di 20 outlet.
-    // -------------------------------------------------------------
-    match /transactions/{trxId} {
-      allow get, list: if isSignedIn() && (
-        isAdmin() ||
-        (isKasir() && resource.data.outletId == getUserOutletId())
-      );
-
-      allow create: if isSignedIn() && (
-        isAdmin() ||
-        (isKasir() && request.resource.data.outletId == getUserOutletId())
-      ) && request.resource.data.total is number && request.resource.data.total >= 0;
-
-      allow update, delete: if isAdmin();
-    }
-
-    // -------------------------------------------------------------
-    // 3. KOLEKSI: PRODUCTS (Master Menu Makanan & Minuman)
-    // - Katalog menu dapat dibaca publik dan kasir POS untuk operasional.
-    // - Modifikasi menu HANYA diizinkan untuk Admin Pusat.
+    // KOLEKSI: PRODUCTS (Master Menu Makanan & Minuman)
+    // Publik membaca katalog menu makanan; hanya Admin yang dapat mengubah.
     // -------------------------------------------------------------
     match /products/{productId} {
       allow read: if true;
@@ -87,31 +49,35 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------
-    // 4. KOLEKSI: BRANCHES (Daftar Cabang Outlet Aktif)
+    // KOLEKSI: TRANSACTIONS (Pencatatan Penjualan Kasir Real-Time)
     // -------------------------------------------------------------
-    match /branches/{branchId} {
-      allow read: if true;
-      allow write: if isAdmin();
+    match /transactions/{trxId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+        request.resource.data.total is number &&
+        request.resource.data.total >= 0;
+      allow update, delete: if isAdmin();
     }
 
-    match /system_deleted_branches/{branchId} {
-      allow read, write: if isAdmin();
-    }
-
     // -------------------------------------------------------------
-    // 5. KOLEKSI: EMPLOYEES & PAYROLL (Data Karyawan & Slip Gaji)
-    // - HANYA Admin yang berhak mengakses (Kasir dilarang melihat data sensitif ini).
+    // KOLEKSI: EMPLOYEES (Master Data Staf & Karyawan)
+    // Hanya Admin yang memiliki wewenang mengelola data kepegawaian.
     // -------------------------------------------------------------
     match /employees/{empId} {
       allow read, write: if isAdmin();
     }
 
+    // -------------------------------------------------------------
+    // KOLEKSI: PAYROLL (Slip Gaji & Riwayat Penggajian)
+    // Hanya Admin yang memiliki wewenang mengelola penggajian.
+    // -------------------------------------------------------------
     match /payroll/{slipId} {
       allow read, write: if isAdmin();
     }
 
     // -------------------------------------------------------------
-    // 6. KOLEKSI: DOCUMENTS (Nota & Slip PDF untuk tautan unduh publik)
+    // KOLEKSI: DOCUMENTS (Nota & Slip PDF untuk tautan unduh publik)
+    // Dibaca oleh publik (pelanggan melalui tautan nota WhatsApp).
     // -------------------------------------------------------------
     match /documents/{docId} {
       allow read: if true;
@@ -119,44 +85,68 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------
-    // 7. KOLEKSI: SETTINGS (Pengaturan Sistem & Kunci Otorisasi)
+    // KOLEKSI: BRANCHES (Daftar Cabang Operasional)
     // -------------------------------------------------------------
-    match /settings/{settingId} {
-      allow read, write: if isAdmin();
+    match /branches/{branchId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /system_deleted_branches/{branchId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
 
     // -------------------------------------------------------------
-    // 8. KOLEKSI: REFERRAL_CODES & MAIL
-    // - Dikelola oleh Cloud Functions (Admin SDK). Client dilarang menulis langsung.
+    // KOLEKSI: SETTINGS (Pengaturan Sistem)
+    // -------------------------------------------------------------
+    match /settings/{settingId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // -------------------------------------------------------------
+    // KOLEKSI: REFERRAL_CODES (OTP Referral Verifikasi Email)
+    // Dikelola 100% oleh Cloud Functions (Admin SDK). Client tidak
+    // dapat membaca atau menulis langsung hash kode referral (Zero Trust).
     // -------------------------------------------------------------
     match /referralCodes/{email} {
       allow read, write: if false;
     }
 
+    // -------------------------------------------------------------
+    // KOLEKSI: MAIL (Firebase Extension "Trigger Email")
+    // Dokumen hanya dibuat oleh Cloud Functions / Backend (Admin SDK).
+    // Pengguna dilarang membuat atau menulis dokumen langsung (mencegah spam/penyalahgunaan).
+    // -------------------------------------------------------------
     match /mail/{mailId} {
       allow read: if isAdmin();
       allow write: if false;
     }
 
     // -------------------------------------------------------------
-    // 9. KOLEKSI: CHAT & OBROLAN
+    // KOLEKSI: ADMIN CONVERSATIONS (Metadata Percakapan 1-on-1 User ↔ Admin)
     // -------------------------------------------------------------
     match /admin_conversations/{username} {
       allow read, write: if isSignedIn() && (
-        (userProfileExists() && getUserData().username == username) ||
         request.auth.uid == username ||
         isAdmin()
       );
     }
 
+    // -------------------------------------------------------------
+    // KOLEKSI: ADMIN CHATS (Pesan Pribadi User ↔ Admin)
+    // -------------------------------------------------------------
     match /admin_chats/{username}/messages/{msgId} {
       allow read, write: if isSignedIn() && (
-        (userProfileExists() && getUserData().username == username) ||
         request.auth.uid == username ||
         isAdmin()
       );
     }
 
+    // -------------------------------------------------------------
+    // KOLEKSI: GROUP MESSAGES (Obrolan Grup Pengguna Seluruh Aplikasi)
+    // -------------------------------------------------------------
     match /group_messages/{msgId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() &&
@@ -166,7 +156,7 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------
-    // DEFAULT CATCH-ALL: BLOKIR SELURUH AKSES LAIN
+    // DEFAULT CATCH-ALL: DENY ALL
     // -------------------------------------------------------------
     match /{document=**} {
       allow read, write: if false;
