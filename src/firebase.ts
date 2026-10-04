@@ -12,6 +12,8 @@ import {
   updateDoc,
   deleteDoc,
   query,
+  where,
+  limit,
   orderBy,
   onSnapshot,
   enableIndexedDbPersistence
@@ -753,8 +755,45 @@ export async function firestoreDeleteKaryawan(empId: string) {
 // -------------------------------------------------------------
 // TRANSACTIONS FUNCTIONS
 // -------------------------------------------------------------
-export async function firestoreGetHistoriTransaksi() {
-  const snap = await getDocs(collection(db, COLLECTIONS.TRANSACTIONS));
+export interface GetHistoriTransaksiOptions {
+  cabang?: string;
+  sinceTimestamp?: number;
+  limitCount?: number;
+}
+
+export async function firestoreGetHistoriTransaksi(options?: GetHistoriTransaksiOptions) {
+  const col = collection(db, COLLECTIONS.TRANSACTIONS);
+  const conditions: any[] = [];
+  
+  if (options?.cabang && options.cabang !== 'Semua' && options.cabang.toLowerCase() !== 'semua cabang') {
+    conditions.push(where('cabang', '==', options.cabang));
+  }
+  if (options?.sinceTimestamp && options.sinceTimestamp > 0) {
+    conditions.push(where('createdAt', '>=', options.sinceTimestamp));
+  }
+
+  let snap;
+  try {
+    if (conditions.length > 0) {
+      const q = query(col, ...conditions);
+      snap = await getDocs(q);
+    } else {
+      snap = await getDocs(col);
+    }
+  } catch (err: any) {
+    console.warn('[firestoreGetHistoriTransaksi query warning, falling back]:', err);
+    if (conditions.length > 1) {
+      try {
+        const fallbackQ = query(col, conditions[0]);
+        snap = await getDocs(fallbackQ);
+      } catch {
+        snap = await getDocs(col);
+      }
+    } else {
+      snap = await getDocs(col);
+    }
+  }
+
   const list: any[] = [];
   snap.forEach((docSnap) => {
     const data = docSnap.data();
@@ -775,8 +814,17 @@ export async function firestoreGetHistoriTransaksi() {
     });
   });
 
-  // Sort newest first
-  return list.sort((a, b) => (b._timestamp || 0) - (a._timestamp || 0));
+  let result = list.sort((a, b) => (b._timestamp || 0) - (a._timestamp || 0));
+  if (options?.sinceTimestamp) {
+    result = result.filter(item => (item._timestamp || 0) >= options.sinceTimestamp!);
+  }
+  if (options?.cabang && options.cabang !== 'Semua' && options.cabang.toLowerCase() !== 'semua cabang') {
+    result = result.filter(item => String(item['Cabang'] || '').toLowerCase() === options.cabang!.toLowerCase());
+  }
+  if (options?.limitCount && options.limitCount > 0) {
+    result = result.slice(0, options.limitCount);
+  }
+  return result;
 }
 
 export async function firestoreProcessTransaksiKasir(trx: any) {
@@ -969,11 +1017,29 @@ export function subscribeToPayroll(callback: (payrollList: any[]) => void): () =
 // -------------------------------------------------------------
 // REALTIME LISTENERS
 // -------------------------------------------------------------
-export function subscribeToTransactions(callback: (transactions: any[]) => void): () => void {
-  const q = collection(db, COLLECTIONS.TRANSACTIONS);
-  return onSnapshot(q, (snapshot) => {
+export interface SubscribeTransactionsOptions {
+  cabang?: string;
+  sinceTimestamp?: number;
+  limitCount?: number;
+}
+
+export function subscribeToTransactions(
+  callback: (transactions: any[]) => void,
+  options?: SubscribeTransactionsOptions
+): () => void {
+  const col = collection(db, COLLECTIONS.TRANSACTIONS);
+  const conditions: any[] = [];
+
+  if (options?.cabang && options.cabang !== 'Semua' && options.cabang.toLowerCase() !== 'semua cabang') {
+    conditions.push(where('cabang', '==', options.cabang));
+  }
+  if (options?.sinceTimestamp && options.sinceTimestamp > 0) {
+    conditions.push(where('createdAt', '>=', options.sinceTimestamp));
+  }
+
+  const handleSnapshot = (snapshot: any) => {
     const list: any[] = [];
-    snapshot.forEach((d) => {
+    snapshot.forEach((d: any) => {
       const data = d.data();
       list.push({
         'ID Transaksi': data.id || d.id,
@@ -991,11 +1057,35 @@ export function subscribeToTransactions(callback: (transactions: any[]) => void)
         _timestamp: data.createdAt || 0
       });
     });
-    list.sort((a, b) => (b._timestamp || 0) - (a._timestamp || 0));
-    callback(list);
-  }, (err) => {
-    console.warn('[Firestore Transaction Listener Warning]:', err);
-  });
+
+    let result = list.sort((a, b) => (b._timestamp || 0) - (a._timestamp || 0));
+    if (options?.sinceTimestamp) {
+      result = result.filter(item => (item._timestamp || 0) >= options.sinceTimestamp!);
+    }
+    if (options?.cabang && options.cabang !== 'Semua' && options.cabang.toLowerCase() !== 'semua cabang') {
+      result = result.filter(item => String(item['Cabang'] || '').toLowerCase() === options.cabang!.toLowerCase());
+    }
+    if (options?.limitCount && options.limitCount > 0) {
+      result = result.slice(0, options.limitCount);
+    }
+    callback(result);
+  };
+
+  try {
+    const q = conditions.length > 0 ? query(col, ...conditions) : col;
+    return onSnapshot(q, handleSnapshot, (err) => {
+      console.warn('[Firestore Transaction Listener Warning]:', err);
+      if (conditions.length > 1) {
+        try {
+          const fallbackQ = query(col, conditions[0]);
+          return onSnapshot(fallbackQ, handleSnapshot);
+        } catch (_) {}
+      }
+      return onSnapshot(col, handleSnapshot);
+    });
+  } catch (err) {
+    return onSnapshot(col, handleSnapshot);
+  }
 }
 
 // -------------------------------------------------------------

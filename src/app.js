@@ -1258,8 +1258,42 @@ function processLogout(showNotice = true) {
 }
 
 // ====================================================
-// LOCAL PERSISTENCE STORAGE HANDLERS
+// LOCAL PERSISTENCE STORAGE HANDLERS & MEMORY SAFETY
 // ====================================================
+function getStartOfTodayMs() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+}
+window.getStartOfTodayMs = getStartOfTodayMs;
+
+function safeSaveTrxLocalStorage(transactions) {
+    if (!Array.isArray(transactions) || typeof localStorage === 'undefined') return;
+    try {
+        const isAdmin = CURRENT_USER && CURRENT_USER.role === 'Admin';
+        const userCabang = !isAdmin ? (CURRENT_USER?.cabang || '').trim().toLowerCase() : '';
+        
+        // Simpan hanya transaksi aktif hari ini khusus cabang kasir untuk mencegah QuotaExceededError (5MB)
+        const safeItems = transactions.filter(t => {
+            const isToday = isDateTrxToday(t['Tanggal'], t._timestamp);
+            if (!isToday) return false;
+            if (!isAdmin && userCabang && userCabang !== 'semua' && userCabang !== 'pusat') {
+                const tCabang = (t['Cabang'] || '').trim().toLowerCase();
+                return tCabang === userCabang;
+            }
+            return true;
+        }).slice(0, 100); // Batasi maksimal 100 nota aktif (~20-50 KB, sangat aman dari limit 5MB browser)
+
+        localStorage.setItem(TRX_STORAGE_KEY, JSON.stringify(safeItems));
+    } catch (e) {
+        console.warn('[Cache] LocalStorage quota reached, safely purging old cache:', e);
+        try {
+            localStorage.removeItem(TRX_STORAGE_KEY);
+        } catch (_) {}
+    }
+}
+window.safeSaveTrxLocalStorage = safeSaveTrxLocalStorage;
+
 async function getStoredProdukList() {
     const saved = localStorage.getItem(PRODUK_STORAGE_KEY);
     return saved ? JSON.parse(saved) : DEFAULT_PRODUK;
@@ -1481,10 +1515,20 @@ async function callBackend(funcName, ...args) {
             localStorage.setItem(KARYAWAN_STORAGE_KEY, JSON.stringify(list));
             return { success: true, message: 'Data karyawan berhasil dihapus dari Cloud Firestore' };
         } else if (funcName === 'getHistoriTransaksi') {
+            const isAdmin = CURRENT_USER && CURRENT_USER.role === 'Admin';
+            const userCabang = !isAdmin ? (CURRENT_USER?.cabang || '') : '';
+            const opts = {};
+            if (!isAdmin && userCabang && userCabang !== 'Semua' && userCabang !== 'Pusat') {
+                opts.cabang = userCabang;
+                opts.sinceTimestamp = getStartOfTodayMs();
+                opts.limitCount = 150;
+            } else if (isAdmin && typeof dashboardPeriodMode !== 'undefined' && dashboardPeriodMode === 'today') {
+                opts.sinceTimestamp = getStartOfTodayMs();
+            }
             try {
-                const fsList = await firestoreGetHistoriTransaksi();
+                const fsList = await firestoreGetHistoriTransaksi(opts);
                 if (fsList && fsList.length > 0) {
-                    localStorage.setItem(TRX_STORAGE_KEY, JSON.stringify(fsList));
+                    safeSaveTrxLocalStorage(fsList);
                     return fsList;
                 }
             } catch (e) {
@@ -3872,8 +3916,8 @@ function setDashboardPeriodMode(mode) {
     const btnCustom = document.getElementById('dashboard-period-custom');
     const customRangeBox = document.getElementById('dashboard-custom-date-range');
 
-    const activeCls = 'px-3 py-1.5 rounded-xl text-xs font-black transition-all bg-emerald-600 text-white shadow-xs border border-emerald-600 flex items-center gap-1.5';
-    const normalCls = 'px-3 py-1.5 rounded-xl text-xs font-semibold transition-all bg-white text-gray-600 hover:bg-gray-100 border border-gray-200 flex items-center gap-1.5';
+    const activeCls = 'px-3 py-1.5 rounded-xl text-xs font-black transition-all bg-emerald-600 text-white shadow-xs border border-emerald-600 flex items-center gap-1.5 cursor-pointer';
+    const normalCls = 'px-3 py-1.5 rounded-xl text-xs font-semibold transition-all bg-white text-gray-600 hover:bg-gray-100 border border-gray-200 flex items-center gap-1.5 cursor-pointer';
 
     if (btnToday) btnToday.className = mode === 'today' ? activeCls : normalCls;
     if (btnAll) btnAll.className = mode === 'all' ? activeCls : normalCls;
@@ -3885,6 +3929,12 @@ function setDashboardPeriodMode(mode) {
         } else {
             customRangeBox.classList.add('hidden-view');
         }
+    }
+
+    // Sambungkan langsung ke koneksi query database Firestore:
+    // Jika mode adalah 'today', pasang query khusus hari ini sehingga instan tanpa loading lama
+    if (CURRENT_USER && CURRENT_USER.role === 'Admin') {
+        initRealtimeTransactionsListener();
     }
 
     updateDashboardCharts();
@@ -3916,7 +3966,7 @@ async function syncRealtimeDashboardNow() {
     }
 }
 
-// Pasang Listener Real-time Firestore untuk Transaksi Otomatis
+// Pasang Listener Real-time Firestore untuk Transaksi Otomatis (Optimasi Perangkat & Kuota)
 function initRealtimeTransactionsListener() {
     if (unsubscribeTransactions) {
         try { unsubscribeTransactions(); } catch(e){}
@@ -3924,12 +3974,27 @@ function initRealtimeTransactionsListener() {
     }
 
     try {
+        const isAdmin = CURRENT_USER && CURRENT_USER.role === 'Admin';
+        const userCabang = !isAdmin ? (CURRENT_USER?.cabang || '') : '';
+        
+        // PENGATURAN QUERY DATABASE TERKONTROL:
+        // Kasir: Hanya mendownload data cabangnya sendiri hari ini (max 150 nota aktif)
+        // Admin: Mode 'today' langsung memfilter hari ini agar dashboard instan
+        const opts = {};
+        if (!isAdmin && userCabang && userCabang !== 'Semua' && userCabang !== 'Pusat') {
+            opts.cabang = userCabang;
+            opts.sinceTimestamp = getStartOfTodayMs();
+            opts.limitCount = 150;
+        } else if (isAdmin && typeof dashboardPeriodMode !== 'undefined' && dashboardPeriodMode === 'today') {
+            opts.sinceTimestamp = getStartOfTodayMs();
+        }
+
         unsubscribeTransactions = subscribeToTransactions((transactions) => {
-            if (Array.isArray(transactions) && transactions.length > 0) {
+            if (Array.isArray(transactions)) {
                 HISTORI_TRX_CACHE = transactions;
-                try {
-                    localStorage.setItem(TRX_STORAGE_KEY, JSON.stringify(transactions));
-                } catch(e){}
+                
+                // Simpan cache lokal aman tanpa membebani 5MB browser
+                safeSaveTrxLocalStorage(transactions);
 
                 // Perbarui dashboard seketika jika admin sedang membuka tab profil / dashboard
                 if (CURRENT_USER && CURRENT_USER.role === 'Admin') {
@@ -3944,7 +4009,7 @@ function initRealtimeTransactionsListener() {
                     renderHistoriTransaksi();
                 }
             }
-        });
+        }, opts);
     } catch(err) {
         console.warn('[Realtime Transactions Listener Warning]:', err);
     }
@@ -6379,6 +6444,21 @@ function isDateTrxToday(dateStr, timestamp) {
     return false;
 }
 
+// Variabel Paginasi Riwayat Transaksi (Smooth 60 FPS pada 20 Outlet)
+let CURRENT_TRX_PAGE = 1;
+const TRX_PAGE_SIZE = 20;
+
+function changeTrxPage(delta) {
+    CURRENT_TRX_PAGE += delta;
+    if (CURRENT_TRX_PAGE < 1) CURRENT_TRX_PAGE = 1;
+    renderHistoriTransaksi();
+    const list = document.getElementById('list-histori-transaksi');
+    if (list) {
+        list.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+window.changeTrxPage = changeTrxPage;
+
 function renderHistoriTransaksi() {
     const list = document.getElementById('list-histori-transaksi');
     if (!list) return;
@@ -6392,6 +6472,12 @@ function renderHistoriTransaksi() {
             ? 'Daftar seluruh riwayat transaksi penjualan kasir' 
             : `Riwayat transaksi khusus hari ini (${CURRENT_USER?.cabang || 'Cabang'})`;
     }
+
+    const paginationEl = document.getElementById('pagination-histori-trx');
+    const paginationInfo = document.getElementById('pagination-trx-info');
+    const paginationPage = document.getElementById('pagination-trx-current-page');
+    const btnPrev = document.getElementById('btn-trx-prev-page');
+    const btnNext = document.getElementById('btn-trx-next-page');
 
     let filtered = HISTORI_TRX_CACHE || [];
     
@@ -6428,10 +6514,29 @@ function renderHistoriTransaksi() {
     
     if (filtered.length === 0) { 
         list.innerHTML = `<div class="text-center text-gray-400 py-10"><i class="fas fa-receipt text-4xl mb-3"></i><p class="text-sm font-semibold">${!isAdmin ? 'Tidak ada riwayat transaksi untuk hari ini' : 'Tidak ada riwayat transaksi'}</p></div>`; 
+        if (paginationEl) paginationEl.classList.add('hidden-view');
         return; 
     }
 
-    list.innerHTML = filtered.map(t => {
+    // HITUNG PAGINASI (20 NOTA PER HALAMAN AGAR PERANGKAT TETAP SMOOTH)
+    const totalItems = filtered.length;
+    const totalPages = Math.ceil(totalItems / TRX_PAGE_SIZE) || 1;
+    if (CURRENT_TRX_PAGE > totalPages) CURRENT_TRX_PAGE = totalPages;
+    if (CURRENT_TRX_PAGE < 1) CURRENT_TRX_PAGE = 1;
+
+    const startIndex = (CURRENT_TRX_PAGE - 1) * TRX_PAGE_SIZE;
+    const endIndex = Math.min(startIndex + TRX_PAGE_SIZE, totalItems);
+    const pageItems = filtered.slice(startIndex, endIndex);
+
+    if (paginationEl) {
+        paginationEl.classList.remove('hidden-view');
+        if (paginationInfo) paginationInfo.innerText = `Menampilkan ${startIndex + 1} - ${endIndex} dari ${totalItems} transaksi`;
+        if (paginationPage) paginationPage.innerText = `Hal ${CURRENT_TRX_PAGE} / ${totalPages}`;
+        if (btnPrev) btnPrev.disabled = CURRENT_TRX_PAGE <= 1;
+        if (btnNext) btnNext.disabled = CURRENT_TRX_PAGE >= totalPages;
+    }
+
+    list.innerHTML = pageItems.map(t => {
         let displayNama = t['Nama Pelanggan'] || 'Umum';
         let extractJenis = '';
         const match = displayNama.match(/(.+) \[(.+)\]/);
@@ -8768,26 +8873,9 @@ document.addEventListener('DOMContentLoaded', () => {
         console.warn('[Firestore Init Note]:', err);
     });
 
-    // Real-time listener for cashier transactions across branches
-    try {
-        subscribeToTransactions((newTrxList) => {
-            if (newTrxList && newTrxList.length > 0) {
-                HISTORI_TRX_CACHE = newTrxList;
-                localStorage.setItem(TRX_STORAGE_KEY, JSON.stringify(newTrxList));
-                // Update views if visible
-                if (currentTab === 'histori-trx') {
-                    renderHistoriTransaksi();
-                } else if (currentTab === 'profil') {
-                    if (CURRENT_USER && CURRENT_USER.role === 'Admin') {
-                        renderDashboardSalesCharts();
-                    } else if (CURRENT_USER && CURRENT_USER.role !== 'Admin') {
-                        updateKasirDashboard();
-                    }
-                }
-            }
-        });
-    } catch (e) {
-        console.warn('[Firestore Real-time Listener]:', e);
+    // Listener real-time transaksi terkelola secara otomatis dan terisolasi per cabang / periode di initRealtimeTransactionsListener
+    if (CURRENT_USER) {
+        initRealtimeTransactionsListener();
     }
 });
 
