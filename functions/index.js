@@ -16,7 +16,11 @@
  *    - Checks 10-minute expiry and usage status
  *    - Marks code as used
  * 
- * 3. api (HTTPS onRequest):
+ * 3. verifyAdminCode (Callable & HTTP):
+ *    - Validates admin authorization code securely on server side
+ *    - Never exposes secret code to client
+ * 
+ * 4. api (HTTPS onRequest):
  *    - Express API for Firebase Hosting rewrites (/api/**)
  */
 
@@ -31,6 +35,41 @@ if (!admin.apps.length) {
   admin.initializeApp();
 }
 const db = admin.firestore();
+
+// -------------------------------------------------------------
+// HELPER: Master Admin Code Validator (Server-Side)
+// -------------------------------------------------------------
+async function getServerAdminCodes() {
+  try {
+    const docSnap = await db.collection('settings').doc('system_auth').get();
+    if (docSnap.exists) {
+      const data = docSnap.data();
+      if (Array.isArray(data.codes) && data.codes.length > 0) {
+        return data.codes.map(c => String(c).trim().toUpperCase());
+      }
+    }
+  } catch (e) {
+    console.warn('[getServerAdminCodes] Read settings warning:', e.message);
+  }
+  const envCode = process.env.ADMIN_AUTH_CODE || 'IB-AUTH-2026';
+  return [envCode.trim().toUpperCase()];
+}
+
+async function handleVerifyAdminCode(rawCode) {
+  const code = String(rawCode || '').trim().toUpperCase();
+  if (!code) {
+    throw new Error('Kode autentikasi wajib diisi.');
+  }
+  const validCodes = await getServerAdminCodes();
+  const isValid = validCodes.includes(code);
+  if (!isValid) {
+    throw new Error('Kode autentikasi salah atau tidak valid! Hanya Admin/Owner Pusat yang berwenang.');
+  }
+  return {
+    success: true,
+    message: 'Kode autentikasi valid dan terotorisasi oleh Admin Pusat.'
+  };
+}
 
 // -------------------------------------------------------------
 // HELPER: Generate and Send Referral OTP
@@ -236,6 +275,14 @@ exports.verifyReferralCode = functions.https.onCall(async (data, context) => {
   }
 });
 
+exports.verifyAdminCode = functions.https.onCall(async (data, context) => {
+  try {
+    return await handleVerifyAdminCode(data?.code);
+  } catch (err) {
+    throw new functions.https.HttpsError('permission-denied', err.message || 'Kode autentikasi tidak valid.');
+  }
+});
+
 // -------------------------------------------------------------
 // 2. EXPRESS HTTP API (For Firebase Hosting Rewrites /api/**)
 // -------------------------------------------------------------
@@ -263,6 +310,80 @@ apiApp.post('/api/auth/verify-referral-code', async (req, res) => {
   } catch (err) {
     return res.status(400).json({ success: false, message: err.message });
   }
+});
+
+apiApp.post('/api/auth/verify-admin-code', async (req, res) => {
+  try {
+    const result = await handleVerifyAdminCode(req.body.code);
+    return res.json(result);
+  } catch (err) {
+    return res.status(403).json({ success: false, message: err.message });
+  }
+});
+
+async function verifyAdminCaller(req) {
+  const authHeader = req.headers.authorization || '';
+  if (authHeader.startsWith('Bearer ')) {
+    const idToken = authHeader.split('Bearer ')[1].trim();
+    try {
+      const decoded = await admin.auth().verifyIdToken(idToken);
+      if (decoded.email === 'istanabubur89@gmail.com' || decoded.admin === true) {
+        return true;
+      }
+      const userDoc = await db.collection('users').doc(decoded.uid).get();
+      if (userDoc.exists) {
+        const u = userDoc.data();
+        if (String(u.role || '').toLowerCase() === 'admin') {
+          return true;
+        }
+      }
+    } catch (e) {
+      console.warn('[verifyAdminCaller] Token error:', e.message);
+    }
+  }
+  const adminKey = req.headers['x-admin-key'] || req.body?.adminKey;
+  if (adminKey) {
+    const validCodes = await getServerAdminCodes();
+    if (validCodes.includes(String(adminKey).trim().toUpperCase())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Endpoint untuk Admin memeriksa atau memperbarui kode otorisasi
+apiApp.post('/api/auth/get-admin-codes', async (req, res) => {
+  const isAuthorized = await verifyAdminCaller(req);
+  if (!isAuthorized) {
+    return res.status(403).json({ success: false, message: 'Akses ditolak: Endpoint ini hanya untuk Administrator terautentikasi.' });
+  }
+  const codes = await getServerAdminCodes();
+  return res.json({
+    success: true,
+    primaryCode: codes[0],
+    codes: { Admin: codes[0] }
+  });
+});
+
+apiApp.post('/api/auth/update-admin-code', async (req, res) => {
+  const isAuthorized = await verifyAdminCaller(req);
+  if (!isAuthorized) {
+    return res.status(403).json({ success: false, message: 'Akses ditolak: Endpoint ini hanya untuk Administrator terautentikasi.' });
+  }
+  const { newCode } = req.body;
+  if (!newCode || String(newCode).trim().length < 4) {
+    return res.status(400).json({ success: false, message: 'Kode baru minimal 4 karakter.' });
+  }
+  const cleanCode = String(newCode).trim().toUpperCase();
+  await db.collection('settings').doc('system_auth').set({
+    codes: [cleanCode],
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+  return res.json({
+    success: true,
+    message: 'Kode autentikasi admin berhasil diperbarui di server.',
+    primaryCode: cleanCode
+  });
 });
 
 exports.api = functions

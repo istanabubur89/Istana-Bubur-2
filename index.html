@@ -607,7 +607,7 @@
                                 </div>
                                 <div class="flex items-center gap-2">
                                     <div class="flex-1 bg-black/40 border border-white/15 rounded-xl px-3.5 py-2.5 flex items-center justify-between">
-                                        <input type="password" id="admin-display-auth-key" readonly value="IB-AUTH-2026" class="bg-transparent text-amber-400 font-mono font-black text-sm tracking-wider focus:outline-none w-full select-all">
+                                        <input type="password" id="admin-display-auth-key" readonly value="" placeholder="••••••••" class="bg-transparent text-amber-400 font-mono font-black text-sm tracking-wider focus:outline-none w-full select-all">
                                         <button type="button" onclick="toggleShowAdminAuthKey()" class="text-slate-400 hover:text-white text-xs px-1.5 transition" title="Tampilkan/Sembunyikan">
                                             <i id="btn-toggle-auth-icon" class="fas fa-eye"></i>
                                         </button>
@@ -2587,7 +2587,7 @@
                         <i class="fas fa-list-ol text-red-600"></i> Cara Pengoperasian Sehari-hari:
                     </h5>
                     <ol class="text-[11px] text-gray-700 space-y-1.5 list-decimal list-inside leading-relaxed">
-                        <li><strong>Login Kasir/Admin:</strong> Masuk dengan username/password yang terdaftar di Firestore. Akun default <em>admin</em> dan <em>kasir1</em> sudah aktif.</li>
+                        <li><strong>Login Kasir/Admin:</strong> Masuk menggunakan akun terdaftar via Firebase Authentication sesuai hak akses dan outlet masing-masing.</li>
                         <li><strong>Kelola Menu:</strong> Masuk sebagai Admin ke menu <em>Kelola Produk</em>. Menambah, mengedit, atau menghapus produk akan langsung tersimpan di Firestore.</li>
                         <li><strong>Transaksi Kasir:</strong> Pilih menu, masukkan bayaran, klik <em>Selesaikan & Cetak Struk</em>. Transaksi seketika tersimpan di cloud dengan ID transaksi unik.</li>
                         <li><strong>Penggajian Karyawan:</strong> Hitung slip gaji di menu <em>Penggajian Karyawan</em>, hasil perhitungan langsung tersimpan ke riwayat cloud dan siap kirim ke WhatsApp.</li>

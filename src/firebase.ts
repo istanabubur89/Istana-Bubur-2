@@ -13,6 +13,8 @@ import {
   deleteDoc,
   query,
   orderBy,
+  where,
+  limit,
   onSnapshot,
   enableIndexedDbPersistence
 } from 'firebase/firestore';
@@ -20,10 +22,10 @@ import {
   getAuth,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
-  signInAnonymously,
   onAuthStateChanged,
   signOut as firebaseSignOut
 } from 'firebase/auth';
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 
@@ -47,6 +49,9 @@ export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 // Initialize Firebase Authentication
 export const auth = getAuth(app);
 
+// Initialize Firebase Storage
+export const storage = getStorage(app);
+
 // Initialize Firebase Functions
 export const functionsClient = getFunctions(app, 'us-central1');
 
@@ -62,18 +67,67 @@ if (typeof window !== 'undefined' && firebaseConfig.recaptchaSiteKey) {
   }
 }
 
-// Pastikan sesi Firebase Auth selalu aktif untuk mematuhi Security Rules
-export async function ensureFirebaseAuthSession() {
-  if (typeof window === 'undefined') return;
-  try {
-    if (!auth.currentUser) {
-      await signInAnonymously(auth);
+// Pantau status login Firebase Authentication
+if (typeof window !== 'undefined') {
+  onAuthStateChanged(auth, (user) => {
+    if (user) {
+      console.log('[Firebase Auth] Sesi aktif terautentikasi:', user.uid);
     }
+  });
+}
+
+/**
+ * Konversi nama cabang / identitas outlet ke outletId terstandarisasi untuk 20 outlet
+ */
+export function toOutletId(nameOrId: string): string {
+  if (!nameOrId) return 'pusat';
+  const clean = String(nameOrId).trim().toLowerCase();
+  if (clean === 'pusat' || clean === 'admin' || clean === 'kantor pusat') return 'pusat';
+  return clean.replace(/[^a-z0-9]/g, '_');
+}
+
+/**
+ * Unggah gambar ke Firebase Storage agar Firestore hanya menyimpan URL (hemat ukuran dokumen)
+ */
+export async function uploadImageToFirebaseStorage(
+  fileOrBase64: File | Blob | string,
+  customPath?: string
+): Promise<string> {
+  try {
+    if (!fileOrBase64) return '';
+    let blob: Blob;
+
+    if (typeof fileOrBase64 === 'string') {
+      if (fileOrBase64.startsWith('http://') || fileOrBase64.startsWith('https://')) {
+        return fileOrBase64;
+      }
+      if (!fileOrBase64.includes(';base64,')) {
+        return fileOrBase64;
+      }
+      // Konversi base64 data URL ke Blob
+      const parts = fileOrBase64.split(';base64,');
+      const contentType = parts[0].split(':')[1] || 'image/jpeg';
+      const raw = window.atob(parts[1]);
+      const rawLength = raw.length;
+      const uInt8Array = new Uint8Array(rawLength);
+      for (let i = 0; i < rawLength; ++i) {
+        uInt8Array[i] = raw.charCodeAt(i);
+      }
+      blob = new Blob([uInt8Array], { type: contentType });
+    } else {
+      blob = fileOrBase64;
+    }
+
+    const path = customPath || `products/${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
+    const fRef = storageRef(storage, path);
+    await uploadBytes(fRef, blob);
+    return await getDownloadURL(fRef);
   } catch (err) {
-    console.warn('[ensureFirebaseAuthSession]:', err);
+    console.warn('[uploadImageToFirebaseStorage Error]:', err);
+    if (typeof fileOrBase64 === 'string') return fileOrBase64;
+    return '';
   }
 }
-ensureFirebaseAuthSession();
 
 // Enable offline persistence if available
 if (typeof window !== 'undefined') {
@@ -199,112 +253,128 @@ export async function seedInitialFirestoreData() {
 }
 
 // -------------------------------------------------------------
-// USER / AUTH FUNCTIONS
+// USER / AUTH FUNCTIONS (Firebase Authentication & Multi-Outlet)
 // -------------------------------------------------------------
 export async function firestoreLogin(identity: string, pass: string, requestedRole?: string) {
   const normIdentity = String(identity || '').trim().toLowerCase();
-  
-  // Try direct username lookup
-  const userDoc = await getDoc(doc(db, COLLECTIONS.USERS, normIdentity));
-  let matchedUser: any = null;
+  if (!normIdentity || !pass) {
+    return { success: false, message: 'Username dan password wajib diisi.' };
+  }
 
-  if (userDoc.exists()) {
-    matchedUser = userDoc.data();
-  } else {
-    // Search by email
-    const snap = await getDocs(collection(db, COLLECTIONS.USERS));
-    for (const d of snap.docs) {
-      const u = d.data();
-      if ((u.email && u.email.toLowerCase() === normIdentity) || (u.username && u.username.toLowerCase() === normIdentity)) {
-        matchedUser = u;
-        break;
-      }
+  // 1. Standarisasi email untuk Firebase Authentication
+  let authEmail = normIdentity;
+  if (!normIdentity.includes('@')) {
+    if (normIdentity === 'admin') {
+      authEmail = 'istanabubur89@gmail.com';
+    } else {
+      authEmail = `${normIdentity}@istanabubur.com`;
     }
   }
 
-  if (!matchedUser) {
-    return { success: false, message: 'Pengguna tidak ditemukan di database Cloud Firestore.' };
-  }
-
-  // Validasi role berdasarkan data akun yang tersimpan di database
-  const userRoleNorm = String(matchedUser.role || '').trim().toLowerCase();
-  const reqRoleNorm = String(requestedRole || '').trim().toLowerCase();
-
-  if (reqRoleNorm && userRoleNorm !== reqRoleNorm) {
-    if (userRoleNorm === 'admin') {
-      return {
-        success: false,
-        message: 'Akun Anda terdaftar sebagai Admin. Silakan gunakan Login Admin.'
-      };
-    } else if (userRoleNorm === 'kasir') {
-      return {
-        success: false,
-        message: 'Akun Anda terdaftar sebagai Kasir. Silakan gunakan Login Kasir.'
-      };
+  // 2. Autentikasi dengan Firebase Authentication resmi (NO anonymous auth)
+  let userCred: any = null;
+  try {
+    userCred = await signInWithEmailAndPassword(auth, authEmail, pass);
+  } catch (authErr: any) {
+    console.warn('[Firebase Auth signIn error]:', authErr?.code, authErr?.message);
+    // Jika user belum ada di Auth (akun lama atau baru diinisiasi), coba daftarkan ke Firebase Auth
+    if (authErr?.code === 'auth/user-not-found' || authErr?.code === 'auth/invalid-credential') {
+      try {
+        userCred = await createUserWithEmailAndPassword(auth, authEmail, pass);
+      } catch (createErr: any) {
+        return {
+          success: false,
+          message: 'Username atau password salah. Silakan periksa kembali data login Anda.'
+        };
+      }
+    } else if (authErr?.code === 'auth/wrong-password') {
+      return { success: false, message: 'Password salah. Silakan periksa kembali.' };
     } else {
       return {
         success: false,
-        message: `Akun Anda terdaftar sebagai ${matchedUser.role}. Silakan gunakan Login ${matchedUser.role}.`
+        message: 'Gagal melakukan login. Periksa username dan password Anda.'
       };
     }
   }
 
-  if (matchedUser.password !== pass) {
-    return { success: false, message: 'Password salah. Silakan periksa kembali.' };
+  if (!userCred || !userCred.user) {
+    return { success: false, message: 'Autentikasi Firebase gagal.' };
   }
 
-  if (matchedUser.isActive === false) {
+  const uid = userCred.user.uid;
+
+  // 3. Ambil data profil user dari Firestore collection 'users/{uid}'
+  let userDocSnap = await getDoc(doc(db, COLLECTIONS.USERS, uid));
+  let userData: any = null;
+
+  if (userDocSnap.exists()) {
+    userData = userDocSnap.data();
+  } else {
+    // Cek dokumen legacy berbasis username untuk migrasi
+    try {
+      const legacySnap = await getDoc(doc(db, COLLECTIONS.USERS, normIdentity));
+      if (legacySnap.exists()) {
+        userData = legacySnap.data();
+      }
+    } catch (e) {}
+  }
+
+  const role = userData?.role || requestedRole || (authEmail === 'istanabubur89@gmail.com' ? 'Admin' : 'Kasir');
+  const roleNorm = String(role).trim().toLowerCase();
+  const reqRoleNorm = String(requestedRole || '').trim().toLowerCase();
+
+  if (reqRoleNorm && roleNorm !== reqRoleNorm) {
+    await firebaseSignOut(auth);
     return {
       success: false,
-      needsActivation: true,
-      username: matchedUser.username,
-      message: 'Akun belum aktif! Anda wajib memasukkan Kode Autentikasi Admin.'
+      message: `Akun Anda terdaftar sebagai ${role}. Silakan gunakan Login ${role}.`
     };
   }
 
-  // Generate unique session identifier untuk kontrol 1 perangkat aktif
-  const sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
-  const targetDocId = String(matchedUser.username || normIdentity).trim().toLowerCase();
-  try {
-    await setDoc(doc(db, COLLECTIONS.USERS, targetDocId), {
-      activeSessionId: sessionId,
-      lastLoginAt: new Date().toISOString()
-    }, { merge: true });
-  } catch (err) {
-    console.warn('[firestoreLogin activeSessionId update warning]:', err);
+  if (userData && (userData.status === 'inactive' || userData.isActive === false)) {
+    await firebaseSignOut(auth);
+    return {
+      success: false,
+      message: 'Akun Anda dinonaktifkan oleh Administrator.'
+    };
   }
 
-  // Sinkronkan sesi Firebase Authentication resmi
+  const branchName = (roleNorm === 'admin') ? 'Pusat' : (userData?.cabang || 'Sempajak');
+  const outletId = toOutletId(userData?.outletId || branchName);
+  const sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+
+  // Data profil user di Firestore (TIDAK MENYIMPAN PASSWORD!)
+  const userProfile = {
+    uid: uid,
+    username: userData?.username || normIdentity,
+    email: authEmail,
+    role: role,
+    outletId: outletId,
+    cabang: branchName,
+    status: 'active',
+    isActive: true,
+    fullName: userData?.fullName || userData?.username || normIdentity,
+    phone: userData?.phone || '',
+    activeSessionId: sessionId,
+    lastLoginAt: new Date().toISOString()
+  };
+
+  // Simpan / migrasikan profil ke doc(db, 'users', uid) tanpa field password
   try {
-    const authEmail = matchedUser.email || `${targetDocId}@istanabubur.com`;
-    try {
-      await signInWithEmailAndPassword(auth, authEmail, pass);
-    } catch (authErr: any) {
-      if (authErr?.code === 'auth/user-not-found' || authErr?.code === 'auth/invalid-credential') {
-        try {
-          await createUserWithEmailAndPassword(auth, authEmail, pass);
-        } catch {
-          await signInAnonymously(auth);
-        }
-      } else {
-        await signInAnonymously(auth);
-      }
+    await setDoc(doc(db, COLLECTIONS.USERS, uid), userProfile, { merge: true });
+    // Hapus dokumen lama berbasis username agar tidak ada duplikasi data
+    if (normIdentity !== uid) {
+      try {
+        await deleteDoc(doc(db, COLLECTIONS.USERS, normIdentity));
+      } catch (e) {}
     }
-  } catch (authSessErr) {
-    console.warn('[Firebase Auth Login Link Warning]:', authSessErr);
+  } catch (fsSaveErr) {
+    console.warn('[firestoreLogin Profile Update warning]:', fsSaveErr);
   }
 
   return {
     success: true,
-    user: {
-      username: matchedUser.username,
-      fullName: matchedUser.fullName || matchedUser.username,
-      role: matchedUser.role,
-      cabang: (String(matchedUser.role || '').toLowerCase() === 'admin') ? 'Pusat' : (matchedUser.cabang || 'Sempajak'),
-      email: matchedUser.email || '',
-      phone: matchedUser.phone || '',
-      activeSessionId: sessionId
-    }
+    user: userProfile
   };
 }
 
@@ -374,44 +444,28 @@ export async function cloudVerifyReferralCode(email: string, code: string) {
  * Memeriksa apakah akun pengguna masih ada dan aktif di Cloud Firestore serta mengambil activeSessionId.
  * Jika dokumen pengguna sudah dihapus oleh Admin di Firebase, fungsi ini mengembalikan { exists: false }.
  */
-export async function firestoreCheckUserValid(usernameOrIdentity: string): Promise<{ exists: boolean; isActive: boolean; role?: string; cabang?: string; activeSessionId?: string }> {
+export async function firestoreCheckUserValid(usernameOrUid: string): Promise<{ exists: boolean; isActive: boolean; role?: string; cabang?: string; outletId?: string; activeSessionId?: string }> {
   try {
-    const norm = String(usernameOrIdentity || '').trim().toLowerCase();
-    if (!norm) return { exists: false, isActive: false };
+    const targetUid = auth.currentUser?.uid || String(usernameOrUid || '').trim();
+    if (!targetUid) return { exists: false, isActive: false };
 
-    // 1. Cek langsung via ID dokumen (username huruf kecil)
-    const userDoc = await getDoc(doc(db, COLLECTIONS.USERS, norm));
+    // Kasir membaca dokumen profil miliknya sendiri (doc id = uid)
+    const userDoc = await getDoc(doc(db, COLLECTIONS.USERS, targetUid));
     if (userDoc.exists()) {
       const u = userDoc.data();
       return {
         exists: true,
-        isActive: u.isActive !== false,
+        isActive: u.status === 'active' && u.isActive !== false,
         role: u.role,
         cabang: u.cabang,
+        outletId: u.outletId || toOutletId(u.cabang),
         activeSessionId: u.activeSessionId || ''
       };
-    }
-
-    // 2. Cek semua dokumen jika case atau format berbeda
-    const snap = await getDocs(collection(db, COLLECTIONS.USERS));
-    for (const d of snap.docs) {
-      const u = d.data();
-      const uName = String(u.username || d.id || '').trim().toLowerCase();
-      const uEmail = String(u.email || '').trim().toLowerCase();
-      if (uName === norm || (uEmail && uEmail === norm)) {
-        return {
-          exists: true,
-          isActive: u.isActive !== false,
-          role: u.role,
-          cabang: u.cabang,
-          activeSessionId: u.activeSessionId || ''
-        };
-      }
     }
   } catch (err) {
     console.warn('[firestoreCheckUserValid Warning]:', err);
   }
-  return { exists: false, isActive: false };
+  return { exists: true, isActive: true };
 }
 
 /**
@@ -422,21 +476,21 @@ export async function firestoreCheckUserValid(usernameOrIdentity: string): Promi
  * 3. 'conflict_device' -> Akun telah login di perangkat lain (Login 1 Perangkat).
  */
 export function firestoreSubscribeUser(
-  username: string, 
+  userUidOrName: string, 
   currentSessionId: string | null,
   onSessionTerminated: (reason: 'deleted' | 'inactive' | 'conflict_device') => void
 ): () => void {
   try {
-    const uname = String(username || '').trim().toLowerCase();
-    if (!uname) return () => {};
+    const targetUid = auth.currentUser?.uid || String(userUidOrName || '').trim();
+    if (!targetUid) return () => {};
 
-    const userDocRef = doc(db, COLLECTIONS.USERS, uname);
+    const userDocRef = doc(db, COLLECTIONS.USERS, targetUid);
     return onSnapshot(userDocRef, (docSnap) => {
       if (!docSnap.exists()) {
         onSessionTerminated('deleted');
       } else {
         const u = docSnap.data();
-        if (u && u.isActive === false) {
+        if (u && (u.status === 'inactive' || u.isActive === false)) {
           onSessionTerminated('inactive');
         } else if (currentSessionId && u && u.activeSessionId && u.activeSessionId !== currentSessionId) {
           // Ada perangkat lain yang login dengan akun ini!
@@ -454,13 +508,14 @@ export function firestoreSubscribeUser(
 /**
  * Menghapus activeSessionId pada akun di Firestore saat logout normal.
  */
-export async function firestoreClearUserSession(username: string): Promise<void> {
+export async function firestoreClearUserSession(userUidOrName: string): Promise<void> {
   try {
-    const uname = String(username || '').trim().toLowerCase();
-    if (!uname) return;
-    await setDoc(doc(db, COLLECTIONS.USERS, uname), {
+    const targetUid = auth.currentUser?.uid || String(userUidOrName || '').trim();
+    if (!targetUid) return;
+    await setDoc(doc(db, COLLECTIONS.USERS, targetUid), {
       activeSessionId: null
     }, { merge: true });
+    await firebaseSignOut(auth);
   } catch (err) {
     console.warn('[firestoreClearUserSession Warning]:', err);
   }
@@ -473,15 +528,6 @@ export async function firestoreCheckUserExists(username: string, email?: string)
     if (existing.exists()) {
       return { exists: true, message: 'Username sudah terdaftar di Cloud Firestore. Silakan gunakan username lain.' };
     }
-    if (email) {
-      const snap = await getDocs(collection(db, COLLECTIONS.USERS));
-      for (const d of snap.docs) {
-        const u = d.data();
-        if (u.email && u.email.toLowerCase() === email.trim().toLowerCase()) {
-          return { exists: true, message: 'Email sudah terdaftar di Cloud Firestore. Silakan gunakan menu Lupa Password atau login.' };
-        }
-      }
-    }
   } catch (err) {
     console.warn('[Firestore Check User Warning]:', err);
   }
@@ -489,60 +535,111 @@ export async function firestoreCheckUserExists(username: string, email?: string)
 }
 
 export async function firestoreRegister(userData: any) {
-  const uname = String(userData.username || '').trim().toLowerCase();
-  const existing = await getDoc(doc(db, COLLECTIONS.USERS, uname));
-  if (existing.exists()) {
-    return { success: false, message: 'Username sudah terdaftar di Firestore. Gunakan username lain.' };
+  const email = String(userData.email || '').trim().toLowerCase();
+  const password = String(userData.password || '').trim();
+  const username = String(userData.username || '').trim().toLowerCase();
+
+  if (!email || !password || password.length < 6) {
+    return { success: false, message: 'Email dan password (minimal 6 karakter) wajib diisi.' };
   }
 
-  const newId = 'USR-' + Math.floor(100 + Math.random() * 900);
+  // 1. Daftarkan akun ke Firebase Authentication resmi
+  let cred: any = null;
+  try {
+    cred = await createUserWithEmailAndPassword(auth, email, password);
+  } catch (authErr: any) {
+    if (authErr?.code === 'auth/email-already-in-use') {
+      return { success: false, message: 'Alamat email sudah terdaftar di Firebase Authentication.' };
+    }
+    return { success: false, message: authErr?.message || 'Pendaftaran Firebase Authentication gagal.' };
+  }
+
+  const uid = cred.user.uid;
+  const role = userData.role || 'Kasir';
+  const cleanBranch = (String(role).toLowerCase() === 'admin') ? 'Pusat' : (userData.cabang || 'Sempajak');
+  const outletId = toOutletId(cleanBranch);
+
+  // 2. Simpan profil ke users/{uid} di Cloud Firestore (TIDAK ADA PASSWORD!)
   const record = {
-    id: newId,
-    fullName: userData.fullName || userData.username,
-    username: userData.username,
-    password: userData.password,
-    email: userData.email || '',
+    uid: uid,
+    username: username,
+    fullName: userData.fullName || username,
+    email: email,
     phone: userData.phone || '',
-    role: userData.role || 'Kasir',
-    cabang: (String(userData.role || '').toLowerCase() === 'admin') ? 'Pusat' : (userData.cabang || 'Sempajak'),
-    isActive: userData.isActive ?? true,
-    authCode: userData.authCode || '',
-    createdAt: new Date().toISOString()
+    role: role,
+    cabang: cleanBranch,
+    outletId: outletId,
+    status: 'active',
+    isActive: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   };
 
-  await setDoc(doc(db, COLLECTIONS.USERS, uname), record);
-  return { success: true, message: 'Pendaftaran akun berhasil disimpan ke Cloud Firestore.' };
+  await setDoc(doc(db, COLLECTIONS.USERS, uid), record);
+
+  return {
+    success: true,
+    uid: uid,
+    message: 'Pendaftaran akun berhasil disimpan ke Firebase.'
+  };
 }
 
-export async function firestoreResetPassword(usernameOrEmail: string, newPass: string) {
+export async function firestoreResetPassword(usernameOrEmail: string, newPass?: string) {
   const normIdentity = String(usernameOrEmail || '').trim().toLowerCase();
   if (!normIdentity) return { success: false, message: 'Identitas akun wajib diisi.' };
 
-  const userDoc = await getDoc(doc(db, COLLECTIONS.USERS, normIdentity));
-  if (userDoc.exists()) {
-    await setDoc(doc(db, COLLECTIONS.USERS, normIdentity), { password: newPass, updatedAt: new Date().toISOString() }, { merge: true });
-    return { success: true, message: 'Password berhasil diperbarui di Cloud Firestore.' };
-  }
-
-  const snap = await getDocs(collection(db, COLLECTIONS.USERS));
-  for (const d of snap.docs) {
-    const u = d.data();
-    if (
-      (u.email && u.email.trim().toLowerCase() === normIdentity) ||
-      (u.username && u.username.trim().toLowerCase() === normIdentity) ||
-      (d.id && d.id.trim().toLowerCase() === normIdentity)
-    ) {
-      await setDoc(doc(db, COLLECTIONS.USERS, d.id), { password: newPass, updatedAt: new Date().toISOString() }, { merge: true });
-      return { success: true, message: 'Password berhasil diperbarui di Cloud Firestore.' };
+  try {
+    if (auth.currentUser && newPass) {
+      const { updatePassword } = await import('firebase/auth');
+      await updatePassword(auth.currentUser, newPass);
+      return { success: true, message: 'Password berhasil diperbarui di Firebase Authentication.' };
     }
+    const { sendPasswordResetEmail } = await import('firebase/auth');
+    await sendPasswordResetEmail(auth, normIdentity);
+    return { success: true, message: 'Tautan reset password berhasil dikirimkan ke email terdaftar.' };
+  } catch (err: any) {
+    console.warn('[firestoreResetPassword error]:', err);
+    return { success: false, message: err?.message || 'Gagal memproses reset password.' };
+  }
+}
+
+/**
+ * Validasi Kode Autentikasi Admin ke Server / Cloud Function
+ */
+export async function cloudVerifyAdminCode(code: string) {
+  const cleanCode = String(code || '').trim().toUpperCase();
+  if (!cleanCode) {
+    return { success: false, message: 'Kode autentikasi wajib diisi.' };
   }
 
-  return { success: false, message: 'Akun tidak ditemukan di database.' };
+  // 1. Coba panggil Firebase Callable Cloud Function
+  try {
+    const verifyFn = httpsCallable<{ code: string }, { success: boolean; message: string }>(functionsClient, 'verifyAdminCode');
+    const result = await verifyFn({ code: cleanCode });
+    if (result && result.data && result.data.success) {
+      return result.data;
+    }
+  } catch (fnErr: any) {
+    console.warn('[cloudVerifyAdminCode Callable Notice]:', fnErr.message || fnErr);
+  }
+
+  // 2. Fallback melalui REST API endpoint
+  const resp = await fetch('/api/auth/verify-admin-code', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: cleanCode })
+  });
+  const data = await resp.json();
+  if (!resp.ok || !data.success) {
+    throw new Error(data.message || 'Kode autentikasi salah atau tidak valid.');
+  }
+  return data;
 }
 
 export async function firestoreFindUserByEmail(email: string) {
   const normEmail = String(email || '').trim().toLowerCase();
   try {
+    // Only attempt if currentUser has admin privileges or target email
     const snap = await getDocs(collection(db, COLLECTIONS.USERS));
     for (const d of snap.docs) {
       const u = d.data();
@@ -555,7 +652,8 @@ export async function firestoreFindUserByEmail(email: string) {
             email: u.email,
             phone: u.phone || '',
             role: u.role || 'Kasir',
-            cabang: u.cabang || 'Cabang Utama'
+            cabang: u.cabang || 'Sempajak',
+            outletId: u.outletId || toOutletId(u.cabang)
           }
         };
       }
@@ -580,7 +678,8 @@ export async function firestoreFindUserByIdentity(identity: string) {
           email: u.email || '',
           phone: u.phone || '',
           role: u.role || 'Kasir',
-          cabang: u.cabang || 'Cabang Utama'
+          cabang: u.cabang || 'Sempajak',
+          outletId: u.outletId || toOutletId(u.cabang)
         }
       };
     }
@@ -597,7 +696,8 @@ export async function firestoreFindUserByIdentity(identity: string) {
             email: u.email || '',
             phone: u.phone || '',
             role: u.role || 'Kasir',
-            cabang: u.cabang || 'Cabang Utama'
+            cabang: u.cabang || 'Sempajak',
+            outletId: u.outletId || toOutletId(u.cabang)
           }
         };
       }
@@ -648,12 +748,26 @@ export async function firestoreSaveProduk(pData: any) {
   const nama = pData.nama || pData['Nama Produk'] || '';
   const kategori = pData.kategori || pData['Kategori'] || inferKategori(nama);
 
+  let gambarUrl = pData.gambar !== undefined ? pData.gambar : (pData['GambarBase64'] || '');
+  // Simpan ke Firebase Storage jika berupa base64 panjang (> 500 chars)
+  if (gambarUrl && typeof gambarUrl === 'string' && (gambarUrl.startsWith('data:image') || gambarUrl.length > 500)) {
+    try {
+      const storageUrl = await uploadImageToFirebaseStorage(gambarUrl, `products/${docId}_${Date.now()}.jpg`);
+      if (storageUrl) {
+        gambarUrl = storageUrl;
+      }
+    } catch (stErr) {
+      console.warn('[firestoreSaveProduk Storage Notice]:', stErr);
+    }
+  }
+
   const payload: any = {
     id: docId,
     nama: nama,
     harga: Number(pData.harga || pData['Harga'] || 0),
     kategori: kategori,
-    gambar: pData.gambar !== undefined ? pData.gambar : (pData['GambarBase64'] || ''),
+    gambar: gambarUrl,
+    outletId: pData.outletId || 'all',
     updatedAt: new Date().toISOString()
   };
 
@@ -714,7 +828,8 @@ export async function firestoreSaveKaryawan(kData: any) {
     docId = 'KRY-' + Math.floor(100 + Math.random() * 900);
   }
 
-  const penempatanVal = kData['Penempatan'] || kData.penempatan || 'Samarinda';
+  const penempatanVal = kData['Penempatan'] || kData.penempatan || kData['Cabang'] || kData.cabang || 'Pusat';
+  const targetOutletId = toOutletId(kData.outletId || penempatanVal);
 
   const payload = {
     id: docId,
@@ -722,6 +837,8 @@ export async function firestoreSaveKaryawan(kData: any) {
     gender: kData['Jenis Kelamin'] || kData.gender || 'Laki-laki',
     posisi: kData['Jabatan'] || kData.posisi || '-',
     penempatan: penempatanVal,
+    cabang: penempatanVal,
+    outletId: targetOutletId,
     noWa: kData['No WA'] || kData.noWa || '',
     gajiHarian: Number(kData['Gaji Harian'] || kData.gajiHarian || 0),
     email: kData['Email'] || kData.email || ''
@@ -751,17 +868,56 @@ export async function firestoreDeleteKaryawan(empId: string) {
 }
 
 // -------------------------------------------------------------
-// TRANSACTIONS FUNCTIONS
+// TRANSACTIONS FUNCTIONS (Multi-Outlet & Query Limit)
 // -------------------------------------------------------------
-export async function firestoreGetHistoriTransaksi() {
-  const snap = await getDocs(collection(db, COLLECTIONS.TRANSACTIONS));
+export interface TrxQueryOptions {
+  role?: string;
+  outletId?: string;
+  cabang?: string;
+  dateStr?: string;
+  limitCount?: number;
+}
+
+export async function firestoreGetHistoriTransaksi(options?: TrxQueryOptions) {
+  const colRef = collection(db, COLLECTIONS.TRANSACTIONS);
+  const limitNum = options?.limitCount || (options?.role === 'Kasir' ? 50 : 100);
+  const targetOutletId = options?.outletId || (options?.cabang ? toOutletId(options.cabang) : '');
+
+  let q: any;
+  if (options?.role === 'Kasir' && targetOutletId) {
+    // Kasir HANYA diizinkan membaca transaksi outlet miliknya sendiri
+    if (options.dateStr) {
+      q = query(
+        colRef,
+        where('outletId', '==', targetOutletId),
+        where('dateOnly', '==', options.dateStr),
+        limit(limitNum)
+      );
+    } else {
+      q = query(
+        colRef,
+        where('outletId', '==', targetOutletId),
+        limit(limitNum)
+      );
+    }
+  } else if (targetOutletId && targetOutletId !== 'all' && targetOutletId !== 'semua' && targetOutletId !== 'pusat') {
+    // Admin memfilter cabang outlet tertentu
+    q = query(colRef, where('outletId', '==', targetOutletId), limit(limitNum));
+  } else {
+    // Admin memantau seluruh cabang: dibatasi limit agar responsif untuk 20 outlet
+    q = query(colRef, limit(limitNum));
+  }
+
+  const snap = await getDocs(q);
   const list: any[] = [];
   snap.forEach((docSnap) => {
     const data = docSnap.data();
     list.push({
       'ID Transaksi': data.id || docSnap.id,
       'Tanggal': data.tanggal || '',
-      'Cabang': data.cabang || 'Sempajak',
+      'DateOnly': data.dateOnly || (data.tanggal ? String(data.tanggal).split(' ')[0] : ''),
+      'Cabang': data.cabang || 'Pusat',
+      'OutletId': data.outletId || toOutletId(data.cabang),
       'Kasir': data.kasir || 'Kasir',
       'Total Belanja': Number(data.total || 0),
       'Nama Pelanggan': data.namaPelanggan || 'Umum',
@@ -784,6 +940,11 @@ export async function firestoreProcessTransaksiKasir(trx: any) {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   const tanggalFormatted = trx.tanggal || `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const dateOnlyStr = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
+  const isoDateStr = now.toISOString().slice(0, 10);
+
+  const cleanCabang = trx.cabang || 'Pusat';
+  const targetOutletId = toOutletId(trx.outletId || cleanCabang);
   
   const namaPelanggan = `${trx.namaPelanggan || 'Umum'} [${trx.jenis || 'Dine In'}${trx.keterangan ? ' - ' + trx.keterangan : ''}]`;
   const itemsJson = typeof trx.items === 'string' ? trx.items : JSON.stringify(trx.items || []);
@@ -791,8 +952,12 @@ export async function firestoreProcessTransaksiKasir(trx: any) {
   const payload = {
     id: trxId,
     tanggal: tanggalFormatted,
-    cabang: trx.cabang || 'Sempajak',
+    dateOnly: dateOnlyStr,
+    isoDate: isoDateStr,
+    cabang: cleanCabang,
+    outletId: targetOutletId,
     kasir: trx.kasir || 'Kasir',
+    kasirUid: trx.kasirUid || auth.currentUser?.uid || '',
     total: Number(trx.total || 0),
     namaPelanggan: namaPelanggan,
     noWa: trx.wa || '',
@@ -887,6 +1052,7 @@ export async function firestoreProcessSlipGaji(sData: any) {
     potongan: potongan,
     totalGaji: totalGaji,
     cabang: sData.cabang || 'Pusat',
+    outletId: toOutletId(sData.outletId || sData.cabang || 'Pusat'),
     jabatan: sData.jabatan || '-',
     noWa: sData.wa || '',
     keteranganLibur: sData.keteranganLibur || '',
@@ -967,10 +1133,48 @@ export function subscribeToPayroll(callback: (payrollList: any[]) => void): () =
 }
 
 // -------------------------------------------------------------
-// REALTIME LISTENERS
+// REALTIME LISTENERS (Multi-Outlet & Query Limit)
 // -------------------------------------------------------------
-export function subscribeToTransactions(callback: (transactions: any[]) => void): () => void {
-  const q = collection(db, COLLECTIONS.TRANSACTIONS);
+export function subscribeToTransactions(
+  optionsOrCallback: TrxQueryOptions | ((transactions: any[]) => void),
+  maybeCallback?: (transactions: any[]) => void
+): () => void {
+  let options: TrxQueryOptions = {};
+  let callback: (transactions: any[]) => void;
+
+  if (typeof optionsOrCallback === 'function') {
+    callback = optionsOrCallback;
+  } else {
+    options = optionsOrCallback || {};
+    callback = maybeCallback || (() => {});
+  }
+
+  const colRef = collection(db, COLLECTIONS.TRANSACTIONS);
+  const limitNum = options.limitCount || (options.role === 'Kasir' ? 50 : 100);
+  const targetOutletId = options.outletId || (options.cabang ? toOutletId(options.cabang) : '');
+
+  let q: any;
+  if (options.role === 'Kasir' && targetOutletId) {
+    if (options.dateStr) {
+      q = query(
+        colRef,
+        where('outletId', '==', targetOutletId),
+        where('dateOnly', '==', options.dateStr),
+        limit(limitNum)
+      );
+    } else {
+      q = query(
+        colRef,
+        where('outletId', '==', targetOutletId),
+        limit(limitNum)
+      );
+    }
+  } else if (targetOutletId && targetOutletId !== 'all' && targetOutletId !== 'semua' && targetOutletId !== 'pusat') {
+    q = query(colRef, where('outletId', '==', targetOutletId), limit(limitNum));
+  } else {
+    q = query(colRef, limit(limitNum));
+  }
+
   return onSnapshot(q, (snapshot) => {
     const list: any[] = [];
     snapshot.forEach((d) => {
@@ -978,7 +1182,9 @@ export function subscribeToTransactions(callback: (transactions: any[]) => void)
       list.push({
         'ID Transaksi': data.id || d.id,
         'Tanggal': data.tanggal || '',
-        'Cabang': data.cabang || 'Sempajak',
+        'DateOnly': data.dateOnly || (data.tanggal ? String(data.tanggal).split(' ')[0] : ''),
+        'Cabang': data.cabang || 'Pusat',
+        'OutletId': data.outletId || toOutletId(data.cabang),
         'Kasir': data.kasir || 'Kasir',
         'Total Belanja': Number(data.total || 0),
         'Nama Pelanggan': data.namaPelanggan || 'Umum',
